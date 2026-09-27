@@ -15,6 +15,11 @@ jobs:
   ci:
     name: Lint, tipos y tests
     runs-on: ubuntu-latest
+
+    # NO se declara un `services: postgres`. Los tests de packages/db levantan su propio
+    # contenedor efimero en el puerto 54322, y un servicio ocupando ese mismo puerto del
+    # host haria que el segundo binding fallara y la CI quedara en rojo. El runner de
+    # ubuntu-latest ya trae Docker, que es todo lo que los tests necesitan.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,7 +40,13 @@ jobs:
         run: pnpm biome ci .
 
       - name: Comprobacion de tipos
-        run: pnpm -r --if-present run typecheck
+        run: pnpm -r run typecheck
 
       - name: Tests
-        run: pnpm -r --if-present run test
+        run: pnpm -r run test
+
+      # Red de seguridad: si un test muere a mitad, su contenedor puede quedar vivo y
+      # consumir el puerto en la siguiente ejecucion. Se limpia siempre, pase lo que pase.
+      - name: Limpiar contenedores de prueba huerfanos
+        if: always()
+        run: docker rm --force $(docker ps --quiet --filter "name=camarero-db-test-") 2>/dev/null || true

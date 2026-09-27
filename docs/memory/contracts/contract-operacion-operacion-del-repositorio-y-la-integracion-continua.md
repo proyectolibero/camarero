@@ -52,7 +52,7 @@ la integración continua, así que **si pasa en local, pasa en el pipeline**.
 
 | Workflow | Cuándo | Qué hace |
 |----------|--------|----------|
-| `.github/workflows/ci.yml` | push y pull request | Biome, `tsc --strict` y Vitest |
+| `.github/workflows/ci.yml` | push y pull request | Biome, `tsc --strict` y Vitest. **Sin servicio de PostgreSQL**: los tests levantan su propio contenedor efímero, y declarar un servicio en ese mismo puerto haría fallar el segundo *binding* |
 | `.github/workflows/security.yml` | push, pull request y semanal | osv-scanner sobre el lockfile |
 
 ### Por qué hay tres jobs de osv-scanner y no uno
@@ -75,15 +75,24 @@ eventos de seguridad no puede depender de que nadie mueva esa etiqueta. Por eso
 
 1. **La protección de rama exige el check `Lint, tipos y tests`** con `strict: true`. Sin
    CI en verde no hay merge.
-2. **Ningún script de `package.json` puede invocar una herramienta que no esté instalada.**
+2. **`pnpm test` exige Docker en la máquina de desarrollo.** Los tests de `packages/db`
+   levantan un PostgreSQL efímero en el puerto 54322, porque la RLS no se puede simular.
+   Si el demonio no está corriendo, el runner aborta con un mensaje explícito. **En el
+   pipeline no se declara un servicio de PostgreSQL**: el runner de GitHub ya trae Docker y
+   un servicio ocupando el 54322 rompería el contenedor efímero de los tests.
+3. **Ningún script de `package.json` puede invocar una herramienta que no esté instalada.**
    Un script que promete algo que no puede cumplir es peor que no tenerlo.
-3. **Los scripts de paquete no se invocan con `--if-present`** en la raíz: un paquete que
+4. **Los scripts de paquete no se invocan con `--if-present`** en la raíz: un paquete que
    debería tener tests y no los tiene no puede pasar desapercibido.
-4. **El hook de pre-commit corre Biome sobre lo que va en el commit y `tsc` sobre todo el
+5. **El hook de pre-commit corre Biome sobre lo que va en el commit y `tsc` sobre todo el
    monorepo.** Los tests completos se dejan al pipeline: un hook lento se acaba saltando
    con `--no-verify`, y entonces no protege de nada.
-5. **Cero secretos en el repositorio.** El repositorio es público.
-6. **Este repositorio no despliega nada todavía.** La integración continua es la única
+6. **Cero secretos en el repositorio.** El repositorio es público.
+7. **Los tests de RLS se conectan como `camarero_app`, nunca como el propietario.** En
+   PostgreSQL el propietario de una tabla ignora sus políticas RLS: una prueba con el rol
+   de migración pasa siempre y no prueba nada (LL-004). Un test comprueba además que
+   `camarero_app` no es propietario y no tiene `BYPASSRLS`.
+8. **Este repositorio no despliega nada todavía.** La integración continua es la única
    puerta; el despliegue es la `TASK-F0-03`.
 
 ## Integración de agentes
