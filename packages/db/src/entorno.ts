@@ -1,0 +1,65 @@
+/**
+ * Punto de entrada unico del runner de base de datos de pruebas.
+ *
+ * Levanta el contenedor, prepara los roles, aplica las migraciones y devuelve el
+ * entorno listo. La limpieza se registra aqui y no depende de que los tests terminen
+ * bien: queda cubierta por `--rm`, por `detener()` y por los manejadores de senales.
+ */
+
+import { aplicarMigraciones } from "../scripts/aplicar-migraciones.ts"
+import {
+  arrancarContenedor,
+  comprobarDemonioDocker,
+  detenerContenedor,
+  esperarBaseLista,
+  nombreDeContenedorUnico,
+} from "../scripts/levantar-base.ts"
+import { concederPermisosDeAplicacion, prepararRoles } from "../scripts/preparar-roles.ts"
+import { cadenaDeConexion } from "./conexion.ts"
+import type { ParametrosDePrueba } from "./configuracion.ts"
+import { parametrosDePrueba, puertoDePrueba } from "./configuracion.ts"
+
+export type EntornoDePruebas = {
+  nombreDelContenedor: string
+  cadenaApp: string
+  parametros: ParametrosDePrueba
+  detener: () => void
+}
+
+function registrarLimpiezaPorSenales(nombre: string): void {
+  process.once("exit", () => {
+    detenerContenedor(nombre)
+  })
+  process.once("SIGINT", () => {
+    detenerContenedor(nombre)
+    process.exit(130)
+  })
+  process.once("SIGTERM", () => {
+    detenerContenedor(nombre)
+    process.exit(143)
+  })
+}
+
+export async function levantarEntornoDePruebas(): Promise<EntornoDePruebas> {
+  comprobarDemonioDocker()
+  const nombre = nombreDeContenedorUnico()
+  const parametros = parametrosDePrueba()
+  arrancarContenedor(nombre, puertoDePrueba(), parametros.admin)
+  try {
+    await esperarBaseLista(parametros.admin)
+    await prepararRoles(parametros.admin, parametros.owner, parametros.app)
+    await aplicarMigraciones(parametros.owner)
+    await concederPermisosDeAplicacion(parametros.owner, parametros.app)
+  } catch (error) {
+    // Si algo falla a mitad, no se deja el contenedor vivo esperando a nadie.
+    detenerContenedor(nombre)
+    throw error
+  }
+  registrarLimpiezaPorSenales(nombre)
+  return {
+    nombreDelContenedor: nombre,
+    cadenaApp: cadenaDeConexion(parametros.app),
+    parametros,
+    detener: () => detenerContenedor(nombre),
+  }
+}

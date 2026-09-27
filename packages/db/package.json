@@ -1,0 +1,22 @@
+{
+  "name": "@camarero/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Runner de base de datos de pruebas: PostgreSQL efimero, migraciones SQL y tests contra el.",
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "@types/pg": "^8",
+    "pg": "^8",
+    "typescript": "^5",
+    "vitest": "^5"
+  }
+}
