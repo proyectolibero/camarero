@@ -495,6 +495,50 @@ describe("comensal anonimo", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Cobertura del resto de tablas
+// ---------------------------------------------------------------------------
+
+describe("cobertura del resto de tablas", () => {
+  it("el server del local A ve su operativa y su carta, no la del local B", async () => {
+    expect(await contar(CONTEXTO_SERVER_A, "zones")).toBe(1)
+    expect(await contar(CONTEXTO_SERVER_A, "opening_hours")).toBe(1)
+    expect(await contar(CONTEXTO_SERVER_A, "kitchen_stations")).toBe(1)
+    expect(await contar(CONTEXTO_SERVER_A, "table_links")).toBe(1)
+    expect(await contar(CONTEXTO_SERVER_A, "menu_categories")).toBe(1)
+    expect(await contar(CONTEXTO_SERVER_A, "modifier_groups")).toBe(1)
+    expect(await contar(CONTEXTO_SERVER_A, "modifier_options")).toBe(1)
+    expect(await contar(CONTEXTO_SERVER_A, "item_modifier_groups")).toBe(1)
+    expect(await contar(CONTEXTO_SERVER_A, "daily_metrics")).toBe(1)
+    expect(await contar(CONTEXTO_SERVER_A, "checkouts")).toBe(1)
+  })
+
+  it("el dueno ve lineas, modificadores, personal e idempotencia de su organizacion", async () => {
+    expect(await contar(CONTEXTO_OWNER1, "order_items")).toBe(2)
+    expect(await contar(CONTEXTO_OWNER1, "order_item_modifiers")).toBe(1)
+    expect(await contar(CONTEXTO_OWNER1, "staff")).toBe(5)
+    expect(await contar(CONTEXTO_OWNER1, "idempotency_keys")).toBe(1)
+  })
+
+  it("el comensal ve la carta de su local y no la operativa interna", async () => {
+    expect(await contar(CONTEXTO_COMENSAL_A, "menu_categories")).toBe(1)
+    expect(await contar(CONTEXTO_COMENSAL_A, "modifier_groups")).toBe(1)
+    expect(await contar(CONTEXTO_COMENSAL_A, "modifier_options")).toBe(1)
+    expect(await contar(CONTEXTO_COMENSAL_A, "item_modifier_groups")).toBe(1)
+    expect(await contar(CONTEXTO_COMENSAL_A, "zones")).toBe(0)
+    expect(await contar(CONTEXTO_COMENSAL_A, "kitchen_stations")).toBe(0)
+    expect(await contar(CONTEXTO_COMENSAL_A, "promotions")).toBe(0)
+    expect(await contar(CONTEXTO_COMENSAL_A, "table_links")).toBe(0)
+  })
+
+  it("solo se ven los dispositivos y suscripciones push propios o de la organizacion", async () => {
+    expect(await contar(CONTEXTO_SERVER_A, "staff_devices")).toBe(1)
+    expect(await contar(CONTEXTO_SERVER_A, "push_subscriptions")).toBe(1)
+    expect(await contar(CONTEXTO_OWNER1, "staff_devices")).toBe(1)
+    expect(await contar(CONTEXTO_OWNER1, "push_subscriptions")).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Defecto: denegar. Sin actor, ninguna fila.
 // ---------------------------------------------------------------------------
 
