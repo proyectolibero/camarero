@@ -53,7 +53,15 @@ export async function consultar<T extends QueryResultRow>(
   const cliente = await conectar(parametros)
   try {
     const resultado = await cliente.query<T>(sql)
-    return resultado.rows
+
+    // `pg` devuelve un ARRAY de resultados cuando la cadena trae varias sentencias, y un
+    // unico resultado cuando trae una. Acceder a `.rows` directamente funcionaba con una
+    // sentencia y devolvia `undefined` con varias, sin lanzar: el fallo aparecia despues,
+    // como un TypeError en quien consumia el resultado. Aqui se normaliza: de una cadena
+    // con varias sentencias interesa el resultado de la ULTIMA, que es donde las consultas
+    // de este paquete dejan el `select` final.
+    const ultimo = Array.isArray(resultado) ? resultado.at(-1) : resultado
+    return ultimo?.rows ?? []
   } finally {
     await cerrar(cliente)
   }
