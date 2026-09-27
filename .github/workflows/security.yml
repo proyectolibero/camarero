@@ -1,0 +1,36 @@
+name: Seguridad
+
+on:
+  pull_request:
+  schedule:
+    - cron: "30 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  scan-pr:
+    name: osv-scanner (pull request)
+    if: github.event_name == 'pull_request'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@v2.6.0
+    with:
+      scan-args: |-
+        --lockfile=./pnpm-lock.yaml
+      fail-on-vuln: true
+
+  scan-scheduled:
+    name: osv-scanner (semanal)
+    if: github.event_name == 'schedule'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.6.0
+    with:
+      scan-args: |-
+        --lockfile=./pnpm-lock.yaml
+      fail-on-vuln: true

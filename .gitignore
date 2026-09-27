@@ -1,0 +1,16 @@
+# Dependencias y artefactos de build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Entorno y secretos: NUNCA se commitean
+.env
+.env.local
+.env.*.local
+
+# Temporales del escritor atomico de la memoria (writer.ts)
+*.tmp-*
+
+# Sistema operativo
+.DS_Store
+Thumbs.db

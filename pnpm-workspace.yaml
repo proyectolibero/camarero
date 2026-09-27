@@ -1,0 +1,10 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "workers/*"
+  - "tools/*"
+
+# esbuild (transitiva de Vitest) necesita ejecutar su instalador para dejar su
+# binario listo. pnpm lo bloquea por defecto; lo autorizamos de forma explicita.
+allowBuilds:
+  esbuild: true

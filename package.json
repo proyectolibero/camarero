@@ -1,0 +1,23 @@
+{
+  "name": "camarero",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Garzon virtual para hosteleria: software libre (AGPL-3.0-or-later).",
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "packageManager": "pnpm@12.6.0",
+  "scripts": {
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "pnpm -r --if-present run test",
+    "check": "pnpm lint && pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "typescript": "^5"
+  }
+}

@@ -1,0 +1,14 @@
+# El repositorio se edita en Windows y se integra en Linux: forzamos LF en todo
+# el texto para que los diffs no aparezcan completos por un salto de linea.
+* text=auto eol=lf
+
+# Binarios: sin normalizacion de saltos de linea.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.pdf binary

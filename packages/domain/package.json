@@ -1,0 +1,11 @@
+{
+  "name": "@camarero/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Logica pura del dominio de Camarero: dinero, reparto de cuenta y estados de comanda.",
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=22.18.0"
+  }
+}
