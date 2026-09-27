@@ -1,6 +1,7 @@
 name: Seguridad
 
 on:
+  push:
   pull_request:
   schedule:
     - cron: "30 6 * * 1"
@@ -9,14 +10,34 @@ permissions:
   contents: read
 
 jobs:
+  # Un PR necesita la variante que compara la rama base con la propuesta, porque
+  # puede anadir dependencias nuevas y hay que saber que introduce ESE cambio.
   scan-pr:
     name: osv-scanner (pull request)
     if: github.event_name == 'pull_request'
     permissions:
       actions: read
       contents: read
+      # Necesario para subir los resultados al panel de seguridad del repositorio.
       security-events: write
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@v2.6.0
+    # Fijado por SHA (v2.6.0), no por etiqueta: una etiqueta es un puntero movil y este
+    # workflow corre con permiso de escritura sobre los eventos de seguridad.
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@a345acffa64b0eaede81a3d9aae6141214d9c8fc
+    with:
+      scan-args: |-
+        --lockfile=./pnpm-lock.yaml
+      fail-on-vuln: true
+
+  # En un push (o sea, en main) no hay comparacion posible: lo que toca es escanear
+  # el arbol tal como ha quedado. La variante de PR no sirve aqui.
+  scan-push:
+    name: osv-scanner (push)
+    if: github.event_name == 'push'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@a345acffa64b0eaede81a3d9aae6141214d9c8fc
     with:
       scan-args: |-
         --lockfile=./pnpm-lock.yaml
@@ -29,7 +50,7 @@ jobs:
       actions: read
       contents: read
       security-events: write
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.6.0
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@a345acffa64b0eaede81a3d9aae6141214d9c8fc
     with:
       scan-args: |-
         --lockfile=./pnpm-lock.yaml

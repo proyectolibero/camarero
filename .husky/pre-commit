@@ -1,0 +1,8 @@
+# Hook de pre-commit.
+#
+# Biome solo sobre lo que va en el commit (rapido) y comprobacion de tipos de todo
+# el monorepo (barata y evita subir codigo que no compila). Los tests completos se
+# dejan al pipeline: un hook lento se acaba saltando con --no-verify, y entonces no
+# protege de nada.
+pnpm lint-staged || exit 1
+pnpm typecheck || exit 1

@@ -10,14 +10,23 @@
   },
   "packageManager": "pnpm@12.6.0",
   "scripts": {
+    "prepare": "husky",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "typecheck": "pnpm -r --if-present run typecheck",
-    "test": "pnpm -r --if-present run test",
-    "check": "pnpm lint && pnpm typecheck && pnpm test"
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "verify": "pnpm check"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
+    "husky": "^9",
+    "lint-staged": "^15",
     "typescript": "^5"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,json,jsonc,md}": [
+      "biome check --write --no-errors-on-unmatched"
+    ]
   }
 }
