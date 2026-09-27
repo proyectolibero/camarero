@@ -1,0 +1,131 @@
+-- 0012 — Dos correcciones de alcance, sin recursión de políticas.
+--
+-- Un verificador demostró con psql dos fallos confirmados en 0010:
+--
+--  1. Un camarero del local A podía insertar un cobro en `checkouts` con
+--     settled_by_staff_id de OTRO empleado. La pregunta "quién cobró" tiene que tener
+--     una respuesta cierta.
+--  2. Un `location_manager` con staff.location_id nulo veía CERO filas. El contrato dice
+--     que nulo significa "todos los locales de la organización", pero `en_mi_local`
+--     derivaba el local de la fila del empleado y `p_local = NULL` es siempre falso.
+--
+-- La primera corrección de alcance (0012 descartada) provocó recursión infinita: la
+-- función de la política de `locations` leía `locations`. Regla que se respeta aquí y
+-- que ya estaba escrita en 0009: UNA POLÍTICA DE LA TABLA X NUNCA CONSULTA X.
+
+-- ---------------------------------------------------------------------------
+-- 1. El cobro se imputa a quien lo registra
+-- ---------------------------------------------------------------------------
+
+create function puede_registrar_cobro(p_staff uuid) returns boolean
+language sql stable security definer
+set search_path = pg_catalog
+as $$
+  select public.es_cobrador() and p_staff = public.staff_actual()
+$$;
+
+comment on function puede_registrar_cobro(uuid) is
+  'Un cobro solo se registra a nombre de quien lo hace. Nadie firma por otro.';
+
+drop policy if exists checkouts_insert on public.checkouts;
+create policy checkouts_insert on public.checkouts for insert
+  with check (
+    public.es_platform_admin()
+    or public.puede_registrar_cobro(settled_by_staff_id)
+  );
+
+-- ---------------------------------------------------------------------------
+-- 2. Un encargado sin local asignado alcanza su organización
+-- ---------------------------------------------------------------------------
+
+-- Se resuelve SIN tocar `locations`: la pertenencia a la organización del empleado se
+-- lee de su propia fila de `staff` (org_del_staff), y la organización del local se
+-- recibe como parámetro desde la fila que se está evaluando. Así la política de
+-- `locations` no consulta `locations`, y no hay recursión.
+create function es_encargado_sin_local() returns boolean
+language sql stable security definer
+set search_path = pg_catalog
+as $$
+  select public.rol_actual() in ('org_owner', 'location_manager')
+     and public.local_del_staff() is null
+     and public.org_del_staff() is not null
+$$;
+
+comment on function es_encargado_sin_local() is
+  'Verdadero cuando un encargado o dueno no tiene local asignado y debe ver toda su organizacion. Lee solo la fila de staff del actor.';
+
+/**
+ * Alcance de un empleado sobre un local, recibiendo la organización del local ya
+ * resuelta por quien llama. Evita leer `locations` desde la política de `locations`.
+ */
+create function en_mi_local_con_org(p_local uuid, p_org_del_local uuid) returns boolean
+language sql stable security definer
+set search_path = pg_catalog
+as $$
+  select public.es_staff_de_local()
+     and p_local is not null
+     and (
+       (public.local_del_staff() is not null
+        and p_local = public.local_del_staff()
+        and (public.local_actual() is null or public.local_actual() = p_local))
+       or (public.es_encargado_sin_local() and p_org_del_local = public.org_del_staff())
+     )
+$$;
+
+comment on function en_mi_local_con_org(uuid, uuid) is
+  'Alcance de un empleado sobre un local, sin consultar la tabla locations. Con local asignado, solo el suyo; sin local y con rol de gestion, toda su organizacion; sin local y sin rol de gestion, nada.';
+
+-- La versión que sí lee `locations` se conserva para el resto de tablas, donde no hay
+-- recursión posible porque la tabla evaluada no es `locations`.
+create or replace function en_mi_local(p_local uuid) returns boolean
+language sql stable security definer
+set search_path = pg_catalog
+as $$
+  select public.en_mi_local_con_org(p_local, public.org_del_local(p_local))
+$$;
+
+comment on function en_mi_local(uuid) is
+  'Alcance de un empleado sobre un local. No usar dentro de una politica de la tabla locations: usar en_mi_local_con_org con la columna org_id de la fila.';
+
+-- La politica de `locations` no puede llamar a `en_mi_local`, porque esa funcion lee
+-- `locations` y provocaria recursion infinita. Se reescribe para usar la variante que
+-- recibe la organizacion ya resuelta desde la propia fila: la columna org_id es
+-- exactamente el dato que hacia falta, y ya esta en la fila que se esta evaluando.
+drop policy if exists locations_select on public.locations;
+create policy locations_select on public.locations for select
+  using (
+    public.es_platform_admin()
+    or (public.es_org_owner() and org_id = public.org_actual())
+    or public.en_mi_local_con_org(id, org_id)
+    or public.en_mi_local_comensal(id)
+  );
+
+comment on policy locations_select on public.locations is
+  'Evita la recursion usando en_mi_local_con_org(id, org_id): la organizacion sale de la columna de la fila que se evalua, no de una consulta a locations.';
+
+-- ---------------------------------------------------------------------------
+-- 3. Un comensal no puede insertar una linea sin plato de la carta
+-- ---------------------------------------------------------------------------
+
+-- Una linea sin `menu_item_id` no tiene carta de donde derivar el precio (0011), asi que
+-- permitirsela a un comensal le devolveria el control del importe por la puerta de atras.
+-- Las lineas de ajuste son cosa del personal del local.
+drop policy if exists order_items_insert on public.order_items;
+create policy order_items_insert on public.order_items for insert
+  with check (
+    exists (
+      select 1 from public.orders o
+      where o.id = order_id
+        and public.puede_crear_orden(o.org_id, o.location_id, o.session_id)
+    )
+    and (
+      menu_item_id is not null
+      or exists (
+        select 1 from public.orders o
+        where o.id = order_id and public.puede_operar(o.location_id)
+      )
+    )
+  );
+
+comment on policy order_items_insert on public.order_items is
+  'Un comensal solo puede insertar lineas con menu_item_id: sin plato no hay precio de carta que copiar.';

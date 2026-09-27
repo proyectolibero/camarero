@@ -1,0 +1,280 @@
+-- 0011 — Integridad de importes: el precio se deriva de la carta, nunca del cliente.
+--
+-- Un verificador independiente demostro con psql que un comensal podia insertar una
+-- linea de comanda con unit_price_clp = 1 cuando el plato valia 10000, y una comanda con
+-- subtotal y total a cero. La RLS aislaba bien entre organizaciones, pero no protegia la
+-- REGLA CENTRAL DEL PRODUCTO: el precio nunca viene del cliente.
+--
+-- Estas funciones y disparadores cierran esa via. La idea es que los importes de una
+-- comanda sean DATOS DERIVADOS: se calculan desde menu_items y modifier_options, y
+-- cualquier valor que llegue del cliente se sobrescribe con el de la carta.
+--
+-- Nota sobre el alcance: esto NO es una validacion de negocio completa (aplicar
+-- promociones, comprobar disponibilidad horaria, etc.). Es la unica regla que no puede
+-- depender de que el borde lo haga bien: que el precio sea el de la carta.
+
+-- ---------------------------------------------------------------------------
+-- Precio unitario y total de una linea
+-- ---------------------------------------------------------------------------
+
+/**
+ * Calcula el total de una linea a partir de su precio unitario, sus modificadores y su
+ * cantidad. Se usa en el disparador, despues de haber fijado el precio desde la carta.
+ */
+create or replace function camarero_calcular_total_de_linea(p_linea_id uuid)
+returns integer
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+  select (
+    (oi.unit_price_clp + coalesce(mods.suma_deltas, 0)) * oi.qty
+  )::integer
+  from public.order_items oi
+  left join (
+    select order_item_id, sum(price_delta_clp) as suma_deltas
+    from public.order_item_modifiers
+    group by order_item_id
+  ) mods on mods.order_item_id = oi.id
+  where oi.id = p_linea_id
+$$;
+
+comment on function camarero_calcular_total_de_linea(uuid) is
+  'Total de una linea en CLP enteros: (precio unitario + suma de deltas) * cantidad.';
+
+/**
+ * Fija el precio unitario y el nombre de la linea desde la carta.
+ *
+ * Si la linea referencia un plato, el precio y el nombre se COPIAN de menu_items: lo que
+ * mande el cliente en esos campos se ignora por completo. Si no referencia ningun plato
+ * (una linea suelta, un ajuste), se respeta el precio recibido, porque no hay carta de
+ * donde derivarlo; ese caso solo puede venir de un empleado, no de un comensal.
+ */
+create or replace function camarero_fijar_precio_de_linea()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_precio integer;
+  v_nombre text;
+begin
+  if new.menu_item_id is not null then
+    select price_clp, name_i18n ->> 'es'
+      into v_precio, v_nombre
+      from public.menu_items
+     where id = new.menu_item_id;
+
+    if v_precio is null then
+      -- El plato no existe o no tiene precio: no se puede inventar uno. Se rechaza
+      -- en lugar de aceptar el que venga del cliente.
+      raise exception 'El plato % no tiene precio en la carta', new.menu_item_id
+        using errcode = 'check_violation';
+    end if;
+
+    new.unit_price_clp := v_precio;
+    if v_nombre is not null then
+      new.name_snapshot := v_nombre;
+    end if;
+  end if;
+
+  new.line_total_clp := (new.unit_price_clp * new.qty)::integer;
+  return new;
+end;
+$$;
+
+comment on function camarero_fijar_precio_de_linea() is
+  'Disparador: copia precio y nombre desde menu_items e ignora lo que envie el cliente. Es la garantia de que el precio no lo elige quien pide.';
+
+create trigger order_items_fijar_precio
+  before insert or update of menu_item_id, qty, unit_price_clp on order_items
+  for each row execute function camarero_fijar_precio_de_linea();
+
+-- ---------------------------------------------------------------------------
+-- Delta de un modificador
+-- ---------------------------------------------------------------------------
+
+/**
+ * Fija el delta y el nombre del modificador desde la carta. Mismo principio: el importe
+ * de un "extra queso" no lo decide el comensal, lo decide la carta del local.
+ * Los modificadores solo suman (D-036), asi que un delta negativo se rechaza.
+ */
+create or replace function camarero_fijar_delta_de_modificador()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_delta integer;
+  v_nombre text;
+begin
+  if new.option_id is not null then
+    select price_delta_clp, name_i18n ->> 'es'
+      into v_delta, v_nombre
+      from public.modifier_options
+     where id = new.option_id;
+
+    if v_delta is null then
+      raise exception 'La opcion de modificador % no existe en la carta', new.option_id
+        using errcode = 'check_violation';
+    end if;
+
+    if v_delta < 0 then
+      raise exception 'El modificador % tiene un delta negativo, y los modificadores solo suman',
+        new.option_id using errcode = 'check_violation';
+    end if;
+
+    new.price_delta_clp := v_delta;
+    if v_nombre is not null then
+      new.name_snapshot := v_nombre;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+comment on function camarero_fijar_delta_de_modificador() is
+  'Disparador: copia el delta y el nombre desde modifier_options. El importe de un modificador tampoco lo elige el cliente.';
+
+create trigger order_item_modifiers_fijar_delta
+  before insert or update of option_id, price_delta_clp on order_item_modifiers
+  for each row execute function camarero_fijar_delta_de_modificador();
+
+/**
+ * Al cambiar los modificadores de una linea, su total cambia: hay que recalcularlo.
+ * El disparador de las lineas solo cubre cambios en la propia linea, no en sus hijos.
+ */
+create or replace function camarero_recalcular_linea_desde_modificador()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_linea uuid;
+begin
+  v_linea := coalesce(new.order_item_id, old.order_item_id);
+  update public.order_items
+     set line_total_clp = camarero_calcular_total_de_linea(v_linea)
+   where id = v_linea;
+  return null;
+end;
+$$;
+
+comment on function camarero_recalcular_linea_desde_modificador() is
+  'Disparador: mantiene coherente el total de una linea cuando cambian sus modificadores.';
+
+create trigger order_item_modifiers_recalcular_linea
+  after insert or update or delete on order_item_modifiers
+  for each row execute function camarero_recalcular_linea_desde_modificador();
+
+-- ---------------------------------------------------------------------------
+-- Totales de la comanda
+-- ---------------------------------------------------------------------------
+
+/**
+ * Recalcula los totales de la comanda a partir de sus lineas.
+ *
+ * subtotal_clp es el bruto de las lineas y total_clp es lo que se cobra tras el descuento,
+ * segun D-037: total = subtotal - discount, nunca al reves. Un total que el cliente puede
+ * escribir no es un total, es una sugerencia.
+ */
+create or replace function camarero_calcular_total_de_comanda(p_order_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_bruto integer;
+  v_descuento integer;
+begin
+  select coalesce(sum(line_total_clp), 0)
+    into v_bruto
+    from public.order_items
+   where order_id = p_order_id;
+
+  select discount_clp into v_descuento from public.orders where id = p_order_id;
+  v_descuento := coalesce(v_descuento, 0);
+
+  -- El descuento nunca puede superar el bruto: una comanda no puede salir "a devolver".
+  if v_descuento > v_bruto then
+    v_descuento := v_bruto;
+  end if;
+
+  update public.orders
+     set subtotal_clp = v_bruto,
+         discount_clp = v_descuento,
+         total_clp = v_bruto - v_descuento
+   where id = p_order_id;
+end;
+$$;
+
+comment on function camarero_calcular_total_de_comanda(uuid) is
+  'Recalcula subtotal, descuento y total de una comanda desde sus lineas (D-037). Los totales son datos derivados.';
+
+/**
+ * Al insertar o modificar una linea, se recalculan los totales de su comanda.
+ * Se hace DESPUES del cambio, para que la suma ya incluya la linea nueva.
+ */
+create or replace function camarero_recalcular_comanda_desde_linea()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+begin
+  perform camarero_calcular_total_de_comanda(coalesce(new.order_id, old.order_id));
+  return null;
+end;
+$$;
+
+comment on function camarero_recalcular_comanda_desde_linea() is
+  'Disparador: mantiene los totales de la comanda coherentes con sus lineas.';
+
+create trigger order_items_recalcular_comanda
+  after insert or update or delete on order_items
+  for each row execute function camarero_recalcular_comanda_desde_linea();
+
+/**
+ * Una comanda nace sin lineas, asi que nace con los totales a cero y es correcto. Lo que
+ * no puede quedar es una comanda con lineas y los totales sin cuadrar: por eso el
+ * disparador anterior recalcula tras cada cambio de linea.
+ *
+ * Este otro disparador impide el atajo de crear la comanda declarando un descuento mayor
+ * que el bruto: el descuento se recorta al bruto en cuanto haya lineas.
+ */
+create or replace function camarero_verificar_descuento()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_bruto integer;
+begin
+  select coalesce(sum(line_total_clp), 0)
+    into v_bruto
+    from public.order_items
+   where order_id = new.id;
+
+  if new.discount_clp > v_bruto then
+    new.discount_clp := v_bruto;
+  end if;
+
+  new.subtotal_clp := v_bruto;
+  new.total_clp := v_bruto - new.discount_clp;
+  return new;
+end;
+$$;
+
+comment on function camarero_verificar_descuento() is
+  'Disparador: los totales de la comanda se derivan de sus lineas tambien en el INSERT y el UPDATE directos.';
+
+create trigger orders_totales_derivados
+  before insert or update on orders
+  for each row execute function camarero_verificar_descuento();

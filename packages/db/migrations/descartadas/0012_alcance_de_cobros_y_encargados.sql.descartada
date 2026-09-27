@@ -1,0 +1,80 @@
+-- 0012 — Dos correcciones de alcance en la RLS.
+--
+-- Un verificador independiente demostro con psql dos fallos confirmados:
+--
+--  1. Un camarero del local A podia insertar un cobro en `checkouts` con
+--     settled_by_staff_id de OTRO empleado. La politica solo exigia que el actor fuera
+--     cobrador de ese local. Imputar un cobro a un companero es un problema de
+--     responsabilidad: la pregunta "quien cobro" tiene que tener una respuesta cierta.
+--
+--  2. Un `location_manager` con staff.location_id nulo veia CERO filas en locations,
+--     menu_items y orders. El contrato dice que nulo significa "cubre todos los locales
+--     de la organizacion", pero `en_mi_local` deriva el local de la fila del empleado y
+--     `p_local = NULL` siempre es falso, asi que el encargado quedaba a ciegas.
+--
+-- Ninguna de las dos es una fuga entre organizaciones: el aislamiento entre inquilinos
+-- funcionaba. Son fallos de alcance dentro de lo permitido, y por eso no los detecto el
+-- test de "un local no ve a otro".
+
+-- ---------------------------------------------------------------------------
+-- 1. El cobro se imputa a quien lo registra
+-- ---------------------------------------------------------------------------
+
+-- Un encargado o el dueno pueden corregir un cobro mal registrado, pero NUNCA de forma
+-- anonima: queda en audit_log. Un camarero solo puede cobrar a su propio nombre.
+create function puede_registrar_cobro(p_staff uuid) returns boolean
+language sql stable security definer
+set search_path = pg_catalog
+as $$
+  select public.es_cobrador() and p_staff = public.staff_actual()
+$$;
+
+comment on function puede_registrar_cobro(uuid) is
+  'Un cobro solo se registra a nombre de quien lo hace. Nadie firma por otro.';
+
+drop policy if exists checkouts_insert on public.checkouts;
+create policy checkouts_insert on public.checkouts for insert
+  with check (
+    public.es_platform_admin()
+    or public.puede_registrar_cobro(settled_by_staff_id)
+  );
+
+-- ---------------------------------------------------------------------------
+-- 2. Un encargado sin local asignado alcanza su organizacion entera
+-- ---------------------------------------------------------------------------
+
+-- Regla decidida: para `org_owner` y `location_manager`, un local NULO significa
+-- "toda la organizacion". Para el resto de roles de local (server, kitchen, no_pin) un
+-- local nulo significa NO VER NADA: un camarero sin local asignado esta mal configurado,
+-- y ante una configuracion rota lo correcto es fallar cerrado, no abrir de mas.
+create function alcance_de_local_nulo() returns boolean
+language sql stable security definer
+set search_path = pg_catalog
+as $$
+  select public.rol_actual() in ('org_owner', 'location_manager')
+     and public.local_del_staff() is null
+     and public.org_actual() is not null
+$$;
+
+comment on function alcance_de_local_nulo() is
+  'Verdadero cuando un encargado o dueno sin local asignado debe ver toda su organizacion.';
+
+create or replace function en_mi_local(p_local uuid) returns boolean
+language sql stable security definer
+set search_path = pg_catalog
+as $$
+  select public.es_staff_de_local()
+     and p_local is not null
+     and (
+       -- Caso normal: el empleado tiene local y la fila es de ese local.
+       (public.local_del_staff() is not null
+        and p_local = public.local_del_staff()
+        and (public.local_actual() is null or public.local_actual() = p_local))
+       -- Encargado o dueno sin local asignado: alcanza toda su organizacion.
+       or (public.alcance_de_local_nulo()
+           and public.org_del_local(p_local) = public.org_actual())
+     )
+$$;
+
+comment on function en_mi_local(uuid) is
+  'Alcance de un empleado sobre un local. Con local asignado, solo el suyo; sin local y con rol de gestion, toda su organizacion; sin local y sin rol de gestion, nada (falla cerrado).';
