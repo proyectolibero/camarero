@@ -2,7 +2,7 @@
 id: TASK-F0-06
 type: task
 title: Cerrar la integridad de importes y las correcciones de alcance de la RLS
-status: todo
+status: cancelled
 date: 2026-09-27
 phase: F0
 tags:
@@ -55,3 +55,7 @@ Regla de metodo (ADR-0011 y LL-009): escribir un trozo, verificarlo con una prue
 - [ ] Ninguna politica RLS introduce un ciclo: el test invariante de ciclos sigue en verde
 - [ ] No se pierde ninguna politica existente: la suite completa sigue en verde con los tests nuevos incluidos
 - [ ] Cada afirmacion de cierre esta respaldada por una prueba ejecutada, no por una lectura del codigo
+
+## Notas
+
+- **2026-09-28** — Cancelada por duplicado. Su contenido (integridad de importes + correcciones de alcance) se ha ejecutado y verificado integramente en TASK-F0-07, que se creo por error sin advertir que esta ya existia. La aceptacion de esta tarea queda cubierta asi: los totales no se pueden manipular (ataque con descuento igual al bruto cerrado, cierre.test.ts); un cobro solo se registra a nombre de quien lo hace (alcance.test.ts); un encargado sin local ve locales, carta y comandas de su organizacion y un camarero sin local no ve nada (alcance.test.ts); ninguna politica introduce ciclo (invariante en [], sin locations -> table_sessions -> locations); y no se pierde ninguna politica (42 tests de base de datos en verde). ADR-0017. No se cierra como done para no duplicar evidencia: queda como registro de lo que se absorbio.
