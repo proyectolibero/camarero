@@ -42,27 +42,60 @@ afterAll(() => {
  *  2. Referencias `FROM`/`JOIN` sin cualificar. Aunque el search_path sea limpio, una
  *     referencia sin `public.` delante es resoluble por el llamante si consigue colocar un
  *     objeto con ese nombre en un esquema que si este en la ruta.
+ *  3. Llamadas a funciones PROPIAS sin cualificar. Con `search_path = pg_catalog`, un
+ *     nombre sin `public.` no resuelve en tiempo de ejecucion: la funcion revienta con
+ *     "function ... does not exist". Ocurrio de verdad en la migracion 0012 y el control
+ *     no lo vio, porque solo miraba las relaciones. Una funcion definer endurecida tiene
+ *     que apellidar TODO, tambien sus propias funciones.
+ *
+ *     Esta comprobacion se hace contra el CATALOGO, no con una lista de excepciones: para
+ *     cada funcion definer endurecida se buscan, en su cuerpo, los nombres que coinciden
+ *     con funciones reales de `public` y que no van precedidos de `public.`. Asi el test
+ *     no envejece cuando se anade una funcion nueva.
  */
 const FUNCIONES_NO_ENDURECIDAS = `
-  select p.proname as funcion,
-         coalesce(array_to_string(p.proconfig, ', '), '(sin configurar)') as configuracion,
-         case
-           when coalesce(array_to_string(p.proconfig, ','), '') like '%public%'
-             then 'search_path incluye public'
-           when p.prosrc ~* '(from|join)\\s+(?!only\\s+)(?!public\\.)(?!pg_catalog\\.)[a-z_][a-z0-9_]*\\s'
-             then 'referencia sin cualificar en el cuerpo'
-           else '?'
-         end as motivo
-    from pg_proc p
-    join pg_namespace n on n.oid = p.pronamespace
-   where n.nspname = 'public'
-     and p.prokind = 'f'
-     and p.prosecdef = true
-     and (
-       coalesce(array_to_string(p.proconfig, ','), '') like '%public%'
-       or p.prosrc ~* '(from|join)\\s+(?!only\\s+)(?!public\\.)(?!pg_catalog\\.)[a-z_][a-z0-9_]*\\s'
+  with definers as (
+    select p.oid, p.proname as funcion, p.prosrc as cuerpo,
+           coalesce(array_to_string(p.proconfig, ', '), '(sin configurar)') as configuracion
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public'
+       and p.prokind = 'f'
+       and p.prosecdef = true
+  ),
+  propias as (
+    select proname::text as nombre
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.prokind = 'f'
+  ),
+  -- Para cada funcion definer y cada funcion propia, se cuentan las llamadas totales al
+  -- nombre y cuantas van con el prefijo de esquema delante. Si hay mas llamadas que
+  -- llamadas cualificadas, al menos una va sin apellidar. Es aritmetica, no una lista de
+  -- excepciones: no envejece al anadir funciones.
+  sin_cualificar as (
+    select d.funcion, pr.nombre
+      from definers d
+      cross join propias pr
+     where (
+       select count(*) from regexp_matches(d.cuerpo, '(?i)\\m' || pr.nombre || '\\s*\\(', 'g')
+     ) > (
+       select count(*) from regexp_matches(d.cuerpo, '(?i)\\mpublic\\.' || pr.nombre || '\\s*\\(', 'g')
      )
-   order by p.proname
+  ),
+  con_problema as (
+    select d.funcion, d.configuracion,
+           case
+             when d.configuracion like '%public%' then 'search_path incluye public'
+             when d.cuerpo ~* '(from|join)\\s+(?!only\\s+)(?!public\\.)(?!pg_catalog\\.)[a-z_][a-z0-9_]*\\s'
+               then 'referencia sin cualificar en el cuerpo'
+             else 'llamada a funcion propia sin cualificar'
+           end as motivo
+      from definers d
+     where d.configuracion like '%public%'
+        or d.cuerpo ~* '(from|join)\\s+(?!only\\s+)(?!public\\.)(?!pg_catalog\\.)[a-z_][a-z0-9_]*\\s'
+        or exists (select 1 from sin_cualificar sc where sc.funcion = d.funcion)
+  )
+  select funcion, configuracion, motivo from con_problema order by funcion
 `
 
 /**
