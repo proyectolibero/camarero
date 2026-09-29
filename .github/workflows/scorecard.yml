@@ -1,0 +1,50 @@
+name: Puntuacion de seguridad
+
+# OpenSSF Scorecard: puntua la salud de seguridad del repositorio (proteccion de rama,
+# dependencias fijadas, revision de codigo, permisos...). Gratis en repositorios publicos.
+# No sustituye a CodeQL: aquel mira el codigo, este mira como de bien se cuida el proyecto.
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: "30 5 * * 1"
+  push:
+    branches: [main]
+
+# Se empieza con el minimo permiso y se concede solo lo necesario por trabajo.
+permissions: read-all
+
+jobs:
+  analizar:
+    name: Scorecard
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Scorecard no necesita credenciales persistentes; mejor no dejarlas.
+          persist-credentials: false
+
+      - name: Ejecutar el analisis
+        uses: ossf/scorecard-action@v2.4.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Publica la puntuacion para que se pueda consultar el historico.
+          publish_results: true
+
+      - name: Guardar el informe
+        uses: actions/upload-artifact@v4
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 5
+
+      - name: Subir los resultados a la pestana de seguridad
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif

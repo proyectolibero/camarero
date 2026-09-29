@@ -1,0 +1,44 @@
+name: CodeQL
+
+# Analisis estatico de seguridad del codigo. GitHub lo ofrece gratis en repositorios
+# publicos. Busca fallos reales (inyeccion, rutas, validacion) antes de que lleguen a main.
+# Se ejecuta en cada push y pull request, y ademas cada semana por si cambian las reglas.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analizar:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      # Necesario para subir los resultados a la pestana de seguridad del repositorio.
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Inicializar CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # Reglas ampliadas de seguridad, no solo las por defecto.
+          queries: security-extended
+
+      - name: Analizar
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
