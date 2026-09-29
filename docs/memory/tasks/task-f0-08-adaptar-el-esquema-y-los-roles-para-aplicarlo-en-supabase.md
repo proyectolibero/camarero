@@ -2,7 +2,7 @@
 id: TASK-F0-08
 type: task
 title: Adaptar el esquema y los roles para aplicarlo en Supabase
-status: todo
+status: doing
 date: 2026-09-29
 phase: F0
 tags:
@@ -43,3 +43,7 @@ Nuestro esquema se aplica hoy en un Postgres de Docker donde el runner crea cama
 - [ ] El script de migraciones decide el rol administrador segun el entorno y no crea roles con atributos prohibidos.
 - [ ] Tests en verde con evidencia registrada, incluida la suite actual (49 de base de datos) sin regresion.
 - [ ] Documentado en CONTRACT-borde como se aplica el esquema en Supabase y con que rol conecta el borde.
+
+## Notas
+
+- **2026-09-29** — EN CURSO. Trozo de portabilidad HECHO y verificado: se anadio el modo de base de datos (CAMARERO_DB_MODO=local|gestionado). En gestionado no se crea ningun superusuario ni dueno del esquema: se asegura camarero_app (crearRolSiNoExiste, tolera 42710), se revocan los permisos por defecto de anon, authenticated y service_role (que en Supabase tienen acceso a public y service_role ademas tiene BYPASSRLS), se aplican las migraciones como administrador y se conceden permisos. Verificado ejecutando la MISMA suite en los dos modos: local 49 pasan 0 fallan; gestionado 48 pasan 0 fallan 1 omitido (el test de propietario sujeto a FORCE, que solo aplica en local porque en gestionado el dueno es el administrador con BYPASSRLS). Sin regresion: rls sigue en 24 y el invariante de ciclos en []. typecheck 0, biome 0. RISK-020 registrado: la contrasena del rol propio no va en los backups y se pierde al despausar. FALTA: aplicar de verdad al proyecto de Supabase (necesita la cadena de conexion y las claves del usuario), el runbook de recuperacion de contrasena en CONTRACT-borde, y la verificacion contra el proyecto real. Depende de que el usuario termine de crear el proyecto.
