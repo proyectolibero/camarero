@@ -13,6 +13,7 @@ import type { QueryResultRow } from "pg"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { ClientePostgres, ParametrosConexion } from "../src/conexion.ts"
 import { cerrar, conectar } from "../src/conexion.ts"
+import { modoDeBase } from "../src/configuracion.ts"
 import type { EntornoDePruebas } from "../src/entorno.ts"
 import { levantarEntornoDePruebas } from "../src/entorno.ts"
 
@@ -594,25 +595,32 @@ describe("audit_log", () => {
 // ---------------------------------------------------------------------------
 
 describe("propietario (camarero_owner)", () => {
-  it("debe seguir sujeto a la RLS por FORCE: con org de contexto solo ve esa org", async () => {
-    if (entorno === undefined) {
-      throw new Error("El entorno de pruebas no esta levantado")
-    }
-    const cliente = await conectar(entorno.parametros.owner)
-    try {
-      await cliente.query("begin")
-      await aplicarContexto(cliente, { orgId: ORG1, staffId: STAFF_OWNER1, role: "org_owner" })
-      const resultado = await cliente.query<{ n: number }>(
-        "select count(*)::int as n from public.orgs",
-      )
-      await cliente.query("rollback")
-      // Es propietario de la tabla, pero FORCE lo somete a la politica: con org de
-      // contexto ve 1, no las 2. Sin FORCE veria 2 (comprobado a mano, ver informe).
-      expect(resultado.rows[0]?.n).toBe(1)
-    } finally {
-      await cerrar(cliente)
-    }
-  })
+  // Esta prueba de fuego solo tiene sentido en el modo local: alli el dueno del esquema es
+  // camarero_owner, que NO tiene BYPASSRLS y por tanto FORCE le somete. En un entorno
+  // gestionado (Supabase) no existe camarero_owner: las tablas las crea el administrador,
+  // que SI tiene BYPASSRLS, y FORCE no le afecta.
+  it.skipIf(modoDeBase() === "gestionado")(
+    "debe seguir sujeto a la RLS por FORCE: con org de contexto solo ve esa org",
+    async () => {
+      if (entorno === undefined) {
+        throw new Error("El entorno de pruebas no esta levantado")
+      }
+      const cliente = await conectar(entorno.parametros.owner)
+      try {
+        await cliente.query("begin")
+        await aplicarContexto(cliente, { orgId: ORG1, staffId: STAFF_OWNER1, role: "org_owner" })
+        const resultado = await cliente.query<{ n: number }>(
+          "select count(*)::int as n from public.orgs",
+        )
+        await cliente.query("rollback")
+        // Es propietario de la tabla, pero FORCE lo somete a la politica: con org de
+        // contexto ve 1, no las 2. Sin FORCE veria 2 (comprobado a mano, ver informe).
+        expect(resultado.rows[0]?.n).toBe(1)
+      } finally {
+        await cerrar(cliente)
+      }
+    },
+  )
 })
 
 // ---------------------------------------------------------------------------

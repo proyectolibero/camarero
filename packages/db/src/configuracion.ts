@@ -12,6 +12,17 @@ export const USUARIO_ADMIN = "camarero_admin"
 export const USUARIO_OWNER = "camarero_owner"
 export const USUARIO_APP = "camarero_app"
 
+/**
+ * Entorno de base de datos.
+ *
+ *  - `local`: el Postgres de Docker. Se crean los tres roles (admin, dueno y aplicacion) y
+ *    el esquema `public` pasa a ser del dueno, que no tiene BYPASSRLS.
+ *  - `gestionado`: un Postgres gestionado tipo Supabase. El administrador ya existe (es
+ *    `postgres`, con BYPASSRLS) y no se crea ningun superusuario; solo se crea el rol de
+ *    la aplicacion. Sirve para comprobar en local que el mismo esquema se aplica alli.
+ */
+export type ModoDeBase = "local" | "gestionado"
+
 const CONTRASENA_POR_DEFECTO = "clave_de_prueba_no_real"
 
 export type ParametrosDePrueba = {
@@ -31,6 +42,14 @@ export function puertoDePrueba(): number {
     throw new Error(`CAMARERO_TEST_DB_PORT no es un puerto valido: ${String(puerto)}`)
   }
   return puerto
+}
+
+export function modoDeBase(): ModoDeBase {
+  const modo = variable("CAMARERO_DB_MODO", "local")
+  if (modo !== "local" && modo !== "gestionado") {
+    throw new Error(`CAMARERO_DB_MODO no es un modo valido: ${modo} (usa local o gestionado)`)
+  }
+  return modo
 }
 
 function parametros(usuario: string): ParametrosConexion {

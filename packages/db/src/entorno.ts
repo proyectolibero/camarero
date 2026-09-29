@@ -14,10 +14,14 @@ import {
   esperarBaseLista,
   nombreDeContenedorUnico,
 } from "../scripts/levantar-base.ts"
-import { concederPermisosDeAplicacion, prepararRoles } from "../scripts/preparar-roles.ts"
+import {
+  concederPermisosDeAplicacion,
+  prepararRolDeAplicacion,
+  prepararRoles,
+} from "../scripts/preparar-roles.ts"
 import { cadenaDeConexion } from "./conexion.ts"
 import type { ParametrosDePrueba } from "./configuracion.ts"
-import { parametrosDePrueba, puertoDePrueba } from "./configuracion.ts"
+import { modoDeBase, parametrosDePrueba, puertoDePrueba } from "./configuracion.ts"
 
 export type EntornoDePruebas = {
   nombreDelContenedor: string
@@ -40,6 +44,22 @@ function registrarLimpiezaPorSenales(nombre: string): void {
   })
 }
 
+async function prepararEsquema(parametros: ParametrosDePrueba): Promise<void> {
+  if (modoDeBase() === "local") {
+    // Se crean los tres roles y el esquema publico pasa a ser del dueno, que no tiene
+    // BYPASSRLS: asi el FORCE ROW LEVEL SECURITY tambien le obliga a el (LL-004).
+    await prepararRoles(parametros.admin, parametros.owner, parametros.app)
+    await aplicarMigraciones(parametros.owner)
+    await concederPermisosDeAplicacion(parametros.owner, parametros.app)
+    return
+  }
+  // Modo gestionado: el administrador ya existe (hace de postgres) y no se crea dueno del
+  // esquema. Sirve para comprobar que el mismo esquema se aplica en un Postgres gestionado.
+  await prepararRolDeAplicacion(parametros.admin, parametros.app)
+  await aplicarMigraciones(parametros.admin)
+  await concederPermisosDeAplicacion(parametros.admin, parametros.app)
+}
+
 export async function levantarEntornoDePruebas(): Promise<EntornoDePruebas> {
   comprobarDemonioDocker()
   const nombre = nombreDeContenedorUnico()
@@ -47,9 +67,7 @@ export async function levantarEntornoDePruebas(): Promise<EntornoDePruebas> {
   arrancarContenedor(nombre, puertoDePrueba(), parametros.admin)
   try {
     await esperarBaseLista(parametros.admin)
-    await prepararRoles(parametros.admin, parametros.owner, parametros.app)
-    await aplicarMigraciones(parametros.owner)
-    await concederPermisosDeAplicacion(parametros.owner, parametros.app)
+    await prepararEsquema(parametros)
   } catch (error) {
     // Si algo falla a mitad, no se deja el contenedor vivo esperando a nadie.
     detenerContenedor(nombre)

@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { contenedoresConNombre } from "../scripts/levantar-base.ts"
 import type { ParametrosConexion } from "../src/conexion.ts"
 import { consultar } from "../src/conexion.ts"
+import { modoDeBase } from "../src/configuracion.ts"
 import type { EntornoDePruebas } from "../src/entorno.ts"
 import { levantarEntornoDePruebas } from "../src/entorno.ts"
 
@@ -53,8 +54,12 @@ describe("Runner de base de datos de pruebas", () => {
       parametrosApp(),
       "select tableowner as propietario from pg_tables where schemaname = 'public' and tablename = 'prueba_runner'",
     )
+    // Lo que de verdad protege la RLS es que el rol de la aplicacion NO sea el propietario,
+    // porque el propietario la ignora. Quien sea el dueno cambia segun el entorno: en local
+    // es camarero_owner; en un Postgres gestionado, el administrador que hizo de postgres.
     expect(filas[0]?.propietario).not.toBe("camarero_app")
-    expect(filas[0]?.propietario).toBe("camarero_owner")
+    const duenoEsperado = modoDeBase() === "local" ? "camarero_owner" : "camarero_admin"
+    expect(filas[0]?.propietario).toBe(duenoEsperado)
   })
 
   it("no debe tener camarero_app BYPASSRLS", async () => {
