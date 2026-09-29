@@ -91,6 +91,61 @@ function leerContrasenaDeLaApp(): string | null {
   return valor === undefined || valor === "" ? null : valor
 }
 
+/**
+ * Usuario con el que se conecta un rol a traves del pooler: el formato es
+ * `<rol>.<referencia del proyecto>`. Se deriva del usuario administrador para no pedir un
+ * secreto mas.
+ */
+function usuarioDelRol(usuarioActual: string, rol: string): string {
+  const punto = usuarioActual.indexOf(".")
+  return punto === -1 ? rol : `${rol}${usuarioActual.slice(punto)}`
+}
+
+/**
+ * Prueba de aislamiento contra la base de verdad: se crea una organizacion, se comprueba que
+ * el rol de la aplicacion NO la ve sin contexto, y se borra. Si la app viera esa fila, la RLS
+ * no estaria haciendo su trabajo y habria que parar.
+ */
+async function comprobarAislamiento(
+  admin: ParametrosConexion,
+  contrasenaApp: string,
+): Promise<void> {
+  const orgDePrueba = "00000000-0000-0000-0000-00000000f0f0"
+  const comoAdmin = await conectar(admin)
+  try {
+    await comoAdmin.query(
+      "insert into public.orgs (id, name) values ($1, $2) on conflict (id) do nothing",
+      [orgDePrueba, "comprobacion de aislamiento"],
+    )
+  } finally {
+    await cerrar(comoAdmin)
+  }
+
+  const app: ParametrosConexion = {
+    ...admin,
+    user: usuarioDelRol(admin.user, USUARIO_APP),
+    password: contrasenaApp,
+  }
+  const comoApp = await conectar(app)
+  let filasVistas = -1
+  try {
+    filasVistas = await contar(comoApp, "select count(*)::int as n from public.orgs")
+  } finally {
+    await cerrar(comoApp)
+  }
+
+  const limpieza = await conectar(admin)
+  try {
+    await limpieza.query("delete from public.orgs where id = $1", [orgDePrueba])
+  } finally {
+    await cerrar(limpieza)
+  }
+
+  process.stdout.write(
+    `Aislamiento: filas que ve el rol de la app sin contexto: ${filasVistas} (esperado 0)\n`,
+  )
+}
+
 async function informar(admin: ParametrosConexion): Promise<void> {
   const cliente = await conectar(admin)
   try {
@@ -124,8 +179,12 @@ const admin = parametrosDesdeUrl(
 process.stdout.write(`${describirDestino(admin)}\n`)
 process.stdout.write(`${describirCredencial(admin.password)}\n`)
 
-await asegurarRolDeAplicacion(admin, USUARIO_APP, leerContrasenaDeLaApp())
+const contrasenaApp = leerContrasenaDeLaApp()
+await asegurarRolDeAplicacion(admin, USUARIO_APP, contrasenaApp)
 const aplicadas = await aplicarMigraciones(admin, undefined, { registro: REGISTRO })
 process.stdout.write(`Migraciones aplicadas en esta ejecucion: ${aplicadas.length}\n`)
 await concederPermisosDeAplicacion(admin, { ...admin, user: USUARIO_APP })
+if (contrasenaApp !== null) {
+  await comprobarAislamiento(admin, contrasenaApp)
+}
 await informar(admin)
