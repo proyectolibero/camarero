@@ -85,6 +85,17 @@ function describirDestino(parametros: ParametrosConexion): string {
   return `Destino: ${parametros.host}:${parametros.port} (usuario con referencia de proyecto: ${conReferencia})`
 }
 
+/**
+ * Diagnostico de la contrasena SIN revelarla: solo dos indicios que explican casi todos los
+ * fallos de autenticacion al copiarla (un espacio o salto invisible en los extremos, o que
+ * se haya pegado ya codificada para URL).
+ */
+function describirCredencial(contrasena: string): string {
+  const conEspaciosEnLosExtremos = contrasena !== contrasena.trim()
+  const pareceCodificadaEnUrl = /%(?:[0-9a-fA-F]{2})/.test(contrasena)
+  return `Credencial: extremos con espacios o saltos: ${conEspaciosEnLosExtremos ? "si" : "no"}; parece codificada en URL: ${pareceCodificadaEnUrl ? "si" : "no"}`
+}
+
 const url = process.env.CAMARERO_DB_URL
 if (url === undefined || url === "") {
   throw new Error("Falta la variable CAMARERO_DB_URL con la cadena de conexion del administrador")
@@ -96,6 +107,7 @@ const admin = parametrosDesdeUrl(
   process.env.CAMARERO_DB_PASSWORD,
 )
 process.stdout.write(`${describirDestino(admin)}\n`)
+process.stdout.write(`${describirCredencial(admin.password)}\n`)
 await asegurarRolDeAplicacion(admin, USUARIO_APP, null)
 const ficheros = await aplicarMigraciones(admin)
 await concederPermisosDeAplicacion(admin, { ...admin, user: USUARIO_APP })
