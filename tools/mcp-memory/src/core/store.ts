@@ -10,7 +10,7 @@
  * roto con un token dentro filtraba el token a traves del mensaje de error.
  */
 import type { Dirent } from "node:fs"
-import { readdir, readFile, stat } from "node:fs/promises"
+import { open, readdir } from "node:fs/promises"
 import path from "node:path"
 import {
   DIR_BY_TYPE,
@@ -25,6 +25,30 @@ import {
 import { parseMarkdown } from "./frontmatter.ts"
 import { MAX_CONTENT_BYTES, mask, redactForOutput } from "./guards.ts"
 import { isMarkdown, memoryRoot, toRelative } from "./paths.ts"
+
+/**
+ * Lee un documento midiendo el descriptor abierto, no la ruta.
+ *
+ * Comprobar el tamano con `stat(ruta)` y leer despues con `readFile(ruta)` es una carrera
+ * TOCTOU (CWE-367): entre las dos llamadas el fichero puede cambiar. Aqui se abre UNA vez y
+ * se comprueba y se lee del MISMO descriptor, de modo que el inodo queda fijado y no puede
+ * sustituirse entre la comprobacion y la lectura. El escritor de la memoria usa renombrado
+ * atomico, asi que el descriptor apunta siempre a un contenido coherente.
+ */
+async function leerDocumentoAcotado(absolute: string): Promise<string> {
+  const handle = await open(absolute, "r")
+  try {
+    const info = await handle.stat()
+    if (info.size > MAX_CONTENT_BYTES) {
+      throw new Error(
+        `documento de ${info.size} bytes, por encima del maximo de ${MAX_CONTENT_BYTES}`,
+      )
+    }
+    return await handle.readFile({ encoding: "utf8" })
+  } finally {
+    await handle.close()
+  }
+}
 
 export interface LoadIssue {
   readonly path: string
@@ -125,13 +149,7 @@ export class MemoryStore {
     for (const absolute of files) {
       const relative = toRelative(absolute, this.root)
       try {
-        const info = await stat(absolute)
-        if (info.size > MAX_CONTENT_BYTES) {
-          throw new Error(
-            `documento de ${info.size} bytes, por encima del maximo de ${MAX_CONTENT_BYTES}`,
-          )
-        }
-        const source = await readFile(absolute, "utf8")
+        const source = await leerDocumentoAcotado(absolute)
         const doc = this.parseDoc(source, relative)
         docs.push(doc)
         blobs.set(doc.path, normalizeText(`${doc.title}\n${doc.tags.join(" ")}\n${doc.body}`))
