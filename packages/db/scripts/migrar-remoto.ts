@@ -81,6 +81,16 @@ function describirCredencial(contrasena: string): string {
   return `Credencial: extremos con espacios o saltos: ${conEspaciosEnLosExtremos ? "si" : "no"}; parece codificada en URL: ${pareceCodificadaEnUrl ? "si" : "no"}`
 }
 
+/**
+ * Contrasena del rol de la aplicacion, si el despliegue la aporta. Sin ella, el rol se deja
+ * sin inicio de sesion (basta para instalar el esquema); con ella, queda listo para que el
+ * borde se conecte.
+ */
+function leerContrasenaDeLaApp(): string | null {
+  const valor = process.env.CAMARERO_DB_PASSWORD_APP
+  return valor === undefined || valor === "" ? null : valor
+}
+
 async function informar(admin: ParametrosConexion): Promise<void> {
   const cliente = await conectar(admin)
   try {
@@ -114,7 +124,7 @@ const admin = parametrosDesdeUrl(
 process.stdout.write(`${describirDestino(admin)}\n`)
 process.stdout.write(`${describirCredencial(admin.password)}\n`)
 
-await asegurarRolDeAplicacion(admin, USUARIO_APP, null)
+await asegurarRolDeAplicacion(admin, USUARIO_APP, leerContrasenaDeLaApp())
 const aplicadas = await aplicarMigraciones(admin, undefined, { registro: REGISTRO })
 process.stdout.write(`Migraciones aplicadas en esta ejecucion: ${aplicadas.length}\n`)
 await concederPermisosDeAplicacion(admin, { ...admin, user: USUARIO_APP })

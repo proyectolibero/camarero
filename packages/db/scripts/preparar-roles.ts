@@ -90,11 +90,17 @@ export async function asegurarRolDeAplicacion(
 ): Promise<void> {
   const cliente = await conectar(admin)
   try {
-    const atributos = password === null ? "nologin" : `login password '${escaparLiteral(password)}'`
     await crearRolSiNoExiste(
       cliente,
-      `create role ${citar(usuario)} ${atributos} nosuperuser nocreatedb nocreaterole nobypassrls`,
+      `create role ${citar(usuario)} nologin nosuperuser nocreatedb nocreaterole nobypassrls`,
     )
+    // La contrasena se fija aparte del alta: asi vale tanto para un rol recien creado como
+    // para uno que ya existia sin inicio de sesion, que es como lo deja la instalacion.
+    if (password !== null) {
+      await cliente.query(
+        `alter role ${citar(usuario)} with login password '${escaparLiteral(password)}'`,
+      )
+    }
     await cliente.query(`grant usage on schema public to ${citar(usuario)}`)
     await revocarPermisosPorDefecto(cliente, ROLES_PUBLICOS_DE_SUPABASE)
   } finally {
