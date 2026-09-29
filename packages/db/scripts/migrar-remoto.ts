@@ -73,12 +73,19 @@ async function informar(admin: ParametrosConexion, migraciones: number): Promise
   }
 }
 
+/** Diagnostico seguro: host y forma del usuario, NUNCA la contrasena. */
+function describirDestino(parametros: ParametrosConexion): string {
+  const conReferencia = parametros.user.includes(".") ? "si" : "no"
+  return `Destino: ${parametros.host}:${parametros.port} (usuario con referencia de proyecto: ${conReferencia})`
+}
+
 const url = process.env.CAMARERO_DB_URL
 if (url === undefined || url === "") {
   throw new Error("Falta la variable CAMARERO_DB_URL con la cadena de conexion del administrador")
 }
 
 const admin = parametrosDesdeUrl(url, await leerAutoridadCertificadora())
+process.stdout.write(`${describirDestino(admin)}\n`)
 await asegurarRolDeAplicacion(admin, USUARIO_APP, null)
 const ficheros = await aplicarMigraciones(admin)
 await concederPermisosDeAplicacion(admin, { ...admin, user: USUARIO_APP })
