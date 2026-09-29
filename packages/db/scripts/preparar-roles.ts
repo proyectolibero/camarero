@@ -69,14 +69,30 @@ export async function prepararRolDeAplicacion(
   admin: ParametrosConexion,
   app: ParametrosConexion,
 ): Promise<void> {
-  const contrasena = escaparLiteral(app.password)
+  await asegurarRolDeAplicacion(admin, app.user, app.password)
+}
+
+/**
+ * Asegura el rol de la aplicacion, con o sin contrasena.
+ *
+ * Con `password` nula se crea SIN inicio de sesion (`nologin`): basta para que exista y
+ * reciba los permisos al instalar el esquema. La contrasena se fija despues, cuando se
+ * conecta la aplicacion de verdad, para no tener que repartir un secreto durante la
+ * instalacion.
+ */
+export async function asegurarRolDeAplicacion(
+  admin: ParametrosConexion,
+  usuario: string,
+  password: string | null,
+): Promise<void> {
   const cliente = await conectar(admin)
   try {
+    const atributos = password === null ? "nologin" : `login password '${escaparLiteral(password)}'`
     await crearRolSiNoExiste(
       cliente,
-      `create role ${app.user} login password '${contrasena}' nosuperuser nocreatedb nocreaterole nobypassrls`,
+      `create role ${usuario} ${atributos} nosuperuser nocreatedb nocreaterole nobypassrls`,
     )
-    await cliente.query(`grant usage on schema public to ${app.user}`)
+    await cliente.query(`grant usage on schema public to ${usuario}`)
     await revocarPermisosPorDefecto(cliente, ROLES_PUBLICOS_DE_SUPABASE)
   } finally {
     await cerrar(cliente)

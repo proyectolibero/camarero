@@ -1,0 +1,43 @@
+name: Instalar esquema
+
+# Instala el esquema (28 tablas, 96 politicas) en el Postgres gestionado de Supabase.
+#
+# Se lanza A MANO desde la pestana Actions, no en cada push: aplicar el esquema es una
+# operacion deliberada. Usa la cadena de conexion del administrador, que vive como secreto
+# del repositorio y nunca se imprime: el registro del flujo solo muestra el resultado
+# (numero de migraciones, tablas y politicas).
+on:
+  workflow_dispatch:
+
+# El flujo solo lee el repositorio; la credencial llega por secreto.
+permissions:
+  contents: read
+
+concurrency:
+  group: instalar-esquema
+  cancel-in-progress: false
+
+jobs:
+  migrar:
+    name: Aplicar migraciones en Supabase
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Activar pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Preparar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Aplicar el esquema
+        run: pnpm --filter @camarero/db run migrar:remoto
+        env:
+          CAMARERO_DB_URL: ${{ secrets.CAMARERO_DB_URL_ADMIN }}

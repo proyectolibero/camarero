@@ -15,6 +15,14 @@ export type ParametrosConexion = {
   database: string
   user: string
   password: string
+  /**
+   * Exigir TLS. Obligatorio contra un Postgres gestionado (Supabase). La verificacion del
+   * certificado NUNCA se desactiva: si el certificado no valida, se investiga la causa, no
+   * se apaga la comprobacion.
+   */
+  ssl?: boolean
+  /** Milisegundos antes de rendirse al conectar. Corto en local; mas largo en remoto. */
+  timeoutMs?: number
 }
 
 export type ClientePostgres = Client
@@ -27,7 +35,9 @@ export async function conectar(parametros: ParametrosConexion): Promise<ClienteP
     user: parametros.user,
     password: parametros.password,
     // Si el puerto no responde, mejor fallar rapido y reintentar que colgar la suite.
-    connectionTimeoutMillis: 2_000,
+    connectionTimeoutMillis: parametros.timeoutMs ?? 2_000,
+    // rejectUnauthorized explicito en true: se verifica el certificado del servidor.
+    ...(parametros.ssl === true ? { ssl: { rejectUnauthorized: true } } : {}),
   })
   await cliente.connect()
   return cliente

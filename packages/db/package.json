@@ -10,7 +10,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "migrar:remoto": "node scripts/migrar-remoto.ts"
   },
   "devDependencies": {
     "@types/node": "^24",
