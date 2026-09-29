@@ -1,16 +1,24 @@
 /**
- * Creacion de los dos roles del runner y reparto de permisos.
+ * Creacion de roles y reparto de permisos.
  *
- * El esquema se aplica como `camarero_owner` (propietario). Las pruebas se conectan
- * como `camarero_app`, que no posee nada y no tiene BYPASSRLS: en PostgreSQL el
- * propietario de una tabla ignora sus politicas RLS, asi que probar con el
- * propietario daria siempre verde sin probar la RLS (LL-004).
+ * En el Postgres local se crean tres roles (administrador, dueno y aplicacion). En un
+ * Postgres gestionado (Supabase) el administrador ya existe y solo se asegura el rol de la
+ * aplicacion, que nunca tiene BYPASSRLS ni es propietario de nada.
+ *
+ * Cuidado con los identificadores: en Supabase la conexion se hace con el usuario del pooler
+ * `postgres.<referencia>`, que lleva un punto. Un nombre con punto interpolado sin comillas
+ * es un error de sintaxis. Todos los nombres van entrecomillados con `citar`.
  */
 import type { ClientePostgres, ParametrosConexion } from "../src/conexion.ts"
 import { cerrar, conectar } from "../src/conexion.ts"
 
 function escaparLiteral(valor: string): string {
   return valor.replaceAll("'", "''")
+}
+
+/** Entrecomilla un identificador para SQL. No es cosmetica: los nombres con punto lo exigen. */
+function citar(nombre: string): string {
+  return `"${nombre.replaceAll('"', '""')}"`
 }
 
 async function ejecutarDeclaraciones(
@@ -35,11 +43,11 @@ export async function prepararRoles(
   const contrasenaOwner = escaparLiteral(owner.password)
   const contrasenaApp = escaparLiteral(app.password)
   await ejecutarDeclaraciones(admin, [
-    `create role ${owner.user} login password '${contrasenaOwner}' nosuperuser nocreatedb nocreaterole nobypassrls`,
-    `create role ${app.user} login password '${contrasenaApp}' nosuperuser nocreatedb nocreaterole nobypassrls`,
+    `create role ${citar(owner.user)} login password '${contrasenaOwner}' nosuperuser nocreatedb nocreaterole nobypassrls`,
+    `create role ${citar(app.user)} login password '${contrasenaApp}' nosuperuser nocreatedb nocreaterole nobypassrls`,
     // El propietario del esquema es quien crea las tablas; el rol de aplicacion solo lo usa.
-    `alter schema public owner to ${owner.user}`,
-    `grant usage on schema public to ${app.user}`,
+    `alter schema public owner to ${citar(owner.user)}`,
+    `grant usage on schema public to ${citar(app.user)}`,
   ])
 }
 
@@ -51,20 +59,15 @@ export async function concederPermisosDeAplicacion(
   // gestionado) y despues de migrar: los privilegios por defecto no alcanzan a lo ya
   // creado, asi que se conceden de forma explicita y se dejan fijados.
   await ejecutarDeclaraciones(autor, [
-    `grant select, insert, update, delete on all tables in schema public to ${app.user}`,
-    `grant usage, select on all sequences in schema public to ${app.user}`,
-    `alter default privileges for role ${autor.user} in schema public grant select, insert, update, delete on tables to ${app.user}`,
+    `grant select, insert, update, delete on all tables in schema public to ${citar(app.user)}`,
+    `grant usage, select on all sequences in schema public to ${citar(app.user)}`,
+    // Sin la clausula FOR ROLE: se aplica al rol actual, que es quien creo las tablas. No se
+    // puede interpolar el nombre de usuario porque en el pooler de Supabase es
+    // `postgres.<referencia>`, que NO es un rol real de PostgreSQL.
+    `alter default privileges in schema public grant select, insert, update, delete on tables to ${citar(app.user)}`,
   ])
 }
 
-/**
- * Modo gestionado (Supabase): el administrador ya existe y NO se crea ningun superusuario.
- *
- * Solo se asegura el rol de la aplicacion (sin BYPASSRLS y sin ser propietario de nada) y
- * se retiran los permisos por defecto que un Postgres gestionado concede a sus roles
- * publicos. Esos permisos son un agujero real: `service_role` tiene BYPASSRLS, asi que si
- * conserva acceso a nuestro esquema y su clave se filtra, el aislamiento deja de existir.
- */
 export async function prepararRolDeAplicacion(
   admin: ParametrosConexion,
   app: ParametrosConexion,
@@ -90,9 +93,9 @@ export async function asegurarRolDeAplicacion(
     const atributos = password === null ? "nologin" : `login password '${escaparLiteral(password)}'`
     await crearRolSiNoExiste(
       cliente,
-      `create role ${usuario} ${atributos} nosuperuser nocreatedb nocreaterole nobypassrls`,
+      `create role ${citar(usuario)} ${atributos} nosuperuser nocreatedb nocreaterole nobypassrls`,
     )
-    await cliente.query(`grant usage on schema public to ${usuario}`)
+    await cliente.query(`grant usage on schema public to ${citar(usuario)}`)
     await revocarPermisosPorDefecto(cliente, ROLES_PUBLICOS_DE_SUPABASE)
   } finally {
     await cerrar(cliente)
@@ -133,7 +136,7 @@ async function revocarPermisosPorDefecto(
   if (nombres.length === 0) {
     return
   }
-  const lista = nombres.join(", ")
+  const lista = nombres.map((nombre) => citar(nombre)).join(", ")
   await cliente.query(`revoke all on schema public from ${lista}`)
   await cliente.query(`revoke all on all tables in schema public from ${lista}`)
   await cliente.query(

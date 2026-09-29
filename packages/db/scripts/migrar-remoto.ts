@@ -2,14 +2,14 @@
  * Instala el esquema en un Postgres remoto (Supabase).
  *
  * Lo lanza el flujo de trabajo "Instalar esquema" con la cadena de conexion del
- * administrador en la variable CAMARERO_DB_URL. NUNCA imprime la cadena ni ninguna
- * credencial: solo el resultado (migraciones, tablas y politicas), para poder comprobarlo
- * desde el registro del flujo sin exponer nada.
+ * administrador en la variable CAMARERO_DB_URL y la contrasena en CAMARERO_DB_PASSWORD. NUNCA
+ * imprime la cadena ni la contrasena: solo el resultado y dos diagnosticos sin datos
+ * sensibles (host y forma de la credencial), para poder comprobarlo desde el registro del
+ * flujo sin exponer nada.
  *
- * Pasos: asegura el rol de la aplicacion (sin contrasena por ahora; se fija cuando se
- * conecte la app), aplica las migraciones en orden y concede los permisos al rol.
+ * Pasos: asegura el rol de la aplicacion (sin contrasena por ahora; se fija cuando se conecte
+ * la app), aplica las migraciones pendientes segun el historial y concede los permisos.
  */
-
 import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import type { ClientePostgres, ParametrosConexion } from "../src/conexion.ts"
@@ -22,6 +22,10 @@ import { asegurarRolDeAplicacion, concederPermisosDeAplicacion } from "./prepara
 // verificacion: la conexion sigue comprobando el certificado, solo que ahora conoce cual es
 // la autoridad correcta. Caduca el 2031-04-26; si Supabase lo rota, hay que actualizarlo.
 const RUTA_CA_POR_DEFECTO = fileURLToPath(new URL("../certs/prod-ca-2021.crt", import.meta.url))
+
+// Historial de migraciones aplicadas. Sin el, una segunda ejecucion intentaria crear tablas
+// que ya existen y fallaria.
+const REGISTRO = "public.camarero_migraciones"
 
 async function leerAutoridadCertificadora(): Promise<string> {
   const ruta = process.env.CAMARERO_DB_CA ?? RUTA_CA_POR_DEFECTO
@@ -60,9 +64,27 @@ async function contar(cliente: ClientePostgres, sql: string): Promise<number> {
   return resultado.rows[0]?.n ?? -1
 }
 
-async function informar(admin: ParametrosConexion, migraciones: number): Promise<void> {
+/** Diagnostico seguro: host y forma del usuario, NUNCA la contrasena. */
+function describirDestino(parametros: ParametrosConexion): string {
+  const conReferencia = parametros.user.includes(".") ? "si" : "no"
+  return `Destino: ${parametros.host}:${parametros.port} (usuario con referencia de proyecto: ${conReferencia})`
+}
+
+/**
+ * Diagnostico de la contrasena SIN revelarla: dos indicios que explican casi todos los fallos
+ * de autenticacion al copiarla (un espacio o salto invisible en los extremos, o que se haya
+ * pegado ya codificada para URL).
+ */
+function describirCredencial(contrasena: string): string {
+  const conEspaciosEnLosExtremos = contrasena !== contrasena.trim()
+  const pareceCodificadaEnUrl = /%(?:[0-9a-fA-F]{2})/.test(contrasena)
+  return `Credencial: extremos con espacios o saltos: ${conEspaciosEnLosExtremos ? "si" : "no"}; parece codificada en URL: ${pareceCodificadaEnUrl ? "si" : "no"}`
+}
+
+async function informar(admin: ParametrosConexion): Promise<void> {
   const cliente = await conectar(admin)
   try {
+    const migraciones = await contar(cliente, `select count(*)::int as n from ${REGISTRO}`)
     const tablas = await contar(
       cliente,
       "select count(*)::int as n from pg_tables where schemaname = 'public'",
@@ -71,29 +93,12 @@ async function informar(admin: ParametrosConexion, migraciones: number): Promise
       cliente,
       "select count(*)::int as n from pg_policies where schemaname = 'public'",
     )
-    process.stdout.write(`Migraciones aplicadas: ${migraciones}\n`)
+    process.stdout.write(`Migraciones en el historial: ${migraciones}\n`)
     process.stdout.write(`Tablas en public: ${tablas}\n`)
     process.stdout.write(`Politicas en public: ${politicas}\n`)
   } finally {
     await cerrar(cliente)
   }
-}
-
-/** Diagnostico seguro: host y forma del usuario, NUNCA la contrasena. */
-function describirDestino(parametros: ParametrosConexion): string {
-  const conReferencia = parametros.user.includes(".") ? "si" : "no"
-  return `Destino: ${parametros.host}:${parametros.port} (usuario con referencia de proyecto: ${conReferencia})`
-}
-
-/**
- * Diagnostico de la contrasena SIN revelarla: solo dos indicios que explican casi todos los
- * fallos de autenticacion al copiarla (un espacio o salto invisible en los extremos, o que
- * se haya pegado ya codificada para URL).
- */
-function describirCredencial(contrasena: string): string {
-  const conEspaciosEnLosExtremos = contrasena !== contrasena.trim()
-  const pareceCodificadaEnUrl = /%(?:[0-9a-fA-F]{2})/.test(contrasena)
-  return `Credencial: extremos con espacios o saltos: ${conEspaciosEnLosExtremos ? "si" : "no"}; parece codificada en URL: ${pareceCodificadaEnUrl ? "si" : "no"}`
 }
 
 const url = process.env.CAMARERO_DB_URL
@@ -108,7 +113,9 @@ const admin = parametrosDesdeUrl(
 )
 process.stdout.write(`${describirDestino(admin)}\n`)
 process.stdout.write(`${describirCredencial(admin.password)}\n`)
+
 await asegurarRolDeAplicacion(admin, USUARIO_APP, null)
-const ficheros = await aplicarMigraciones(admin)
+const aplicadas = await aplicarMigraciones(admin, undefined, { registro: REGISTRO })
+process.stdout.write(`Migraciones aplicadas en esta ejecucion: ${aplicadas.length}\n`)
 await concederPermisosDeAplicacion(admin, { ...admin, user: USUARIO_APP })
-await informar(admin, ficheros.length)
+await informar(admin)
