@@ -10,13 +10,25 @@
  * conecte la app), aplica las migraciones en orden y concede los permisos al rol.
  */
 
+import { readFile } from "node:fs/promises"
+import { fileURLToPath } from "node:url"
 import type { ClientePostgres, ParametrosConexion } from "../src/conexion.ts"
 import { cerrar, conectar } from "../src/conexion.ts"
 import { USUARIO_APP } from "../src/configuracion.ts"
 import { aplicarMigraciones } from "./aplicar-migraciones.ts"
 import { asegurarRolDeAplicacion, concederPermisosDeAplicacion } from "./preparar-roles.ts"
 
-function parametrosDesdeUrl(url: string): ParametrosConexion {
+// Certificado raiz PUBLICO de Supabase, incluido en el repositorio para no desactivar la
+// verificacion: la conexion sigue comprobando el certificado, solo que ahora conoce cual es
+// la autoridad correcta. Caduca el 2031-04-26; si Supabase lo rota, hay que actualizarlo.
+const RUTA_CA_POR_DEFECTO = fileURLToPath(new URL("../certs/prod-ca-2021.crt", import.meta.url))
+
+async function leerAutoridadCertificadora(): Promise<string> {
+  const ruta = process.env.CAMARERO_DB_CA ?? RUTA_CA_POR_DEFECTO
+  return readFile(ruta, "utf8")
+}
+
+function parametrosDesdeUrl(url: string, ca: string): ParametrosConexion {
   const partes = new URL(url)
   const usuario = decodeURIComponent(partes.username)
   const contrasena = decodeURIComponent(partes.password)
@@ -30,8 +42,9 @@ function parametrosDesdeUrl(url: string): ParametrosConexion {
     database: ruta === "" ? "postgres" : ruta,
     user: usuario,
     password: contrasena,
-    // TLS obligatorio, con verificacion del certificado.
+    // TLS obligatorio, con verificacion del certificado contra la CA de Supabase.
     ssl: true,
+    ca,
     timeoutMs: 20_000,
   }
 }
@@ -65,7 +78,7 @@ if (url === undefined || url === "") {
   throw new Error("Falta la variable CAMARERO_DB_URL con la cadena de conexion del administrador")
 }
 
-const admin = parametrosDesdeUrl(url)
+const admin = parametrosDesdeUrl(url, await leerAutoridadCertificadora())
 await asegurarRolDeAplicacion(admin, USUARIO_APP, null)
 const ficheros = await aplicarMigraciones(admin)
 await concederPermisosDeAplicacion(admin, { ...admin, user: USUARIO_APP })

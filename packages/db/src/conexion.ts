@@ -21,6 +21,13 @@ export type ParametrosConexion = {
    * se apaga la comprobacion.
    */
   ssl?: boolean
+  /**
+   * Certificado de autoridad (CA) en formato PEM a confiar, ademas del almacen del sistema.
+   * Es un dato PUBLICO, no un secreto. Supabase firma sus conexiones con una raiz propia
+   * (`Supabase Root 2021 CA`), que no esta en el almacen del sistema; confiarla es lo
+   * correcto, y es lo contrario de desactivar la verificacion.
+   */
+  ca?: string
   /** Milisegundos antes de rendirse al conectar. Corto en local; mas largo en remoto. */
   timeoutMs?: number
 }
@@ -36,8 +43,16 @@ export async function conectar(parametros: ParametrosConexion): Promise<ClienteP
     password: parametros.password,
     // Si el puerto no responde, mejor fallar rapido y reintentar que colgar la suite.
     connectionTimeoutMillis: parametros.timeoutMs ?? 2_000,
-    // rejectUnauthorized explicito en true: se verifica el certificado del servidor.
-    ...(parametros.ssl === true ? { ssl: { rejectUnauthorized: true } } : {}),
+    // rejectUnauthorized explicito en true: se verifica el certificado del servidor. La CA
+    // se ANADE a las de confianza; no se sustituye la verificacion por una excepcion.
+    ...(parametros.ssl === true
+      ? {
+          ssl: {
+            rejectUnauthorized: true,
+            ...(parametros.ca === undefined ? {} : { ca: parametros.ca }),
+          },
+        }
+      : {}),
   })
   await cliente.connect()
   return cliente
