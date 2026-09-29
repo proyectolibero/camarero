@@ -1,0 +1,12 @@
+# Cabeceras de seguridad de la web (Cloudflare Pages las aplica por ruta).
+#
+# La regla es que la web no carga nada de terceros y no se embebe en ningun sitio. Cuando
+# la PWA del comensal necesite hablar con la API, se anadira su origen a connect-src.
+
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=()
+  Content-Security-Policy: default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'

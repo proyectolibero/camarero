@@ -3,6 +3,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Estado local de Wrangler (Cloudflare Workers)
+.wrangler/
+
 # Entorno y secretos: NUNCA se commitean
 .env
 .env.local

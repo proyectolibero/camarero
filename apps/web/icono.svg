@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Camarero">
+  <rect width="64" height="64" rx="12" fill="#111111" />
+  <path
+    d="M20 22h24a2 2 0 0 1 2 2v14a8 8 0 0 1-8 8h-4v6h8v2H22v-2h8v-6h-4a8 8 0 0 1-8-8V24a2 2 0 0 1 2-2Zm0 6v10a6 6 0 0 0 6 6h12a6 6 0 0 0 6-6V28H20Z"
+    fill="#ffffff"
+  />
+</svg>

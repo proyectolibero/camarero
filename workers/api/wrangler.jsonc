@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "camarero-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "VERSION": "0.0.0"
+  },
+  "r2_buckets": [
+    {
+      "binding": "CARTAS",
+      "bucket_name": "camarero-cartas"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@camarero/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Borde de API de Camarero en Cloudflare Workers: salud, web push, cron y rate limit.",
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "^5",
+    "vitest": "^5",
+    "wrangler": "^4.142.0"
+  }
+}

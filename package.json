@@ -16,13 +16,16 @@
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
-    "verify": "pnpm check"
+    "verify": "pnpm check",
+    "deploy:web": "wrangler pages deploy apps/web --project-name camarero --branch main",
+    "deploy:api": "pnpm --filter @camarero/api run deploy"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
     "husky": "^9",
     "lint-staged": "^15",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wrangler": "^4.142.0"
   },
   "lint-staged": {
     "*.{ts,tsx,js,json,jsonc,md}": [
