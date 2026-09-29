@@ -14,3 +14,9 @@ packages:
 allowBuilds:
   esbuild: true
   workerd: true
+
+# Wrangler arrastra undici, y la version que resolvio tenia una vulnerabilidad media
+# (GHSA-3wwx-pv8p-q78v) que el escaneo de Seguridad detecto en el primer despliegue. Se
+# fuerza la version corregida para no publicar con un fallo conocido.
+overrides:
+  undici: ^7.29.1
