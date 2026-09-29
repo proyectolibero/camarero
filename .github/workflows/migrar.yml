@@ -41,3 +41,6 @@ jobs:
         run: pnpm --filter @camarero/db run migrar:remoto
         env:
           CAMARERO_DB_URL: ${{ secrets.CAMARERO_DB_URL_ADMIN }}
+          # La contrasena va aparte, no dentro de la direccion: metida en una URL, un
+          # caracter como #, @, % o : sin codificar la corta en silencio.
+          CAMARERO_DB_PASSWORD: ${{ secrets.CAMARERO_DB_PASSWORD_ADMIN }}

@@ -28,12 +28,18 @@ async function leerAutoridadCertificadora(): Promise<string> {
   return readFile(ruta, "utf8")
 }
 
-function parametrosDesdeUrl(url: string, ca: string): ParametrosConexion {
+function parametrosDesdeUrl(
+  url: string,
+  ca: string,
+  contrasenaSeparada?: string,
+): ParametrosConexion {
   const partes = new URL(url)
   const usuario = decodeURIComponent(partes.username)
-  const contrasena = decodeURIComponent(partes.password)
+  // La contrasena puede venir en su propio secreto. Es lo preferible: dentro de una URL hay
+  // que codificarla, y un caracter como #, @, % o : sin codificar la corta en silencio.
+  const contrasena = contrasenaSeparada ?? decodeURIComponent(partes.password)
   if (usuario === "" || contrasena === "") {
-    throw new Error("La cadena de conexion no trae usuario o contrasena")
+    throw new Error("La cadena de conexion no trae usuario, o falta la contrasena")
   }
   const ruta = partes.pathname.replace(/^\//, "")
   return {
@@ -84,7 +90,11 @@ if (url === undefined || url === "") {
   throw new Error("Falta la variable CAMARERO_DB_URL con la cadena de conexion del administrador")
 }
 
-const admin = parametrosDesdeUrl(url, await leerAutoridadCertificadora())
+const admin = parametrosDesdeUrl(
+  url,
+  await leerAutoridadCertificadora(),
+  process.env.CAMARERO_DB_PASSWORD,
+)
 process.stdout.write(`${describirDestino(admin)}\n`)
 await asegurarRolDeAplicacion(admin, USUARIO_APP, null)
 const ficheros = await aplicarMigraciones(admin)
