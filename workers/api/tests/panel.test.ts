@@ -49,7 +49,7 @@ async function tokenPara(sub: string): Promise<string> {
 const DUENO: Empleado = {
   staffId: "s1",
   correo: "dueno@prueba.test",
-  nombre: "Dueno de prueba",
+  nombre: "Dueño de prueba",
   rol: "org_owner",
   organizacion: { id: "o1", nombre: "Local de prueba" },
   local: { id: "l1", nombre: "Local de prueba" },
@@ -72,6 +72,16 @@ const PLATAFORMA: Empleado = {
   organizacion: { id: "o9", nombre: "Plataforma" },
   local: null,
 }
+
+/** Los seis códigos del `check` de 0003_personal_y_roles.sql, para cubrirlos todos. */
+const ROLES_DE_PRUEBA = [
+  "platform_admin",
+  "org_owner",
+  "location_manager",
+  "server",
+  "kitchen",
+  "no_pin",
+] as const
 
 const AUTENTICA: Autenticador = async () => ({ token: "pasaporte-falso", expiraEnSegundos: 3600 })
 
@@ -223,8 +233,9 @@ describe("Panel: con sesion", () => {
     )
     expect(respuesta.status).toBe(200)
     const cuerpo = await respuesta.text()
-    expect(cuerpo).toContain("Hola, Dueno de prueba")
-    expect(cuerpo).toContain("org_owner")
+    expect(cuerpo).toContain("Hola, Dueño de prueba")
+    expect(cuerpo).toContain("<dd>Dueño</dd>")
+    expect(cuerpo).not.toContain("org_owner")
     expect(cuerpo).toContain("Local de prueba")
     expect(cuerpo).toContain("Carta (categorías, platos, precios, fotos, orden)")
   })
@@ -251,7 +262,8 @@ describe("Panel: con sesion", () => {
     expect(respuesta.status).toBe(403)
     const cuerpo = await respuesta.text()
     expect(cuerpo).toContain("No tienes acceso a este panel")
-    expect(cuerpo).toContain("kitchen")
+    expect(cuerpo).toContain("rol Cocina")
+    expect(cuerpo).not.toContain("kitchen")
   })
 
   it("debe negar /admin a platform_admin y senalarle su panel", async () => {
@@ -264,7 +276,8 @@ describe("Panel: con sesion", () => {
     )
     expect(respuesta.status).toBe(403)
     const cuerpo = await respuesta.text()
-    expect(cuerpo).toContain("platform_admin")
+    expect(cuerpo).toContain("Administración de plataforma")
+    expect(cuerpo).not.toContain("platform_admin")
     expect(cuerpo).toContain('href="/panel"')
   })
 
@@ -345,6 +358,16 @@ describe("Panel: ortografía en español correcto", () => {
       ),
     ]
     for (const respuesta of paginas) {
+      expect(faltasDeOrtografia(textoVisible(await respuesta.text()))).toEqual([])
+    }
+    // Los seis rótulos de rol se dibujan y pasan por la misma criba (D-043).
+    for (const rol of ROLES_DE_PRUEBA) {
+      const respuesta = await manejar(
+        peticion("/admin", { cookie: token }),
+        ENTORNO,
+        AHORA,
+        deps({ resolverEmpleado: async () => ({ ...DUENO, rol }) }),
+      )
       expect(faltasDeOrtografia(textoVisible(await respuesta.text()))).toEqual([])
     }
   })

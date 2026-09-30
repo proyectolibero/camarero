@@ -25,7 +25,7 @@ const RUTA_CA_POR_DEFECTO = fileURLToPath(new URL("../certs/prod-ca-2021.crt", i
 const EMAIL_POR_DEFECTO = "dueno@prueba.test"
 const NOMBRE_ORG = "Local de prueba"
 const SLUG_LOCAL = "local-de-prueba"
-const NOMBRE_EMPLEADO = "Dueno de prueba"
+const NOMBRE_EMPLEADO = "Dueño de prueba"
 const ROL_EMPLEADO = "org_owner"
 
 type FilaStaff = { id: string; org_id: string; location_id: string | null }

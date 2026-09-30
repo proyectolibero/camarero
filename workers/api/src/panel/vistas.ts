@@ -7,6 +7,7 @@
  */
 import type { Empleado } from "../base.ts"
 import { type HtmlSeguro, html } from "../ui/html.ts"
+import { nombreDeRol } from "./roles.ts"
 
 export type Superficie = "admin" | "panel"
 
@@ -55,7 +56,7 @@ function avisoError(mensaje: string): HtmlSeguro {
 
 function cabecera(superficie: Superficie, empleado: Empleado): HtmlSeguro {
   const quien = html`<strong>${empleado.nombre}</strong> ·
-    ${empleado.rol} · ${nombreDeSuperficie(superficie)}`
+    ${nombreDeRol(empleado.rol)} · ${nombreDeSuperficie(superficie)}`
   return html`<header class="cabecera">
 <span class="marca">Camarero</span>
 <span class="quien">${quien}</span>
@@ -107,7 +108,7 @@ export function vistaCuadro(superficie: Superficie, empleado: Empleado): HtmlSeg
 <section class="tarjeta">
 <h1>Hola, ${empleado.nombre}</h1>
 <dl class="datos">
-<dt>Rol</dt><dd>${empleado.rol}</dd>
+<dt>Rol</dt><dd>${nombreDeRol(empleado.rol)}</dd>
 <dt>Local</dt><dd>${nombreDeLocal(empleado)}</dd>
 <dt>Organización</dt><dd>${nombreDeOrganizacion(empleado)}</dd>
 </dl>
@@ -126,7 +127,7 @@ export function vistaPermisoDenegado(superficie: Superficie, empleado: Empleado)
 <main class="contenedor">
 <section class="tarjeta">
 <h1>No tienes acceso a este panel</h1>
-<p>Tu cuenta tiene el rol ${empleado.rol} y este panel es para ${esperado}.</p>
+<p>Tu cuenta tiene el rol ${nombreDeRol(empleado.rol)} y este panel es para ${esperado}.</p>
 <p>Si crees que es un error, pide a quien administra tu organización que revise tu rol.</p>
 <p><a class="boton boton-secundario" href="${destino}">Ir al ${nombreCorto}</a></p>
 </section>

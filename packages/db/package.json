@@ -14,6 +14,7 @@
     "migrar:remoto": "node scripts/migrar-remoto.ts",
     "configurar:tunel": "node scripts/configurar-tunel.ts",
     "sembrar:empleado": "node scripts/sembrar-empleado-de-prueba.ts",
+    "corregir:nombre": "node scripts/corregir-nombre-empleado.ts",
     "comprobar:cerradura": "node scripts/comprobar-cerradura-de-login.ts"
   },
   "devDependencies": {

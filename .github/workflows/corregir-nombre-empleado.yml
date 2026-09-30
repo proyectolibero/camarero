@@ -1,0 +1,55 @@
+name: Corregir nombre de empleado
+
+# Corrige el `display_name` de una ficha de `staff`, dirigida por correo. Es una operación
+# deliberada sobre datos reales: se lanza A MANO desde la pestaña Actions, nunca en un push.
+# Usa los secretos de administración (mismo patrón que «Instalar esquema») y no imprime
+# credenciales: el registro solo muestra la sentencia y el recuento de filas.
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: Correo de la ficha a corregir
+        required: true
+        default: dueno@prueba.test
+        type: string
+      nombre:
+        description: Nombre visible correcto
+        required: true
+        default: Dueño de prueba
+        type: string
+
+# El flujo solo lee el repositorio; las credenciales llegan por secreto.
+permissions:
+  contents: read
+
+concurrency:
+  group: corregir-nombre-empleado
+  cancel-in-progress: false
+
+jobs:
+  corregir:
+    name: Actualizar el nombre en Supabase
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Activar pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Preparar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Corregir el nombre de la ficha
+        run: pnpm --filter @camarero/db run corregir:nombre
+        env:
+          CAMARERO_DB_URL_ADMIN: ${{ secrets.CAMARERO_DB_URL_ADMIN }}
+          CAMARERO_DB_PASSWORD_ADMIN: ${{ secrets.CAMARERO_DB_PASSWORD_ADMIN }}
+          CAMARERO_EMPLEADO_EMAIL: ${{ inputs.email }}
+          CAMARERO_EMPLEADO_NOMBRE: ${{ inputs.nombre }}
