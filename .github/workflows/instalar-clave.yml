@@ -1,0 +1,49 @@
+name: Instalar clave anonima (temporal)
+
+# TEMPORAL. Sube el secreto SUPABASE_ANON_KEY al Worker camarero-api y lista los secretos
+# resultantes. Se lanza A MANO desde la pestana Actions y se borra despues de usarlo.
+# NUNCA imprime el valor: GitHub lo enmascara y solo se muestran los nombres.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: instalar-clave
+  cancel-in-progress: false
+
+jobs:
+  clave:
+    name: Instalar SUPABASE_ANON_KEY
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers/api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Activar pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Preparar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Subir el secreto al Worker
+        run: echo "${{ secrets.SUPABASE_ANON_KEY }}" | pnpm exec wrangler secret put SUPABASE_ANON_KEY --name camarero-api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Listar los secretos del Worker
+        run: pnpm exec wrangler secret list --name camarero-api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
