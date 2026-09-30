@@ -3,7 +3,7 @@
  *
  * Se prueba el enrutador completo, con la fuente de claves, el autenticador y el resolvedor de
  * la ficha inyectados: ninguna prueba sale a la red ni toca la base. Cuando hace falta una
- * sesion valida se firma un pasaporte ES256 de verdad y se verifica contra una clave publica
+ * sesión válida se firma un pasaporte ES256 de verdad y se verifica contra una clave pública
  * generada en la propia prueba.
  */
 import { beforeAll, describe, expect, it } from "vitest"
@@ -226,7 +226,7 @@ describe("Panel: con sesion", () => {
     expect(cuerpo).toContain("Hola, Dueno de prueba")
     expect(cuerpo).toContain("org_owner")
     expect(cuerpo).toContain("Local de prueba")
-    expect(cuerpo).toContain("Carta (categorias, platos, precios, fotos, orden)")
+    expect(cuerpo).toContain("Carta (categorías, platos, precios, fotos, orden)")
   })
 
   it("no debe incluir el pasaporte en el HTML", async () => {
@@ -302,3 +302,81 @@ describe("Panel: hoja de estilos y cabeceras", () => {
     expect(respuesta.headers.get("strict-transport-security") ?? "").toContain("max-age=")
   })
 })
+
+describe("Panel: ortografía en español correcto", () => {
+  it("debe rotular el campo de contraseña con eñe y tilde", async () => {
+    const respuesta = await manejar(peticion("/admin"), ENTORNO, AHORA, deps({}))
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain("Contraseña")
+    expect(cuerpo).toContain("Correo electrónico")
+    expect(cuerpo).not.toContain("Contrasena")
+  })
+
+  it("no debe dejar palabras sin tilde en el texto que ve el usuario", async () => {
+    const token = await tokenPara("u1")
+    const paginas = [
+      await manejar(peticion("/admin"), ENTORNO, AHORA, deps({})),
+      await manejar(
+        peticion("/admin/entrar", {
+          method: "POST",
+          formulario: { correo: "nadie@prueba.test", contrasena: "mala" },
+        }),
+        ENTORNO,
+        AHORA,
+        deps({}),
+      ),
+      await manejar(
+        peticion("/admin", { cookie: token }),
+        ENTORNO,
+        AHORA,
+        deps({ resolverEmpleado: async () => DUENO }),
+      ),
+      await manejar(
+        peticion("/panel", { cookie: token }),
+        ENTORNO,
+        AHORA,
+        deps({ resolverEmpleado: async () => PLATAFORMA }),
+      ),
+      await manejar(
+        peticion("/admin", { cookie: token }),
+        ENTORNO,
+        AHORA,
+        deps({ resolverEmpleado: async () => PLATAFORMA }),
+      ),
+    ]
+    for (const respuesta of paginas) {
+      expect(faltasDeOrtografia(textoVisible(await respuesta.text()))).toEqual([])
+    }
+  })
+})
+
+/** Deja solo lo que ve el usuario: sustituye cada etiqueta por un espacio. */
+function textoVisible(pagina: string): string {
+  return pagina.replace(/<[^>]*>/g, " ")
+}
+
+// Palabras que, escritas sin tilde, delatan un texto que no pasó por el español correcto (D-043).
+const PALABRAS_SIN_TILDE = [
+  "contrasena",
+  "sesion",
+  "organizacion",
+  "informacion",
+  "direccion",
+  "atencion",
+  "tambien",
+  "despues",
+  "ademas",
+  "numero",
+  "telefono",
+  "dia",
+  "dias",
+  "proximo",
+  "ultimo",
+  "aqui",
+  "asi",
+] as const
+
+/** Devuelve las palabras sin tilde encontradas como palabras completas (no parte de otra). */
+function faltasDeOrtografia(texto: string): readonly string[] {
+  return PALABRAS_SIN_TILDE.filter((palabra) => new RegExp(`\\b${palabra}\\b`, "i").test(texto))
+}

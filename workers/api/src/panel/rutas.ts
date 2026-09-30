@@ -1,8 +1,8 @@
 /**
- * Rutas del panel (dueno en /admin, plataforma en /panel).
+ * Rutas del panel (dueño en /admin, plataforma en /panel).
  *
- * Aqui solo se decide que se dibuja segun el rol. La cerradura de verdad es la RLS: si alguien
- * pide a mano una direccion que no le toca, la base no le devuelve filas. El rol de la fila no
+ * Aquí solo se decide qué se dibuja según el rol. La cerradura de verdad es la RLS: si alguien
+ * pide a mano una dirección que no le toca, la base no le devuelve filas. El rol de la fila no
  * es la cerradura.
  */
 import type { Empleado } from "../base.ts"
@@ -42,10 +42,10 @@ const RUTAS_SALIR: Readonly<Record<string, Superficie>> = {
 
 const RUTA_ESTILOS = "/panel/estilos.css"
 
-/** Mensaje unico: no se distingue si el fallo fue el correo o la contrasena. */
-export const ERROR_CREDENCIALES = "Correo o contrasena incorrectos."
+/** Mensaje único: no se distingue si el fallo fue el correo o la contraseña. */
+export const ERROR_CREDENCIALES = "Correo o contraseña incorrectos."
 
-/** /panel es para platform_admin; /admin, para cualquier otro rol con organizacion. */
+/** /panel es para platform_admin; /admin, para cualquier otro rol con organización. */
 export function puedeEntrar(superficie: Superficie, empleado: Empleado): boolean {
   if (superficie === "panel") {
     return empleado.rol === "platform_admin"
