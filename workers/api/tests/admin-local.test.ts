@@ -8,7 +8,14 @@ import { beforeAll, describe, expect, it } from "vitest"
 import type { Empleado } from "../src/base.ts"
 import { type DependenciasParciales, manejar } from "../src/enrutador.ts"
 import type { AlmacenPanel, CambiosLocal, DatosLocal, Resultado } from "../src/panel/datos.ts"
-import { AHORA, crearFirmante, ENTORNO, type Firmante, peticion } from "./apoyo.ts"
+import {
+  AHORA,
+  almacenFalso as crearAlmacen,
+  crearFirmante,
+  ENTORNO,
+  type Firmante,
+  peticion,
+} from "./apoyo.ts"
 
 let firmante: Firmante
 
@@ -47,13 +54,13 @@ type EspiaAlmacen = { readonly almacen: AlmacenPanel; readonly cambios: CambiosL
 
 function almacenFalso(local: DatosLocal | null, resultado?: Resultado): EspiaAlmacen {
   const cambios: CambiosLocal[] = []
-  const almacen: AlmacenPanel = {
+  const almacen = crearAlmacen({
     leerLocal: async () => local,
     actualizarLocal: async (_empleado, guardados) => {
       cambios.push(guardados)
       return resultado ?? { ok: true, valor: undefined }
     },
-  }
+  })
   return { almacen, cambios }
 }
 

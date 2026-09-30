@@ -7,7 +7,7 @@
  */
 import type { Empleado } from "../base.ts"
 import { type HtmlSeguro, html, htmlCrudo } from "../ui/html.ts"
-import type { DatosLocal } from "./datos.ts"
+import type { DatosLocal, Mesa, Zona } from "./datos.ts"
 import { nombreDeRol } from "./roles.ts"
 
 export type Superficie = "admin" | "panel"
@@ -248,4 +248,162 @@ ${puedeEditar ? formularioLocal(local) : datosLocalDeSoloLectura(local)}
 ${enlaceVolverAlPanel()}
 </main>`
   return pagina("Tu local", contenido)
+}
+
+const ETIQUETA_ZONA: Readonly<Record<string, string>> = {
+  sala: "Sala",
+  barra: "Barra",
+  terraza: "Terraza",
+  delivery: "Delivery",
+}
+
+const ETIQUETA_MESA: Readonly<Record<string, string>> = {
+  mesa: "Mesa",
+  barra: "Barra",
+}
+
+/** Mensajes y codigo de estado que una pantalla de gestion puede devolver tras una mutacion. */
+export type EstadoPantalla = {
+  readonly exito?: string
+  readonly error?: string
+  readonly estadoError?: number
+}
+
+function avisosDeEstado(estado: EstadoPantalla): HtmlSeguro {
+  return html`${estado.error === undefined ? html`` : avisoError(estado.error)}
+${estado.exito === undefined ? html`` : avisoExito(estado.exito)}`
+}
+
+function formularioZona(): HtmlSeguro {
+  return html`<form method="post" action="/admin/zonas">
+<label class="campo"><span>Nombre de la zona</span>
+<input type="text" name="nombre" maxlength="120" placeholder="Terraza" required></label>
+<label class="campo"><span>Tipo de zona</span>
+<select name="tipo">${opcionesDeSelect(["sala", "barra", "terraza", "delivery"], "sala", ETIQUETA_ZONA)}</select></label>
+<button class="boton" type="submit">Crear zona</button>
+</form>`
+}
+
+function listaDeZonas(zonas: readonly Zona[]): HtmlSeguro {
+  if (zonas.length === 0) {
+    return html`<p>Todavía no hay zonas en tu local.</p>`
+  }
+  return html`<ul class="plano">${zonas.map(
+    (zona) =>
+      html`<li><span>${zona.nombre}</span><span class="etiqueta">${ETIQUETA_ZONA[zona.kind] ?? zona.kind}</span><span class="cuenta">${zona.mesas} ${zona.mesas === 1 ? "mesa" : "mesas"}</span></li>`,
+  )}</ul>`
+}
+
+export function vistaZonas(
+  empleado: Empleado,
+  zonas: readonly Zona[],
+  puedeGestionar: boolean,
+  estado: EstadoPantalla & { readonly creada?: boolean },
+): HtmlSeguro {
+  const exito = estado.creada === true ? "Zona creada." : estado.exito
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${avisosDeEstado({ ...estado, exito })}
+<section class="tarjeta">
+<h1>Zonas de tu local</h1>
+${puedeGestionar ? formularioZona() : html`<p>Solo el dueño o el encargado pueden crear zonas.</p>`}
+</section>
+<section class="tarjeta">
+<h2>Zonas</h2>
+${listaDeZonas(zonas)}
+</section>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina("Zonas", contenido)
+}
+
+function opcionesDeZona(zonas: readonly Zona[]): HtmlSeguro {
+  return html`<option value="">Sin zona</option>${zonas.map(
+    (zona) => html`<option value="${zona.id}">${zona.nombre}</option>`,
+  )}`
+}
+
+function formularioMesa(zonas: readonly Zona[]): HtmlSeguro {
+  return html`<form method="post" action="/admin/mesas">
+<label class="campo"><span>Nombre de la mesa</span>
+<input type="text" name="etiqueta" maxlength="120" placeholder="Terraza 4" required></label>
+<label class="campo"><span>Zona</span>
+<select name="zona">${opcionesDeZona(zonas)}</select></label>
+<label class="campo"><span>Capacidad (comensales)</span>
+<input type="number" name="capacidad" min="1" max="99" value="2" required></label>
+<label class="campo"><span>Tipo</span>
+<select name="tipo">${opcionesDeSelect(["mesa", "barra"], "mesa", ETIQUETA_MESA)}</select></label>
+<button class="boton" type="submit">Crear mesa</button>
+</form>`
+}
+
+type GrupoDeMesas = { readonly zona: string; readonly mesas: readonly Mesa[] }
+
+function agruparPorZona(mesas: readonly Mesa[]): readonly GrupoDeMesas[] {
+  const porZona = new Map<string, Mesa[]>()
+  for (const mesa of mesas) {
+    const zona = mesa.zonaNombre ?? "Sin zona"
+    const lista = porZona.get(zona)
+    if (lista === undefined) {
+      porZona.set(zona, [mesa])
+    } else {
+      lista.push(mesa)
+    }
+  }
+  return [...porZona.entries()].map(([zona, lista]) => ({ zona, mesas: lista }))
+}
+
+function formularioAlternar(mesa: Mesa): HtmlSeguro {
+  return html`<form method="post" action="/admin/mesas/${mesa.id}/alternar">
+<button class="boton boton-secundario" type="submit">${mesa.activa ? "Desactivar" : "Activar"}</button>
+</form>`
+}
+
+function filaDeMesa(mesa: Mesa, puedeGestionar: boolean): HtmlSeguro {
+  const estado = mesa.activa ? "" : " · desactivada"
+  return html`<li class="mesa${mesa.activa ? "" : " mesa-inactiva"}">
+<span class="mesa-etiqueta">${mesa.etiqueta}</span>
+<span class="mesa-codigo">${mesa.codigo}</span>
+<span class="mesa-datos">${mesa.capacidad} plazas · ${ETIQUETA_MESA[mesa.kind] ?? mesa.kind}${estado}</span>
+${puedeGestionar ? formularioAlternar(mesa) : html``}
+</li>`
+}
+
+function listaDeMesas(mesas: readonly Mesa[], puedeGestionar: boolean): HtmlSeguro {
+  if (mesas.length === 0) {
+    return html`<p>Todavía no hay mesas en tu local.</p>`
+  }
+  return html`${agruparPorZona(mesas).map(
+    (grupo) =>
+      html`<section class="plano-grupo">
+<h3>${grupo.zona}</h3>
+<ul class="plano">${grupo.mesas.map((mesa) => filaDeMesa(mesa, puedeGestionar))}</ul>
+</section>`,
+  )}`
+}
+
+export function vistaMesas(
+  empleado: Empleado,
+  mesas: readonly Mesa[],
+  zonas: readonly Zona[],
+  puedeGestionar: boolean,
+  estado: EstadoPantalla & { readonly creada?: boolean; readonly cambiada?: boolean },
+): HtmlSeguro {
+  const creada = estado.creada === true ? "Mesa creada." : undefined
+  const cambiada = estado.cambiada === true ? "Mesa actualizada." : undefined
+  const exito = estado.exito ?? creada ?? cambiada
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${avisosDeEstado({ ...estado, exito })}
+<section class="tarjeta">
+<h1>Mesas de tu local</h1>
+${puedeGestionar ? formularioMesa(zonas) : html`<p>Solo el dueño o el encargado pueden crear mesas.</p>`}
+</section>
+<section class="tarjeta">
+<h2>Mesas</h2>
+${listaDeMesas(mesas, puedeGestionar)}
+</section>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina("Mesas", contenido)
 }

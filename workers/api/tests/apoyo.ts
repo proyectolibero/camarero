@@ -7,6 +7,7 @@
  */
 import { aBytes, bytesABase64Url } from "../src/auth/base64.ts"
 import type { ClaveDeFirma } from "../src/auth/jwks.ts"
+import type { AlmacenPanel } from "../src/panel/datos.ts"
 
 export const AHORA = new Date("2026-09-30T12:00:00.000Z")
 export const KID = "clave-de-prueba"
@@ -66,4 +67,22 @@ export function peticion(ruta: string, opciones: OpcionesPeticion = {}): Request
     headers: cabeceras,
     body: cuerpo,
   })
+}
+
+/**
+ * Almacen inyectable con respuestas sensatas por defecto. Cada prueba sobrescribe solo lo
+ * que le importa; asi anadir un metodo nuevo al contrato no rompe las pruebas anteriores.
+ */
+export function almacenFalso(parciales: Partial<AlmacenPanel> = {}): AlmacenPanel {
+  return {
+    leerLocal: async () => null,
+    actualizarLocal: async () => ({ ok: true, valor: undefined }),
+    listarZonas: async () => [],
+    crearZona: async () => ({ ok: true, valor: undefined }),
+    listarMesas: async () => [],
+    crearMesa: async () => ({ ok: false, motivo: "conflicto" }),
+    alternarMesa: async () => ({ ok: true, valor: undefined }),
+    leerMesa: async () => null,
+    ...parciales,
+  }
 }

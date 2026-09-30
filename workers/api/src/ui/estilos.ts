@@ -270,6 +270,73 @@ p {
   font-weight: 600;
 }
 
+.plano {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--borde);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.plano li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.65rem 0.9rem;
+  border-top: 1px solid var(--borde);
+}
+
+.plano li:first-child {
+  border-top: 0;
+}
+
+.plano .etiqueta,
+.plano .cuenta {
+  color: var(--tinta-suave);
+  font-size: 0.85rem;
+}
+
+.plano .cuenta {
+  margin-left: auto;
+}
+
+.plano-grupo {
+  margin-bottom: 1rem;
+}
+
+.plano-grupo h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+}
+
+.mesa-etiqueta {
+  font-weight: 600;
+}
+
+.mesa-codigo {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.08em;
+  background: var(--fondo);
+  border: 1px solid var(--borde);
+  border-radius: 0.35rem;
+  padding: 0.1rem 0.4rem;
+}
+
+.mesa-datos {
+  color: var(--tinta-suave);
+  font-size: 0.85rem;
+}
+
+.mesa form {
+  margin-left: auto;
+}
+
+.mesa-inactiva {
+  opacity: 0.6;
+}
+
 @media (max-width: 30rem) {
   .tarjeta {
     padding: 1.1rem;
