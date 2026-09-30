@@ -3,6 +3,7 @@
   "name": "camarero-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true
   },
@@ -13,6 +14,12 @@
     {
       "binding": "CARTAS",
       "bucket_name": "camarero-cartas"
+    }
+  ],
+  "hyperdrive": [
+    {
+      "binding": "BASE",
+      "id": "8d17257eef554341870f06bcfc93376a"
     }
   ]
 }

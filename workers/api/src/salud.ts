@@ -30,7 +30,7 @@ export function construirSalud(ahora: Date, version: string): Salud {
   return { estado: "ok", servicio: "camarero-api", version, hora: ahora.toISOString() }
 }
 
-function respuestaJson(cuerpo: unknown, estado: number, cabecerasExtra?: Headers): Response {
+export function respuestaJson(cuerpo: unknown, estado: number, cabecerasExtra?: Headers): Response {
   const cabeceras = cabecerasDeSeguridad()
   cabeceras.set("content-type", "application/json; charset=utf-8")
   if (cabecerasExtra !== undefined) {
@@ -50,6 +50,10 @@ export function responderSalud(ahora: Date, version: string): Response {
 
 export function responderNoEncontrado(): Response {
   return respuestaJson({ error: "no_encontrado" }, 404)
+}
+
+export function responderError(estado: number, motivo: string): Response {
+  return respuestaJson({ error: motivo }, estado)
 }
 
 export function responderMetodoNoPermitido(): Response {
