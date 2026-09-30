@@ -142,6 +142,42 @@ describe("Mapa: dibujo en el servidor", () => {
     await manejar(await conSesion("/admin/mesas"), ENTORNO, AHORA, deps(almacen, DUENO))
     expect(acomodos()).toBeGreaterThan(0)
   })
+
+  it("debe dibujar en cada mapa solo las mesas de su zona, no las del local entero", async () => {
+    const enSala = mesa({
+      id: "mS",
+      etiqueta: "Sala Uno",
+      zonaId: "z-sala",
+      zonaNombre: "Sala",
+    })
+    const enBarra = mesa({
+      id: "mB",
+      etiqueta: "Barra Uno",
+      zonaId: "z-barra",
+      zonaNombre: "Barra",
+    })
+    const zonas: readonly Zona[] = [
+      { id: "z-sala", nombre: "Sala", kind: "sala", mesas: 1 },
+      { id: "z-barra", nombre: "Barra", kind: "barra", mesas: 1 },
+    ]
+    const almacen = almacenFalso({
+      listarMesas: async () => [enSala, enBarra],
+      listarZonas: async () => zonas,
+    })
+    const respuesta = await manejar(
+      await conSesion("/admin/mesas"),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    const grupos = (await respuesta.text()).split('<section class="plano-grupo">')
+    const sala = grupos.find((grupo) => grupo.includes("<h3>Sala</h3>"))
+    const barra = grupos.find((grupo) => grupo.includes("<h3>Barra</h3>"))
+    expect(sala).toContain("Sala Uno")
+    expect(sala).not.toContain("Barra Uno")
+    expect(barra).toContain("Barra Uno")
+    expect(barra).not.toContain("Sala Uno")
+  })
 })
 
 describe("Mapa: sin JavaScript", () => {
@@ -165,10 +201,10 @@ describe("Mapa: sin JavaScript", () => {
 })
 
 describe("Mover: botones y direcciones", () => {
-  it("debe ofrecer botones grandes por POST, nunca enlaces", async () => {
+  it("debe ofrecer botones grandes por POST para la mesa elegida, nunca por enlace", async () => {
     const { almacen } = espiaMapa([MESA_ACTIVA])
     const respuesta = await manejar(
-      await conSesion("/admin/mesas"),
+      await conSesion("/admin/mesas?mesa=m1"),
       ENTORNO,
       AHORA,
       deps(almacen, DUENO),
@@ -181,7 +217,7 @@ describe("Mover: botones y direcciones", () => {
   })
 
   for (const direccion of ["arriba", "abajo", "izquierda", "derecha"] as const) {
-    it(`debe mover hacia ${direccion} y redirigir`, async () => {
+    it(`debe mover hacia ${direccion} y redirigir conservando la mesa elegida`, async () => {
       const { almacen, movimientos } = espiaMapa([MESA_ACTIVA])
       const respuesta = await manejar(
         await conSesion("/admin/mesas/m1/mover", {
@@ -193,10 +229,105 @@ describe("Mover: botones y direcciones", () => {
         deps(almacen, DUENO),
       )
       expect(respuesta.status).toBe(303)
-      expect(respuesta.headers.get("location")).toBe("/admin/mesas?movida=1")
+      expect(respuesta.headers.get("location")).toBe("/admin/mesas?movida=1&mesa=m1")
       expect(movimientos).toEqual([{ mesaId: "m1", direccion }])
     })
   }
+})
+
+describe("Elegir mesa: la seleccion va por la URL", () => {
+  it("debe enlazar cada mesa del mapa a la misma pantalla con la mesa elegida", async () => {
+    const { almacen } = espiaMapa([MESA_ACTIVA, MESA_INACTIVA])
+    const respuesta = await manejar(
+      await conSesion("/admin/mesas"),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain('class="mapa-enlace"')
+    expect(cuerpo).toContain('href="/admin/mesas?mesa=m1"')
+    expect(cuerpo).toContain('href="/admin/mesas?mesa=m2"')
+  })
+
+  it("debe marcar como elegida la mesa que llega por la URL", async () => {
+    const { almacen } = espiaMapa([MESA_ACTIVA, MESA_INACTIVA])
+    const respuesta = await manejar(
+      await conSesion("/admin/mesas?mesa=m2"),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain("mapa-ficha-elegida")
+    expect(cuerpo).toContain('aria-current="true"')
+  })
+
+  it("debe hacer que las flechas actuen sobre la mesa elegida", async () => {
+    const { almacen, movimientos } = espiaMapa([MESA_ACTIVA, MESA_INACTIVA])
+    const respuesta = await manejar(
+      await conSesion("/admin/mesas?mesa=m2"),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain("Moviendo:")
+    expect(cuerpo).toContain("Terraza 5")
+    expect(cuerpo).toContain('action="/admin/mesas/m2/mover"')
+    expect(cuerpo).not.toContain('action="/admin/mesas/m1/mover"')
+
+    await manejar(
+      await conSesion("/admin/mesas/m2/mover", {
+        method: "POST",
+        formulario: { direccion: "derecha" },
+      }),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    expect(movimientos).toEqual([{ mesaId: "m2", direccion: "derecha" }])
+  })
+
+  it("debe mostrar una sola vez el mando de flechas, no uno por mesa", async () => {
+    const { almacen } = espiaMapa([MESA_ACTIVA, MESA_INACTIVA])
+    const respuesta = await manejar(
+      await conSesion("/admin/mesas?mesa=m1"),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain('class="mover"')
+    expect(cuerpo.match(/class="mover"/g)?.length).toBe(1)
+  })
+
+  it("debe pedir que se toque una mesa cuando no hay ninguna elegida", async () => {
+    const { almacen } = espiaMapa([MESA_ACTIVA, MESA_INACTIVA])
+    const respuesta = await manejar(
+      await conSesion("/admin/mesas"),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain("Toca una mesa en el mapa para moverla")
+    expect(cuerpo).not.toContain('class="mover"')
+    expect(cuerpo).not.toContain("mover-boton")
+  })
+
+  it("no debe dibujar el mando aunque llegue una mesa que no existe", async () => {
+    const { almacen } = espiaMapa([MESA_ACTIVA])
+    const respuesta = await manejar(
+      await conSesion("/admin/mesas?mesa=inexistente"),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain("Toca una mesa en el mapa para moverla")
+    expect(cuerpo).not.toContain("mover-boton")
+  })
 })
 
 describe("Mover: fallos explicados en pantalla", () => {

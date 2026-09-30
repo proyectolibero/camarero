@@ -349,19 +349,25 @@ p {
 
 .mesa-datos {
   color: var(--tinta-suave);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
 
 .mesa-cabecera {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem 1rem;
+  gap: 0.35rem 0.5rem;
   width: 100%;
 }
 
 .mesa-cabecera form {
   margin-left: auto;
+}
+
+/* El boton de activar/desactivar se aprieta para que la fila quepa de una linea en el movil. */
+.mesa-cabecera form .boton {
+  padding: 0.45rem 0.7rem;
+  font-size: 0.85rem;
 }
 
 /* El mapa no tiene JavaScript: se dibuja en el servidor y se adapta al ancho del movil. */
@@ -371,6 +377,24 @@ p {
   height: auto;
   max-width: 40rem;
   margin: 0 0 0.75rem;
+}
+
+/* Elegir mesa es un enlace: se toca la ficha en el mapa, no se arrastra nada. */
+.mapa-enlace {
+  cursor: pointer;
+}
+
+.mapa-enlace:hover .mapa-mesa,
+.mapa-enlace:focus-visible .mapa-mesa {
+  stroke: var(--acento);
+  stroke-width: 3;
+}
+
+/* La elegida se marca sola: el mapa dice cual se va a mover, sin coordenadas en jerga. */
+.mapa-ficha-elegida .mapa-mesa {
+  stroke: var(--tinta);
+  stroke-width: 4;
+  stroke-dasharray: none;
 }
 
 .mapa-celda {
@@ -413,14 +437,49 @@ p {
   fill: var(--mapa-inactiva-tinta);
 }
 
-/* Botones grandes: se pulsan con el pulgar en un movil. La posicion va en el centro. */
+/* Un solo juego de flechas, grande, pegado al mapa de la mesa elegida. */
+.mover-caja {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  margin: 0 0 0.75rem;
+  border: 1px solid var(--borde);
+  border-radius: 0.5rem;
+  background: var(--fondo);
+}
+
+.mover-titulo {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.5rem;
+  color: var(--tinta-suave);
+}
+
+.mover-titulo strong {
+  color: var(--tinta);
+}
+
+.mover-quitar {
+  font-size: 0.85rem;
+  color: var(--acento);
+}
+
+.mover-ayuda {
+  color: var(--tinta-suave);
+  margin: 0 0 0.75rem;
+}
+
 .mover {
   display: grid;
   grid-template-columns: repeat(3, minmax(2.75rem, 3rem));
   grid-template-rows: repeat(3, auto);
   gap: 0.35rem;
   justify-content: center;
-  margin-top: 0.6rem;
   width: 100%;
 }
 
@@ -449,13 +508,9 @@ p {
   grid-area: 2 / 1 / 3 / 2;
 }
 
-.mover-posicion {
+/* Hueco central del mando: el centro queda libre, sin la posicion en jerga. */
+.mover-hueco {
   grid-area: 2 / 2 / 3 / 3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--tinta-suave);
-  font-size: 0.8rem;
 }
 
 .mover-derecha {
@@ -466,8 +521,11 @@ p {
   grid-area: 3 / 2 / 4 / 3;
 }
 
+/* Una linea por mesa: etiqueta, codigo, capacidad, estado, QR y activar/desactivar. Sin flechas. */
 .plano li.mesa {
   display: block;
+  padding-top: 0.55rem;
+  padding-bottom: 0.55rem;
 }
 
 .mesa-inactiva {

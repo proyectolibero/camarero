@@ -130,4 +130,20 @@ describe("Mapa: SVG en el servidor", () => {
     expect(svg.valor).toContain("rayado-z0")
     expect(svg.valor).toContain("desactivada")
   })
+
+  it("debe enlazar cada mesa y marcar la elegida cuando hay seleccion", () => {
+    const svg = svgDeZona("Terraza", [mesa({ id: "m1", etiqueta: "Terraza 4" })], 0, {
+      urlDeMesa: (unaMesa) => `/admin/mesas?mesa=${unaMesa.id}`,
+      mesaElegidaId: "m1",
+    })
+    expect(svg.valor).toContain('<a class="mapa-enlace"')
+    expect(svg.valor).toContain('href="/admin/mesas?mesa=m1"')
+    expect(svg.valor).toContain('aria-current="true"')
+    expect(svg.valor).toContain("mapa-ficha-elegida")
+  })
+
+  it("no debe envolver en enlace si no se puede elegir", () => {
+    const svg = svgDeZona("Barra", [mesa({ id: "m1" })], 0)
+    expect(svg.valor).not.toContain("<a ")
+  })
 })

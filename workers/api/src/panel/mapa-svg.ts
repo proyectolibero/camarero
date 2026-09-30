@@ -8,7 +8,7 @@
  * sueltos, para que el modo oscuro siga funcionando.
  */
 import type { HtmlSeguro } from "../ui/html.ts"
-import { html } from "../ui/html.ts"
+import { html, htmlCrudo } from "../ui/html.ts"
 import type { Mesa } from "./datos.ts"
 import { dimensionesDeMapa } from "./mapa.ts"
 
@@ -86,7 +86,18 @@ function lineasDeEtiqueta(
   )
 }
 
-function fichaDeMesa(mesa: Mesa, sufijo: string): HtmlSeguro {
+/** Como se elige una mesa desde el mapa, si es que se puede elegir. */
+export type OpcionesDeMapa = {
+  readonly urlDeMesa?: (mesa: Mesa) => string
+  readonly mesaElegidaId?: string | null
+}
+
+/**
+ * Dibuja una ficha. Si hay `urlDeMesa`, la envuelve en un enlace `<a>`: elegir no es mutar,
+ * asi que puede ser un GET y se ve en la direccion. La mesa elegida lleva un contorno grueso
+ * para que el mapa diga por si solo cual se va a mover, sin coordenadas en jerga.
+ */
+function fichaDeMesa(mesa: Mesa, sufijo: string, opciones: OpcionesDeMapa): HtmlSeguro {
   if (mesa.posFila === null || mesa.posColumna === null) {
     return html``
   }
@@ -98,12 +109,25 @@ function fichaDeMesa(mesa: Mesa, sufijo: string): HtmlSeguro {
   const claseTexto = mesa.activa ? "mapa-etiqueta" : "mapa-etiqueta mapa-etiqueta-inactiva"
   const relleno = mesa.activa ? html`` : html` fill="url(#rayado-${sufijo})"`
   const estado = mesa.activa ? "activa" : "desactivada"
+  const elegida = opciones.mesaElegidaId === mesa.id
+  const claseFicha = elegida ? "mapa-ficha mapa-ficha-elegida" : "mapa-ficha"
   const lineas = lineasDeEtiqueta(mesa.etiqueta, x + ancho / 2, y + alto / 2)
-  return html`<g class="mapa-ficha"><title>${mesa.etiqueta} (${estado})</title><rect class="${clase}" x="${x}" y="${y}" width="${ancho}" height="${alto}" rx="6"${relleno}></rect><text class="${claseTexto}" text-anchor="middle">${lineas}</text></g>`
+  const ficha = html`<g class="${claseFicha}"><title>${mesa.etiqueta} (${estado})</title><rect class="${clase}" x="${x}" y="${y}" width="${ancho}" height="${alto}" rx="6"${relleno}></rect><text class="${claseTexto}" text-anchor="middle">${lineas}</text></g>`
+  const url = opciones.urlDeMesa?.(mesa)
+  if (url === undefined) {
+    return ficha
+  }
+  const actual = elegida ? htmlCrudo(' aria-current="true"') : html``
+  return html`<a class="mapa-enlace" href="${url}"${actual}>${ficha}</a>`
 }
 
 /** Dibuja el mapa de una zona. `indice` solo hace unicos los identificadores del SVG en la pagina. */
-export function svgDeZona(nombreZona: string, mesas: readonly Mesa[], indice: number): HtmlSeguro {
+export function svgDeZona(
+  nombreZona: string,
+  mesas: readonly Mesa[],
+  indice: number,
+  opciones: OpcionesDeMapa = {},
+): HtmlSeguro {
   const { filas, columnas } = dimensionesDeMapa(mesas)
   const ancho = columnas * ANCHO_CELDA
   const alto = filas * ALTO_CELDA
@@ -111,7 +135,7 @@ export function svgDeZona(nombreZona: string, mesas: readonly Mesa[], indice: nu
   const idTitulo = `mapa-titulo-${sufijo}`
   const idDescripcion = `mapa-desc-${sufijo}`
   const cuantas = `${mesas.length} ${mesas.length === 1 ? "mesa" : "mesas"}`
-  const fichas = mesas.map((mesa) => fichaDeMesa(mesa, sufijo))
+  const fichas = mesas.map((mesa) => fichaDeMesa(mesa, sufijo, opciones))
   return html`<svg class="mapa-svg" viewBox="0 0 ${ancho} ${alto}" role="img" aria-labelledby="${idTitulo} ${idDescripcion}" xmlns="http://www.w3.org/2000/svg">
 <title id="${idTitulo}">Mapa de ${nombreZona}</title>
 <desc id="${idDescripcion}">Mapa de la zona ${nombreZona} con ${cuantas}.</desc>

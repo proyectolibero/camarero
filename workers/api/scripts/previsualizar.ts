@@ -13,6 +13,7 @@ import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Empleado } from "../src/base.ts"
+import { generarCodigoMesa } from "../src/panel/codigo-mesa.ts"
 import type { Mesa, Zona } from "../src/panel/datos.ts"
 import { vistaEntrada, vistaMesas } from "../src/panel/vistas.ts"
 import { ESTILOS } from "../src/ui/estilos.ts"
@@ -30,40 +31,70 @@ const DUENO: Empleado = {
   local: { id: "l1", nombre: "Barra Uno" },
 }
 
-const ZONA_TERRAZA: Zona = { id: "z1", nombre: "Terraza", kind: "terraza", mesas: 7 }
+const ZONAS: readonly Zona[] = [
+  { id: "z1", nombre: "Sala", kind: "sala", mesas: 5 },
+  { id: "z2", nombre: "Barra", kind: "barra", mesas: 3 },
+  { id: "z3", nombre: "Terraza", kind: "terraza", mesas: 4 },
+]
 
+/** El codigo no se inventa: lo genera el mismo generador que usa el alta de mesas. */
 function mesa(parcial: Partial<Mesa>): Mesa {
   return {
     id: "m1",
-    codigo: "ABCDEFGH",
+    codigo: generarCodigoMesa(),
     etiqueta: "Mesa",
     capacidad: 4,
     kind: "mesa",
     activa: true,
     zonaId: "z1",
-    zonaNombre: "Terraza",
+    zonaNombre: "Sala",
     posFila: 0,
     posColumna: 0,
     ...parcial,
   }
 }
 
+function enZona(zona: Zona, mesas: readonly Partial<Mesa>[]): readonly Mesa[] {
+  return mesas.map((parcial) => mesa({ zonaId: zona.id, zonaNombre: zona.nombre, ...parcial }))
+}
+
+const SALA = ZONAS[0]
+const BARRA = ZONAS[1]
+const TERRAZA = ZONAS[2]
+if (SALA === undefined || BARRA === undefined || TERRAZA === undefined) {
+  throw new Error("Faltan zonas de previsualizacion")
+}
+
+// Cada mapa con SUS mesas: doce mesas en tres zonas, una desactivada y una de etiqueta larga.
 const MESAS: readonly Mesa[] = [
-  mesa({ id: "m1", etiqueta: "Barra 1", capacidad: 2, posFila: 0, posColumna: 0 }),
-  mesa({ id: "m2", etiqueta: "Mesa 2", posFila: 0, posColumna: 1 }),
-  mesa({ id: "m3", etiqueta: "Mesa 3", posFila: 0, posColumna: 2 }),
-  mesa({ id: "m4", etiqueta: "Terraza 12", capacidad: 6, posFila: 0, posColumna: 3 }),
-  mesa({ id: "m5", etiqueta: "Mesa 5", posFila: 1, posColumna: 0 }),
-  mesa({
-    id: "m6",
-    etiqueta: "Mesa 6",
-    codigo: "JKLMNPQR",
-    activa: false,
-    posFila: 1,
-    posColumna: 1,
-  }),
-  mesa({ id: "m7", etiqueta: "Mesa 7", posFila: 1, posColumna: 2 }),
+  ...enZona(SALA, [
+    { id: "s1", etiqueta: "Sala 1", capacidad: 2, posFila: 0, posColumna: 0 },
+    { id: "s2", etiqueta: "Sala 2", capacidad: 4, posFila: 0, posColumna: 1 },
+    { id: "s3", etiqueta: "Sala 3", capacidad: 4, posFila: 0, posColumna: 2 },
+    { id: "s4", etiqueta: "Sala 4", capacidad: 6, posFila: 1, posColumna: 0 },
+    { id: "s5", etiqueta: "Sala 5", capacidad: 2, posFila: 1, posColumna: 1 },
+  ]),
+  ...enZona(BARRA, [
+    { id: "b1", etiqueta: "Barra 1", capacidad: 2, kind: "barra", posFila: 0, posColumna: 0 },
+    { id: "b2", etiqueta: "Barra 2", capacidad: 2, kind: "barra", posFila: 0, posColumna: 1 },
+    { id: "b3", etiqueta: "Barra 3", capacidad: 2, kind: "barra", posFila: 0, posColumna: 2 },
+  ]),
+  ...enZona(TERRAZA, [
+    { id: "t1", etiqueta: "Terraza 1", capacidad: 4, posFila: 0, posColumna: 0 },
+    { id: "t2", etiqueta: "Terraza 2", capacidad: 4, posFila: 0, posColumna: 1 },
+    {
+      id: "t3",
+      etiqueta: "Terraza junto a la ventana grande",
+      capacidad: 6,
+      posFila: 0,
+      posColumna: 2,
+    },
+    { id: "t4", etiqueta: "Terraza 4", capacidad: 4, activa: false, posFila: 0, posColumna: 3 },
+  ]),
 ]
+
+/** La previsualizacion ensena una mesa elegida para que se vean el mando y su etiqueta. */
+const MESA_ELEGIDA = "t3"
 
 /** En produccion la CSP permite la ruta absoluta; en `file://` hace falta una relativa. */
 function conHojaDeEstilosRelativa(pagina: string): string {
@@ -81,7 +112,7 @@ escribir("entrada.html", conHojaDeEstilosRelativa(renderizar(vistaEntrada("admin
 escribir(
   "mapa.html",
   conHojaDeEstilosRelativa(
-    renderizar(vistaMesas(DUENO, MESAS, [ZONA_TERRAZA], true, { exito: "Mesa movida." })),
+    renderizar(vistaMesas(DUENO, MESAS, ZONAS, true, { exito: "Mesa movida." }, MESA_ELEGIDA)),
   ),
 )
 

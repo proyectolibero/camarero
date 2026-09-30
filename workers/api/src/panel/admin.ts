@@ -282,11 +282,19 @@ async function renderMesas(
     readonly creada?: boolean
     readonly cambiada?: boolean
     readonly movida?: boolean
+    readonly mesaElegidaId?: string | null
   },
 ): Promise<Response> {
   const mesas = await almacen.listarMesas(empleado)
   const zonas = await almacen.listarZonas(empleado)
-  const vista = vistaMesas(empleado, mesas, zonas, puedeGestionarPlano(empleado), estado)
+  const vista = vistaMesas(
+    empleado,
+    mesas,
+    zonas,
+    puedeGestionarPlano(empleado),
+    estado,
+    estado.mesaElegidaId ?? null,
+  )
   return respuestaHtml(renderizar(vista), estado.estadoError ?? 200)
 }
 
@@ -391,9 +399,11 @@ async function moverMesa(
     return await renderMesas(empleado, almacen, {
       error: fallo.error,
       estadoError: fallo.estadoError,
+      mesaElegidaId: mesaId,
     })
   }
-  return responderRedireccion("/admin/mesas?movida=1")
+  // Se conserva la mesa elegida para poder seguir moviendola sin volver a tocar el mapa.
+  return responderRedireccion(`/admin/mesas?movida=1&mesa=${encodeURIComponent(mesaId)}`)
 }
 
 async function rutaMesas(
@@ -418,6 +428,7 @@ async function rutaMesas(
     creada: url.searchParams.get("creada") === "1",
     cambiada: url.searchParams.get("cambiada") === "1",
     movida: url.searchParams.get("movida") === "1",
+    mesaElegidaId: url.searchParams.get("mesa"),
   })
 }
 

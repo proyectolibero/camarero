@@ -366,14 +366,27 @@ function controlesDeMovimiento(mesa: Mesa): HtmlSeguro {
   if (mesa.posFila === null || mesa.posColumna === null) {
     return html``
   }
-  const posicion = `f${mesa.posFila + 1} c${mesa.posColumna + 1}`
   return html`<form class="mover" method="post" action="/admin/mesas/${mesa.id}/mover">
 <button class="mover-boton mover-arriba" type="submit" name="direccion" value="arriba" aria-label="Mover ${mesa.etiqueta} arriba">↑</button>
 <button class="mover-boton mover-izquierda" type="submit" name="direccion" value="izquierda" aria-label="Mover ${mesa.etiqueta} a la izquierda">←</button>
-<span class="mover-posicion" aria-hidden="true">${posicion}</span>
+<span class="mover-hueco" aria-hidden="true"></span>
 <button class="mover-boton mover-derecha" type="submit" name="direccion" value="derecha" aria-label="Mover ${mesa.etiqueta} a la derecha">→</button>
 <button class="mover-boton mover-abajo" type="submit" name="direccion" value="abajo" aria-label="Mover ${mesa.etiqueta} abajo">↓</button>
 </form>`
+}
+
+/** El unico juego de flechas de la pagina, siempre pegado a la mesa elegida en el mapa. */
+function bloqueDeMovimiento(mesa: Mesa): HtmlSeguro {
+  return html`<div class="mover-caja">
+<p class="mover-titulo">Moviendo: <strong>${mesa.etiqueta}</strong>
+<a class="mover-quitar" href="/admin/mesas">Dejar de mover</a></p>
+${controlesDeMovimiento(mesa)}
+</div>`
+}
+
+/** Enlace de seleccion: elegir una mesa es un GET, no una mutacion, y se ve en la direccion. */
+function urlDeSeleccion(mesa: Mesa): string {
+  return `/admin/mesas?mesa=${encodeURIComponent(mesa.id)}`
 }
 
 function filaDeMesa(mesa: Mesa, puedeGestionar: boolean): HtmlSeguro {
@@ -382,28 +395,35 @@ function filaDeMesa(mesa: Mesa, puedeGestionar: boolean): HtmlSeguro {
     ? html`<a class="mesa-qr" href="/admin/mesas/${mesa.id}/qr">QR</a>`
     : html``
   const alternar = puedeGestionar ? formularioAlternar(mesa) : html``
-  const controles = puedeGestionar ? controlesDeMovimiento(mesa) : html``
   return html`<li class="mesa${mesa.activa ? "" : " mesa-inactiva"}">
 <div class="mesa-cabecera">
 <span class="mesa-etiqueta">${mesa.etiqueta}</span>
 <span class="mesa-codigo">${mesa.codigo}</span>
-<span class="mesa-datos">${mesa.capacidad} plazas · ${ETIQUETA_MESA[mesa.kind] ?? mesa.kind}${estado}</span>
+<span class="mesa-datos">${mesa.capacidad} plazas${estado}</span>
 ${enlaceQr}
 ${alternar}
 </div>
-${controles}
 </li>`
 }
 
-function listaDeMesas(mesas: readonly Mesa[], puedeGestionar: boolean): HtmlSeguro {
+function listaDeMesas(
+  mesas: readonly Mesa[],
+  puedeGestionar: boolean,
+  mesaElegida: Mesa | null,
+): HtmlSeguro {
   if (mesas.length === 0) {
     return html`<p>Todavía no hay mesas en tu local.</p>`
+  }
+  const opciones = {
+    urlDeMesa: puedeGestionar ? urlDeSeleccion : undefined,
+    mesaElegidaId: mesaElegida?.id ?? null,
   }
   return html`${agruparPorZona(mesas).map(
     (grupo, indice) =>
       html`<section class="plano-grupo">
 <h3>${grupo.zona}</h3>
-${svgDeZona(grupo.zona, grupo.mesas, indice)}
+${svgDeZona(grupo.zona, grupo.mesas, indice, opciones)}
+${mesaElegida !== null && grupo.mesas.some((mesa) => mesa.id === mesaElegida.id) ? bloqueDeMovimiento(mesaElegida) : html``}
 <ul class="plano">${grupo.mesas.map((mesa) => filaDeMesa(mesa, puedeGestionar))}</ul>
 </section>`,
   )}`
@@ -419,11 +439,17 @@ export function vistaMesas(
     readonly cambiada?: boolean
     readonly movida?: boolean
   },
+  mesaElegidaId: string | null = null,
 ): HtmlSeguro {
   const creada = estado.creada === true ? "Mesa creada." : undefined
   const cambiada = estado.cambiada === true ? "Mesa actualizada." : undefined
   const movida = estado.movida === true ? "Mesa movida." : undefined
   const exito = estado.exito ?? creada ?? cambiada ?? movida
+  const mesaElegida = mesas.find((mesa) => mesa.id === mesaElegidaId) ?? null
+  const ayuda =
+    puedeGestionar && mesaElegida === null
+      ? html`<p class="mover-ayuda">Toca una mesa en el mapa para moverla.</p>`
+      : html``
   const contenido = html`${cabecera("admin", empleado)}
 <main class="contenedor">
 ${avisosDeEstado({ ...estado, exito })}
@@ -438,7 +464,8 @@ ${
     ? html`<p class="no-imprimir"><a class="boton boton-secundario" href="/admin/mesas/qr">Imprimir todos los QR</a></p>`
     : html``
 }
-${listaDeMesas(mesas, puedeGestionar)}
+${ayuda}
+${listaDeMesas(mesas, puedeGestionar, mesaElegida)}
 </section>
 ${enlaceVolverAlPanel()}
 </main>`
