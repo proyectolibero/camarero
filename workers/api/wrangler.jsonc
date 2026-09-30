@@ -7,6 +7,21 @@
   "observability": {
     "enabled": true
   },
+  // Un solo nombre de host (D-023, ADR-0022, ADR-0027): el Worker sirve tambien los
+  // estaticos de la PWA del comensal. La carpeta es la misma de siempre (`apps/web`): no se
+  // duplican ficheros, se apunta al directorio real, que esta fuera del directorio del Worker.
+  // `_headers` lo aplica la plataforma a los estaticos; las respuestas del Worker NO lo
+  // heredan (ya ponen sus cabeceras en `src/salud.ts`).
+  "assets": {
+    "directory": "../../apps/web",
+    "binding": "ASSETS",
+    // La PWA del comensal es una aplicacion de una sola pagina: /t/CASA-1 debe devolver el
+    // index.html, no un 404.
+    "not_found_handling": "single-page-application",
+    // El codigo atiende primero las superficies dinamicas. Se listan con y sin barra final
+    // para que /admin (a secas) no acabe sirviendose como fichero estatico.
+    "run_worker_first": ["/admin", "/admin/*", "/panel", "/panel/*", "/auth", "/auth/*", "/health"]
+  },
   "triggers": {
     "crons": ["0 12 * * *"]
   },

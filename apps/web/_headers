@@ -1,4 +1,6 @@
-# Cabeceras de seguridad de la web (Cloudflare Pages las aplica por ruta).
+# Cabeceras de seguridad de la web. Las aplica la plataforma a los ficheros estaticos que
+# sirve el Worker con el binding `assets` (ADR-0027). NO se aplican a las respuestas que
+# genera el codigo del Worker: esas ponen sus cabeceras en `workers/api/src/salud.ts`.
 #
 # La regla es que la web no carga nada de terceros y no se embebe en ningun sitio. Cuando
 # la PWA del comensal necesite hablar con la API, se anadira su origen a connect-src.

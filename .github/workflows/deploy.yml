@@ -4,6 +4,10 @@ name: Despliegue
 # Un fallo de tests, de tipos o de lint no llega nunca a produccion. Es la regla de
 # aceptacion de TASK-F0-03 y es tambien la razon por la que el despliegue no vive dentro
 # del propio workflow de CI: aqui no se puede publicar sin que el otro haya pasado.
+#
+# Un unico despliegue sirve todo el host (ADR-0027): el Worker publica su codigo Y los
+# estaticos de apps/web mediante el binding `assets`. El proyecto de Pages se retiro: aqui
+# ya no se publica nada en Pages.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -43,24 +47,6 @@ jobs:
 
       - name: Instalar dependencias
         run: pnpm install --frozen-lockfile
-
-      - name: Asegurar el proyecto de Pages
-        # El proyecto de Pages no se crea solo al publicar: hay que crearlo una vez. Este
-        # paso lo hace de forma idempotente, para que el despliegue sea reproducible sin
-        # ningun paso manual de panel. Si ya existe, `pages project create` falla y se
-        # ignora; la publicacion siguiente confirma que el proyecto esta en su sitio.
-        run: >-
-          pnpm exec wrangler pages project create camarero --production-branch main
-          || echo "El proyecto de Pages ya existia; se continua."
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Publicar la web (Cloudflare Pages)
-        run: pnpm run deploy:web
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Publicar la API (Cloudflare Workers)
         run: pnpm run deploy:api
