@@ -2,7 +2,7 @@
 id: TASK-F1-04
 type: task
 title: El mapa visual de mesas, colocado con botones grandes y sin JavaScript en el panel
-status: todo
+status: review
 date: 2026-09-30
 phase: F1
 tags:
@@ -33,8 +33,8 @@ depends_on:
 doc: contracts/contract-pantallas-contract-pantallas-superficies-permisos-y-convenciones-del-armaz.md
 tests:
   suite: pnpm test
-  passed: false
-  evidence: null
+  passed: true
+  evidence: '2026-09-30 · workers/api 147 pasan (13 ficheros) · packages/db 72 pasan (10) · tools/mcp-memory 95 pasan (8) · pnpm typecheck 0 · pnpm biome ci . 0 errores. Migracion 0017 aplicada en Supabase (flujo "Instalar esquema", segunda ejecucion): historial 17, 29 tablas en public, 98 politicas, aislamiento 0. CI y Despliegue en verde. Pendiente SOLO la prueba en vivo del humano.'
 ---
 
 ## Descripcion
@@ -53,3 +53,7 @@ Rebanada del mapa visual de mesas (ADR-0029). El dueno ve cada zona dibujada y c
 - [ ] No se puede sacar una mesa de la cuadricula
 - [ ] Pruebas: mover en las cuatro direcciones, limite de la cuadricula, mesa nueva, celda ocupada, sin sesion y sin permiso
 - [ ] En vivo: el dueno mueve una mesa y la ve cambiar de sitio
+
+## Notas
+
+- **2026-09-30** — Build completa y desplegada. No se marca done: falta que el dueno mueva una mesa en /admin/mesas desde el movil. La celda ocupada se rechaza con 409 (D-046); la cuadricula crece hacia abajo y a la derecha y bloquea los indices negativos. Verificacion en vivo de /admin/mesas sin sesion: 200 con la entrada, SIN cabecera Location (la pantalla se muestra, no redirige); el CSS /panel/estilos.css ya sirve .mapa-svg, .mover-boton, .mapa-mesa-inactiva, lo que confirma el despliegue. Nota: Cloudflare inyecta en el borde su propio script de deteccion al final del HTML; el CSP (default-src 'none', sin script-src) lo bloquea, pero el HTML que llega al navegador si contiene esa etiqueta, ajena al panel.
