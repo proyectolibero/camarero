@@ -56,8 +56,8 @@ export function responderError(estado: number, motivo: string): Response {
   return respuestaJson({ error: motivo }, estado)
 }
 
-export function responderMetodoNoPermitido(): Response {
+export function responderMetodoNoPermitido(metodos = "GET"): Response {
   const cabeceras = new Headers()
-  cabeceras.set("allow", "GET")
+  cabeceras.set("allow", metodos)
   return respuestaJson({ error: "metodo_no_permitido" }, 405, cabeceras)
 }

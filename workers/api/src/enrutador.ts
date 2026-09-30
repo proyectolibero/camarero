@@ -4,16 +4,25 @@
  * Recibe la peticion, el entorno (variables y enlaces) y la hora. Verifica el pasaporte de
  * Supabase contra sus claves publicas y, a traves de Hyperdrive, resuelve la ficha del
  * empleado. La hora se pasa como parametro para poder probar la caducidad sin depender del
- * reloj real, y la fuente de claves se inyecta para poder probar sin salir a la red.
+ * reloj real, y todo lo que sale a la red (claves, autenticacion, resolucion de la ficha) se
+ * inyecta como dependencia para poder probar sin salir a la red.
  */
 import {
   type ClaveDeFirma,
   cargarClavesDeFirma,
+  type FuenteDeClaves,
   IdentidadNoDisponible,
   verificarConClaves,
 } from "./auth/jwks.ts"
 import type { Reclamaciones } from "./auth/jwt.ts"
-import { resolverSesion } from "./base.ts"
+import { type Empleado, resolverSesion } from "./base.ts"
+import {
+  type Autenticador,
+  autenticadorDeEntorno,
+  type Dependencias,
+  type ResolvedorDeEmpleado,
+} from "./panel/proveedor.ts"
+import { manejarPanel } from "./panel/rutas.ts"
 import {
   responderError,
   responderMetodoNoPermitido,
@@ -22,14 +31,21 @@ import {
   respuestaJson,
 } from "./salud.ts"
 
-/** De donde salen las claves publicas con las que se valida el pasaporte. */
-export type FuenteDeClaves = (urlDeSupabase: string, ahoraEnMs: number) => Promise<ClaveDeFirma[]>
+export type { FuenteDeClaves } from "./auth/jwks.ts"
 
-/** Variables y enlaces del Worker. */
+/** Variables y enlaces del Worker. `SUPABASE_ANON_KEY` es un secreto del Worker, no del repo. */
 export type Entorno = {
   readonly VERSION?: string
   readonly SUPABASE_URL?: string
+  readonly SUPABASE_ANON_KEY?: string
   readonly BASE?: { readonly connectionString: string }
+}
+
+/** Lo que las pruebas pueden sustituir para no salir a la red ni tocar la base. */
+export type DependenciasParciales = {
+  readonly fuenteDeClaves?: FuenteDeClaves
+  readonly autenticar?: Autenticador
+  readonly resolverEmpleado?: ResolvedorDeEmpleado
 }
 
 const VERSION_POR_DEFECTO = "desconocida"
@@ -40,6 +56,23 @@ function tokenDelEncabezado(peticion: Request): string | null {
     return null
   }
   return autorizacion.slice("Bearer ".length)
+}
+
+function resolverEmpleadoPorDefecto(entorno: Entorno, sub: string): Promise<Empleado | null> {
+  const base = entorno.BASE
+  if (base === undefined) {
+    return Promise.resolve(null)
+  }
+  return resolverSesion(base.connectionString, sub)
+}
+
+function crearDependencias(entorno: Entorno, parciales: DependenciasParciales): Dependencias {
+  return {
+    fuenteDeClaves: parciales.fuenteDeClaves ?? cargarClavesDeFirma,
+    autenticar: parciales.autenticar ?? autenticadorDeEntorno(entorno),
+    resolverEmpleado:
+      parciales.resolverEmpleado ?? ((sub) => resolverEmpleadoPorDefecto(entorno, sub)),
+  }
 }
 
 async function manejarSesion(
@@ -73,18 +106,18 @@ async function manejarSesion(
     // Caducado, firma invalida o mal formado: para quien llama es lo mismo, no entra.
     return responderError(401, "token_invalido")
   }
-  const contexto = await resolverSesion(entorno.BASE.connectionString, reclamaciones.sub)
-  if (contexto === null) {
+  const empleado = await resolverSesion(entorno.BASE.connectionString, reclamaciones.sub)
+  if (empleado === null) {
     return responderError(403, "empleado_no_vinculado")
   }
-  return respuestaJson({ estado: "ok", empleado: contexto }, 200)
+  return respuestaJson({ estado: "ok", empleado }, 200)
 }
 
 export async function manejar(
   peticion: Request,
   entorno: Entorno,
   ahora: Date,
-  fuente: FuenteDeClaves = cargarClavesDeFirma,
+  dependencias: DependenciasParciales = {},
 ): Promise<Response> {
   const url = new URL(peticion.url)
 
@@ -95,11 +128,18 @@ export async function manejar(
     return responderSalud(ahora, entorno.VERSION ?? VERSION_POR_DEFECTO)
   }
 
+  const completas = crearDependencias(entorno, dependencias)
+
   if (url.pathname === "/auth/sesion") {
     if (peticion.method !== "POST") {
-      return responderMetodoNoPermitido()
+      return responderMetodoNoPermitido("POST")
     }
-    return await manejarSesion(peticion, entorno, ahora, fuente)
+    return await manejarSesion(peticion, entorno, ahora, completas.fuenteDeClaves)
+  }
+
+  const respuestaPanel = await manejarPanel(peticion, entorno, ahora, completas)
+  if (respuestaPanel !== null) {
+    return respuestaPanel
   }
 
   return responderNoEncontrado()

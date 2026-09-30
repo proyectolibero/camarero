@@ -28,6 +28,9 @@ export type ClaveDeFirma = {
   readonly jwk: JsonWebKey
 }
 
+/** De donde salen las claves publicas con las que se valida el pasaporte. */
+export type FuenteDeClaves = (urlDeSupabase: string, ahoraEnMs: number) => Promise<ClaveDeFirma[]>
+
 /** El borde no pudo averiguar con que claves validar: no es culpa de quien llama. */
 export class IdentidadNoDisponible extends Error {}
 

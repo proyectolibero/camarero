@@ -67,17 +67,16 @@ describe("Borde: /health", () => {
 
 describe("Borde: /auth/sesion", () => {
   it("debe responder 503 cuando el borde no tiene configurado el acceso", async () => {
-    const respuesta = await manejar(peticion("/auth/sesion", "POST"), {}, AHORA, SIN_CLAVES)
+    const respuesta = await manejar(peticion("/auth/sesion", "POST"), {}, AHORA, {
+      fuenteDeClaves: SIN_CLAVES,
+    })
     expect(respuesta.status).toBe(503)
   })
 
   it("debe responder 401 cuando no se presenta pasaporte", async () => {
-    const respuesta = await manejar(
-      peticion("/auth/sesion", "POST"),
-      ENTORNO_COMPLETO,
-      AHORA,
-      SIN_CLAVES,
-    )
+    const respuesta = await manejar(peticion("/auth/sesion", "POST"), ENTORNO_COMPLETO, AHORA, {
+      fuenteDeClaves: SIN_CLAVES,
+    })
     expect(respuesta.status).toBe(401)
     const cuerpo = (await respuesta.json()) as { error: string }
     expect(cuerpo.error).toBe("falta_token")
@@ -88,7 +87,7 @@ describe("Borde: /auth/sesion", () => {
       peticion("/auth/sesion", "POST", { authorization: "Bearer no-es-un-token" }),
       ENTORNO_COMPLETO,
       AHORA,
-      SIN_CLAVES,
+      { fuenteDeClaves: SIN_CLAVES },
     )
     expect(respuesta.status).toBe(401)
     const cuerpo = (await respuesta.json()) as { error: string }
@@ -101,7 +100,7 @@ describe("Borde: /auth/sesion", () => {
       peticion("/auth/sesion", "POST", { authorization: "Bearer sea-lo-que-sea" }),
       ENTORNO_COMPLETO,
       AHORA,
-      SIN_IDENTIDAD,
+      { fuenteDeClaves: SIN_IDENTIDAD },
     )
     expect(respuesta.status).toBe(503)
     const cuerpo = (await respuesta.json()) as { error: string }
