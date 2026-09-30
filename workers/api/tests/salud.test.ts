@@ -1,15 +1,25 @@
 /**
- * Rutas del borde: salud y inicio de sesion.
+ * Rutas del borde: salud e inicio de sesion.
  *
  * Se prueban las funciones del enrutador, que es lo unico que puede fallar por logica. La
- * conexion real a la base no se prueba aqui: eso es la comprobacion de aislamiento contra el
- * Supabase de verdad, que vive en el workflow "Instalar esquema".
+ * fuente de claves se inyecta para no salir a la red, y la conexion real a la base no se
+ * prueba aqui: eso es la comprobacion de aislamiento contra el Supabase de verdad.
  */
 import { describe, expect, it } from "vitest"
-import { manejar } from "../src/enrutador.ts"
+import { IdentidadNoDisponible } from "../src/auth/jwks.ts"
+import { type Entorno, type FuenteDeClaves, manejar } from "../src/enrutador.ts"
 import { construirSalud } from "../src/salud.ts"
 
 const AHORA = new Date("2026-09-28T12:00:00.000Z")
+
+const SIN_CLAVES: FuenteDeClaves = async () => []
+const SIN_IDENTIDAD: FuenteDeClaves = async () => {
+  throw new IdentidadNoDisponible("el JWKS respondio 500")
+}
+const ENTORNO_COMPLETO: Entorno = {
+  SUPABASE_URL: "https://proyecto.test",
+  BASE: { connectionString: "sin-uso" },
+}
 
 function peticion(ruta: string, metodo = "GET", cabeceras?: Record<string, string>): Request {
   return new Request(`https://camarero.test${ruta}`, { method: metodo, headers: cabeceras })
@@ -57,28 +67,45 @@ describe("Borde: /health", () => {
 
 describe("Borde: /auth/sesion", () => {
   it("debe responder 503 cuando el borde no tiene configurado el acceso", async () => {
-    const respuesta = await manejar(peticion("/auth/sesion", "POST"), {}, AHORA)
+    const respuesta = await manejar(peticion("/auth/sesion", "POST"), {}, AHORA, SIN_CLAVES)
     expect(respuesta.status).toBe(503)
   })
 
   it("debe responder 401 cuando no se presenta pasaporte", async () => {
-    const entorno = { SUPABASE_JWT_SECRET: "secreto", BASE: { connectionString: "sin-uso" } }
-    const respuesta = await manejar(peticion("/auth/sesion", "POST"), entorno, AHORA)
+    const respuesta = await manejar(
+      peticion("/auth/sesion", "POST"),
+      ENTORNO_COMPLETO,
+      AHORA,
+      SIN_CLAVES,
+    )
     expect(respuesta.status).toBe(401)
     const cuerpo = (await respuesta.json()) as { error: string }
     expect(cuerpo.error).toBe("falta_token")
   })
 
   it("debe responder 401 cuando el pasaporte no es valido", async () => {
-    const entorno = { SUPABASE_JWT_SECRET: "secreto", BASE: { connectionString: "sin-uso" } }
     const respuesta = await manejar(
       peticion("/auth/sesion", "POST", { authorization: "Bearer no-es-un-token" }),
-      entorno,
+      ENTORNO_COMPLETO,
       AHORA,
+      SIN_CLAVES,
     )
     expect(respuesta.status).toBe(401)
     const cuerpo = (await respuesta.json()) as { error: string }
     expect(cuerpo.error).toBe("token_invalido")
+  })
+
+  it("debe responder 503 cuando no se pueden leer las claves publicas", async () => {
+    // No poder juzgar un pasaporte no es culpa de quien llama: merece un 503, no un 401.
+    const respuesta = await manejar(
+      peticion("/auth/sesion", "POST", { authorization: "Bearer sea-lo-que-sea" }),
+      ENTORNO_COMPLETO,
+      AHORA,
+      SIN_IDENTIDAD,
+    )
+    expect(respuesta.status).toBe(503)
+    const cuerpo = (await respuesta.json()) as { error: string }
+    expect(cuerpo.error).toBe("identidad_no_disponible")
   })
 
   it("debe responder 405 cuando se usa GET en lugar de POST", async () => {

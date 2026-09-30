@@ -1,16 +1,16 @@
 /**
- * Verificacion del pasaporte (JWT) que emite Supabase Auth.
+ * Piezas compartidas para verificar un pasaporte (JWT).
  *
- * El borde NO confia en el token por venir de Supabase: comprueba la firma con el secreto
- * del proveedor y las reclamaciones. Aqui solo vive la parte pura y comprobable; el borde
- * decide despues que hace con el `sub` (leer la fila de empleado y fijar el contexto).
- *
- * Se implementa HS256, que es el algoritmo simetrico clasico de Supabase. Si el proyecto
- * nuevo usa firma asimetrica (JWKS), se anade aqui su verificacion sin tocar lo demas.
+ * Aqui NO se comprueba la firma: eso depende del algoritmo y vive en `jwks.ts`. Aqui solo se
+ * desmonta el token y se revisan sus reclamaciones, que es comun a cualquier algoritmo.
  */
-import { aBytes, base64UrlABytes } from "./base64.ts"
+import { base64UrlABytes } from "./base64.ts"
 
-const ALGORITMO = "HS256"
+/**
+ * Algoritmos que sabemos verificar. Se limita a los asimetricos que publica el JWKS: aceptar
+ * `none` o un algoritmo simetrico abriria la puerta a que el propio token elija su cerradura.
+ */
+export const ALGORITMOS_DE_FIRMA = new Set(["ES256", "RS256"])
 
 export type Reclamaciones = {
   readonly sub: string
@@ -21,11 +21,11 @@ export type Reclamaciones = {
 
 export class TokenInvalido extends Error {}
 
-function esObjeto(valor: unknown): valor is Record<string, unknown> {
+export function esObjeto(valor: unknown): valor is Record<string, unknown> {
   return typeof valor === "object" && valor !== null && !Array.isArray(valor)
 }
 
-function leerJson(segmento: string): unknown {
+export function leerJson(segmento: string): unknown {
   try {
     return JSON.parse(new TextDecoder().decode(base64UrlABytes(segmento)))
   } catch {
@@ -33,7 +33,7 @@ function leerJson(segmento: string): unknown {
   }
 }
 
-function tresPartes(token: string): [string, string, string] {
+export function tresPartes(token: string): [string, string, string] {
   const partes = token.split(".")
   const [cabecera, cuerpo, firma] = partes
   if (
@@ -47,54 +47,27 @@ function tresPartes(token: string): [string, string, string] {
   return [cabecera, cuerpo, firma]
 }
 
-export async function verificarTokenHs256(
-  token: string,
-  secreto: string,
-  ahoraEnSegundos: number,
-): Promise<Reclamaciones> {
-  const [cabeceraB64, cuerpoB64, firmaB64] = tresPartes(token)
-
-  const cabecera = leerJson(cabeceraB64)
-  if (!esObjeto(cabecera) || cabecera.alg !== ALGORITMO) {
-    throw new TokenInvalido("algoritmo de firma no soportado")
-  }
-
-  const clave = await crypto.subtle.importKey(
-    "raw",
-    aBytes(secreto),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["verify"],
-  )
-  const firmaValida = await crypto.subtle.verify(
-    "HMAC",
-    clave,
-    base64UrlABytes(firmaB64),
-    aBytes(`${cabeceraB64}.${cuerpoB64}`),
-  )
-  if (!firmaValida) {
-    throw new TokenInvalido("la firma no es valida")
-  }
-
-  const reclamaciones = leerJson(cuerpoB64)
-  if (!esObjeto(reclamaciones) || typeof reclamaciones.sub !== "string") {
+/**
+ * Comprueba lo que el token afirma sobre si mismo.
+ *
+ * Se exige caducidad: un token sin `exp` seria eterno, y es justo el dato que el proveedor
+ * pone para que deje de valer si se filtra.
+ */
+export function revisarReclamaciones(cuerpo: unknown, ahoraEnSegundos: number): Reclamaciones {
+  if (!esObjeto(cuerpo) || typeof cuerpo.sub !== "string") {
     throw new TokenInvalido("el token no identifica a nadie")
   }
-
-  const exp = typeof reclamaciones.exp === "number" ? reclamaciones.exp : null
-  // Se exige caducidad: un token sin `exp` seria eterno, y este es justo el dato que el
-  // proveedor pone para que deje de valer.
+  const exp = typeof cuerpo.exp === "number" ? cuerpo.exp : null
   if (exp === null) {
     throw new TokenInvalido("el token no caduca")
   }
   if (exp <= ahoraEnSegundos) {
     throw new TokenInvalido("el token ha caducado")
   }
-
   return {
-    sub: reclamaciones.sub,
+    sub: cuerpo.sub,
     exp,
-    aud: typeof reclamaciones.aud === "string" ? reclamaciones.aud : null,
-    iss: typeof reclamaciones.iss === "string" ? reclamaciones.iss : null,
+    aud: typeof cuerpo.aud === "string" ? cuerpo.aud : null,
+    iss: typeof cuerpo.iss === "string" ? cuerpo.iss : null,
   }
 }

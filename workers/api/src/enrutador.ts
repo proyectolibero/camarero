@@ -2,11 +2,17 @@
  * Enrutador del borde.
  *
  * Recibe la peticion, el entorno (variables y enlaces) y la hora. Verifica el pasaporte de
- * Supabase y, a traves de Hyperdrive, resuelve la ficha del empleado. La hora se pasa como
- * parametro para poder probar la caducidad de los tokens sin depender del reloj real.
+ * Supabase contra sus claves publicas y, a traves de Hyperdrive, resuelve la ficha del
+ * empleado. La hora se pasa como parametro para poder probar la caducidad sin depender del
+ * reloj real, y la fuente de claves se inyecta para poder probar sin salir a la red.
  */
+import {
+  type ClaveDeFirma,
+  cargarClavesDeFirma,
+  IdentidadNoDisponible,
+  verificarConClaves,
+} from "./auth/jwks.ts"
 import type { Reclamaciones } from "./auth/jwt.ts"
-import { verificarTokenHs256 } from "./auth/jwt.ts"
 import { resolverSesion } from "./base.ts"
 import {
   responderError,
@@ -16,42 +22,55 @@ import {
   respuestaJson,
 } from "./salud.ts"
 
+/** De donde salen las claves publicas con las que se valida el pasaporte. */
+export type FuenteDeClaves = (urlDeSupabase: string, ahoraEnMs: number) => Promise<ClaveDeFirma[]>
+
 /** Variables y enlaces del Worker. */
 export type Entorno = {
   readonly VERSION?: string
-  readonly SUPABASE_JWT_SECRET?: string
+  readonly SUPABASE_URL?: string
   readonly BASE?: { readonly connectionString: string }
 }
 
 const VERSION_POR_DEFECTO = "desconocida"
 
-async function verificarORechazar(
-  token: string,
-  secreto: string,
-  ahora: Date,
-): Promise<Reclamaciones | null> {
-  try {
-    return await verificarTokenHs256(token, secreto, Math.floor(ahora.getTime() / 1000))
-  } catch {
-    // Token caducado, firma invalida o mal formado: para quien llama es lo mismo, no entra.
-    return null
-  }
-}
-
-async function manejarSesion(peticion: Request, entorno: Entorno, ahora: Date): Promise<Response> {
-  if (entorno.SUPABASE_JWT_SECRET === undefined || entorno.BASE === undefined) {
-    return responderError(503, "servicio_no_configurado")
-  }
+function tokenDelEncabezado(peticion: Request): string | null {
   const autorizacion = peticion.headers.get("authorization") ?? ""
   if (!autorizacion.startsWith("Bearer ")) {
+    return null
+  }
+  return autorizacion.slice("Bearer ".length)
+}
+
+async function manejarSesion(
+  peticion: Request,
+  entorno: Entorno,
+  ahora: Date,
+  fuente: FuenteDeClaves,
+): Promise<Response> {
+  if (entorno.SUPABASE_URL === undefined || entorno.BASE === undefined) {
+    return responderError(503, "servicio_no_configurado")
+  }
+  const token = tokenDelEncabezado(peticion)
+  if (token === null) {
     return responderError(401, "falta_token")
   }
-  const reclamaciones = await verificarORechazar(
-    autorizacion.slice("Bearer ".length),
-    entorno.SUPABASE_JWT_SECRET,
-    ahora,
-  )
-  if (reclamaciones === null) {
+  let claves: readonly ClaveDeFirma[]
+  try {
+    claves = await fuente(entorno.SUPABASE_URL, ahora.getTime())
+  } catch (error) {
+    if (error instanceof IdentidadNoDisponible) {
+      // No sabemos validar pasaportes ahora mismo. No es que este token sea malo: es que no
+      // podemos juzgarlo, y eso no se le achaca a quien llama con un 401.
+      return responderError(503, "identidad_no_disponible")
+    }
+    throw error
+  }
+  let reclamaciones: Reclamaciones
+  try {
+    reclamaciones = await verificarConClaves(token, claves, Math.floor(ahora.getTime() / 1000))
+  } catch {
+    // Caducado, firma invalida o mal formado: para quien llama es lo mismo, no entra.
     return responderError(401, "token_invalido")
   }
   const contexto = await resolverSesion(entorno.BASE.connectionString, reclamaciones.sub)
@@ -61,7 +80,12 @@ async function manejarSesion(peticion: Request, entorno: Entorno, ahora: Date): 
   return respuestaJson({ estado: "ok", empleado: contexto }, 200)
 }
 
-export async function manejar(peticion: Request, entorno: Entorno, ahora: Date): Promise<Response> {
+export async function manejar(
+  peticion: Request,
+  entorno: Entorno,
+  ahora: Date,
+  fuente: FuenteDeClaves = cargarClavesDeFirma,
+): Promise<Response> {
   const url = new URL(peticion.url)
 
   if (url.pathname === "/health") {
@@ -75,7 +99,7 @@ export async function manejar(peticion: Request, entorno: Entorno, ahora: Date):
     if (peticion.method !== "POST") {
       return responderMetodoNoPermitido()
     }
-    return await manejarSesion(peticion, entorno, ahora)
+    return await manejarSesion(peticion, entorno, ahora, fuente)
   }
 
   return responderNoEncontrado()
