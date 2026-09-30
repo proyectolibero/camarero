@@ -1,0 +1,261 @@
+name: Copias de seguridad
+
+# Copia semanal completa de la base de Supabase, cifrada con age y subida a R2, seguida de un
+# ENSAYO DE RESTAURACION real. Resuelve la trampa del plan Free: no hay copias automaticas y
+# el proyecto se pausa por inactividad (RISK-001, RISK-020, D-030, TASK-F0-05).
+#
+# Reglas de la casa:
+#   - Nada de credenciales en claro en los registros. Los secretos los enmascara GitHub y el
+#     volcado no se imprime.
+#   - Si algo no cuadra, el flujo se pone en ROJO. Una copia que nunca se ha restaurado no es
+#     una copia: es una esperanza.
+on:
+  schedule:
+    # Semanal: domingos a las 03:17 UTC (fuera de horas punta y lejos del cron del borde).
+    - cron: "17 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      simular_fallo:
+        description: "Autoprueba: corrompe la copia restaurada para comprobar que el ensayo se pone ROJO"
+        required: false
+        default: false
+        type: boolean
+
+# El flujo solo lee el repositorio; las credenciales llegan por secreto.
+permissions:
+  contents: read
+
+# Dos copias a la vez se pisarian en R2 y en el manifiesto de retencion.
+concurrency:
+  group: copias
+  cancel-in-progress: false
+
+env:
+  BUCKET: camarero-copias
+  CLAVE_CA: packages/db/certs/prod-ca-2021.crt
+
+jobs:
+  copia:
+    name: Volcar, cifrar, subir y ensayar
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Activar pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Preparar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Instalar el cliente de PostgreSQL 17 (PGDG)
+        # Supabase corre PostgreSQL 17: el cliente no puede ser mas viejo, o pg_dump se niega
+        # a volcar un servidor mas nuevo. Ubuntu no trae la 17, hay que anadir el repositorio.
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --silent --show-error \
+            --output /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+          pg_dump --version
+          pg_restore --version
+
+      - name: Instalar age
+        run: |
+          sudo apt-get install -y age
+          age --version
+
+      - name: Asegurar el bucket de copias
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          pnpm exec wrangler r2 bucket create "$BUCKET" || echo "El bucket ya existia; se continua."
+
+      - name: Volcar la base y cifrarla con age
+        env:
+          CAMARERO_DB_URL_ADMIN: ${{ secrets.CAMARERO_DB_URL_ADMIN }}
+          CAMARERO_DB_PASSWORD_ADMIN: ${{ secrets.CAMARERO_DB_PASSWORD_ADMIN }}
+          AGE_PUBLIC_KEY: ${{ secrets.AGE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          FECHA="$(date -u +%F)"
+          echo "FECHA=${FECHA}" >> "$GITHUB_ENV"
+          # La contrasena va en el entorno, nunca en la linea de comandos ni dentro de la URL.
+          export PGPASSWORD="$CAMARERO_DB_PASSWORD_ADMIN"
+          # Verificacion del certificado del servidor: no se desactiva. Se confia en la CA
+          # publica de Supabase, incluida en el repositorio.
+          export PGSSLMODE=verify-full
+          export PGSSLROOTCERT="$GITHUB_WORKSPACE/$CLAVE_CA"
+
+          # public Y auth: una copia sin auth deja el sistema sin ningun usuario de acceso.
+          pg_dump "$CAMARERO_DB_URL_ADMIN" \
+            --format=custom \
+            --no-owner \
+            --no-privileges \
+            --schema=public \
+            --schema=auth \
+            --file=volcado.sql
+
+          echo "Volcado (sin cifrar): $(stat -c%s volcado.sql) bytes"
+
+          # age cifra hacia una clave PUBLICA; no hay ninguna contrasena en juego.
+          age --encrypt --recipient "$AGE_PUBLIC_KEY" --output "copia-${FECHA}.sql.age" volcado.sql
+          rm -f volcado.sql
+          echo "TAMANO_COPIA=$(stat -c%s copia-${FECHA}.sql.age)" >> "$GITHUB_ENV"
+          echo "Copia cifrada: $(stat -c%s copia-${FECHA}.sql.age) bytes"
+
+      - name: Subir la copia y aplicar la retencion (4 semanales + 1 mensual)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          CLAVE_SEMANAL="copias/semanal/${FECHA}.sql.age"
+          INDICE="copias/indice.json"
+          ARCHIVO_COPIA="copia-${FECHA}.sql.age"
+
+          pnpm exec wrangler r2 object put "${BUCKET}/${CLAVE_SEMANAL}" \
+            --remote --file "$ARCHIVO_COPIA" --content-type application/octet-stream
+          echo "Subida la copia semanal: ${CLAVE_SEMANAL}"
+
+          # Manifiesto: sin listado de objetos en wrangler, el indice es la fuente de verdad.
+          if pnpm exec wrangler r2 object get "${BUCKET}/${INDICE}" --remote --file indice.json >/dev/null 2>&1; then
+            if ! jq -e '(.semanal|type) == "array" and (.mensual|type) == "array"' indice.json >/dev/null 2>&1; then
+              echo '{"semanal":[],"mensual":[]}' > indice.json
+            fi
+          else
+            echo '{"semanal":[],"mensual":[]}' > indice.json
+          fi
+
+          anadir() { jq --arg k "$2" --arg s "$1" '.[$s] = ((.[$s] + [$k]) | unique | sort)' indice.json > indice.tmp; mv indice.tmp indice.json; }
+          anadir semanal "$CLAVE_SEMANAL"
+
+          # Primera copia del mes: se guarda ademas la mensual. La semana del dia 1 cae siempre
+          # en los primeros siete dias, de modo que basta con ese umbral.
+          if [ "$((10#$(date -u +%d)))" -le 7 ]; then
+            CLAVE_MENSUAL="copias/mensual/$(date -u +%Y-%m).sql.age"
+            pnpm exec wrangler r2 object put "${BUCKET}/${CLAVE_MENSUAL}" \
+              --remote --file "$ARCHIVO_COPIA" --content-type application/octet-stream
+            anadir mensual "$CLAVE_MENSUAL"
+            echo "Subida la copia mensual: ${CLAVE_MENSUAL}"
+          fi
+
+          jq '{semanal: (.semanal|sort|reverse|.[0:4]|sort), mensual: (.mensual|sort|reverse|.[0:1]|sort)}' \
+            indice.json > conservar.json
+          mapfile -t BORRAR < <(jq -r --slurpfile keep conservar.json \
+            '(.semanal[] | select(. as $x | ($keep[0].semanal | index($x)) == null)), (.mensual[] | select(. as $x | ($keep[0].mensual | index($x)) == null))' \
+            indice.json)
+          for clave in "${BORRAR[@]}"; do
+            if [ -z "$clave" ]; then continue; fi
+            echo "Retencion: se borra $clave"
+            pnpm exec wrangler r2 object delete "${BUCKET}/${clave}" --remote
+          done
+
+          cp conservar.json indice.json
+          pnpm exec wrangler r2 object put "${BUCKET}/${INDICE}" \
+            --remote --file indice.json --content-type application/json
+          echo "Retencion aplicada. Conservadas: $(jq -c . indice.json)"
+
+      - name: Descargar la copia de R2 y comprobar que es ilegible
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          pnpm exec wrangler r2 object get "${BUCKET}/copias/semanal/${FECHA}.sql.age" \
+            --remote --file copia-r2.sql.age
+          echo "Tipo que ve \`file\`:"; file copia-r2.sql.age
+          if file copia-r2.sql.age | grep -qiE 'text|sql|ascii'; then
+            echo "FALLO: la copia cifrada se reconoce como texto/SQL."
+            exit 1
+          fi
+          if strings copia-r2.sql.age | grep -q "Local de prueba"; then
+            echo "FALLO: el nombre real de un local aparece en claro en la copia cifrada."
+            exit 1
+          fi
+          if pg_restore --list copia-r2.sql.age >/dev/null 2>&1; then
+            echo "FALLO: pg_restore lee la copia cifrada sin la clave."
+            exit 1
+          fi
+          echo "La copia de R2 es ilegible sin la clave: ni texto, ni datos, ni pg_restore."
+
+      - name: Ensayo de restauracion en un PostgreSQL limpio
+        env:
+          AGE_PRIVATE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          CLAVE_LOCAL="$RUNNER_TEMP/age.key"
+          printf '%s' "$AGE_PRIVATE_KEY" > "$CLAVE_LOCAL"
+          chmod 600 "$CLAVE_LOCAL"
+
+          # Se descifra la copia que esta en R2, no una local: se ensaya lo que de verdad se
+          # ha guardado.
+          age --decrypt --identity "$CLAVE_LOCAL" --output volcado.sql copia-r2.sql.age
+          rm -f "$CLAVE_LOCAL"
+          if [ "${{ inputs.simular_fallo }}" = "true" ]; then
+            echo "AUTOPRUEBA: se corrompe el volcado descifrado; el ensayo debe ponerse en ROJO."
+            head -c 256 volcado.sql > corrupto.sql
+            mv corrupto.sql volcado.sql
+          fi
+
+          # Prueba de no vacuidad: el volcado descifrado SI lleva los datos (en plano). Con la
+          # clave en la mano se recupera la copia entera; sin ella, el fichero de R2 no deja
+          # ni leer su contenido. La marca del local es informativa: confirma que hay datos
+          # reales, pero no debe tumbar el ensayo si el fixture cambiara de nombre.
+          pg_restore --file=plano.sql volcado.sql
+          if ! strings plano.sql | grep -q "COPY public.orgs"; then
+            echo "FALLO: el volcado descifrado no contiene la tabla public.orgs."
+            exit 1
+          fi
+          if strings plano.sql | grep -q "Local de prueba"; then
+            echo "El volcado descifrado contiene el nombre real de un local (el cifrado ocultaba esto)."
+          else
+            echo "Aviso: no se encontro el nombre de la organizacion de prueba en el volcado."
+          fi
+
+          docker rm --force camarero-restaurar 2>/dev/null || true
+          docker run --detach --rm --name camarero-restaurar \
+            --env POSTGRES_PASSWORD=restaurar \
+            --env POSTGRES_DB=restaurada \
+            --publish 127.0.0.1:5433:5432 \
+            postgres:17-alpine
+
+          export PGPASSWORD=restaurar
+          for _ in $(seq 1 60); do
+            if pg_isready -h 127.0.0.1 -p 5433 -U postgres >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          pg_isready -h 127.0.0.1 -p 5433 -U postgres
+
+          # `public` ya existe en el contenedor; el volcado lo recrea, asi que se retira antes.
+          psql -h 127.0.0.1 -p 5433 -U postgres -d restaurada -c 'drop schema if exists public cascade;'
+          pg_restore \
+            --no-owner \
+            --no-privileges \
+            --exit-on-error \
+            --dbname="postgres://postgres:restaurar@127.0.0.1:5433/restaurada" \
+            volcado.sql
+          echo "Restauracion completada sin error."
+
+      - name: Comprobar la restauracion (tablas, filas, auth y aislamiento)
+        env:
+          CAMARERO_DB_URL_ADMIN: ${{ secrets.CAMARERO_DB_URL_ADMIN }}
+          CAMARERO_DB_PASSWORD_ADMIN: ${{ secrets.CAMARERO_DB_PASSWORD_ADMIN }}
+          CAMARERO_RESTAURADA_URL: "postgres://postgres:restaurar@127.0.0.1:5433/restaurada"
+        run: pnpm --filter @camarero/db run ensayar:restauracion
+
+      - name: Retirar el contenedor del ensayo
+        if: always()
+        run: docker rm --force camarero-restaurar || true
