@@ -1,0 +1,60 @@
+name: Sembrar empleado de prueba
+
+# Siembra un empleado de prueba (organizacion + local + ficha) enlazado con un usuario de
+# Supabase Auth que YA existe. Es una PIEZA DE PRUEBA, no el alta real de locales: eso se
+# construye en la Fase 1. Se lanza A MANO desde la pestana Actions.
+#
+# Tras sembrar, comprueba contra la base real que la cerradura del login (0015) da 1 fila
+# con el contexto del token y 0 sin el. La comprobacion usa el rol camarero_app, que no es
+# el administrador: demuestra que la politica RLS hace su trabajo con datos reales.
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: Correo del empleado a sembrar (debe existir en Supabase Auth)
+        required: true
+        default: dueno@prueba.test
+        type: string
+
+# El flujo solo lee el repositorio; las credenciales llegan por secreto y nunca se imprimen.
+permissions:
+  contents: read
+
+concurrency:
+  group: sembrar-empleado
+  cancel-in-progress: false
+
+jobs:
+  sembrar:
+    name: Sembrar empleado y comprobar la cerradura
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Activar pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Preparar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Sembrar el empleado de prueba
+        run: pnpm --filter @camarero/db run sembrar:empleado
+        env:
+          CAMARERO_DB_URL_ADMIN: ${{ secrets.CAMARERO_DB_URL_ADMIN }}
+          CAMARERO_DB_PASSWORD_ADMIN: ${{ secrets.CAMARERO_DB_PASSWORD_ADMIN }}
+          CAMARERO_EMPLEADO_EMAIL: ${{ inputs.email }}
+
+      - name: Comprobar la cerradura del login
+        run: pnpm --filter @camarero/db run comprobar:cerradura
+        env:
+          CAMARERO_DB_URL_ADMIN: ${{ secrets.CAMARERO_DB_URL_ADMIN }}
+          CAMARERO_DB_PASSWORD_ADMIN: ${{ secrets.CAMARERO_DB_PASSWORD_ADMIN }}
+          CAMARERO_DB_PASSWORD_APP: ${{ secrets.CAMARERO_DB_PASSWORD_APP }}
+          CAMARERO_EMPLEADO_EMAIL: ${{ inputs.email }}

@@ -12,7 +12,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "migrar:remoto": "node scripts/migrar-remoto.ts",
-    "configurar:tunel": "node scripts/configurar-tunel.ts"
+    "configurar:tunel": "node scripts/configurar-tunel.ts",
+    "sembrar:empleado": "node scripts/sembrar-empleado-de-prueba.ts",
+    "comprobar:cerradura": "node scripts/comprobar-cerradura-de-login.ts"
   },
   "devDependencies": {
     "@types/node": "^24",
