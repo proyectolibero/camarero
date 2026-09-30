@@ -1,0 +1,36 @@
+name: Diagnostico de esquema
+
+# TEMPORAL. Solo lectura: comprueba el historial, las tablas y el rol de la aplicacion en el
+# Postgres gestionado. Se retira en cuanto termine la limpieza de TASK-F0-10.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnosticar:
+    name: Diagnostico de solo lectura
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Activar pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Preparar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Diagnosticar
+        run: pnpm --filter @camarero/db exec node scripts/diagnostico-esquema.ts
+        env:
+          CAMARERO_DB_URL: ${{ secrets.CAMARERO_DB_URL_ADMIN }}
+          CAMARERO_DB_PASSWORD: ${{ secrets.CAMARERO_DB_PASSWORD_ADMIN }}
+          CAMARERO_DB_PASSWORD_APP: ${{ secrets.CAMARERO_DB_PASSWORD_APP }}
