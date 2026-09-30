@@ -2,7 +2,7 @@
 id: TASK-F1-04
 type: task
 title: El mapa visual de mesas, colocado con botones grandes y sin JavaScript en el panel
-status: review
+status: done
 date: 2026-09-30
 phase: F1
 tags:
@@ -34,7 +34,7 @@ doc: contracts/contract-pantallas-contract-pantallas-superficies-permisos-y-conv
 tests:
   suite: pnpm test
   passed: true
-  evidence: '2026-09-30 · workers/api 147 pasan (13 ficheros) · packages/db 72 pasan (10) · tools/mcp-memory 95 pasan (8) · pnpm typecheck 0 · pnpm biome ci . 0 errores. Migracion 0017 aplicada en Supabase (flujo "Instalar esquema", segunda ejecucion): historial 17, 29 tablas en public, 98 politicas, aislamiento 0. CI y Despliegue en verde. Pendiente SOLO la prueba en vivo del humano.'
+  evidence: "2026-09-30 · pnpm test · workers/api 170 + packages/db 72 + tools/mcp-memory 95 = 337 pasan, 0 fallan. typecheck 0; biome ci 0. Migracion 0017 aplicada en el Supabase real (17 entradas en el historial, 29 tablas, 98 politicas, aislamiento 0 filas sin contexto). Revision VISUAL hecha por el arquitecto sobre capturas generadas desde el codigo real: el contraste del estado desactivado estaba en 2,84:1 (por debajo de la norma 4,5:1) y quedo en 6,06:1; la altura del movil bajo de 4.827 a 3.030 px al sustituir las flechas por mesa por un unico mando sobre la mesa elegida; y la previsualizacion dejo de mentir (codigos generados con el generador real y cada zona con sus mesas). El panel sigue sin una sola etiqueta script, con prueba que lo comprueba y que se demostro capaz de fallar."
 ---
 
 ## Descripcion
@@ -59,3 +59,5 @@ Rebanada del mapa visual de mesas (ADR-0029). El dueno ve cada zona dibujada y c
 - **2026-09-30** — Build completa y desplegada. No se marca done: falta que el dueno mueva una mesa en /admin/mesas desde el movil. La celda ocupada se rechaza con 409 (D-046); la cuadricula crece hacia abajo y a la derecha y bloquea los indices negativos. Verificacion en vivo de /admin/mesas sin sesion: 200 con la entrada, SIN cabecera Location (la pantalla se muestra, no redirige); el CSS /panel/estilos.css ya sirve .mapa-svg, .mover-boton, .mapa-mesa-inactiva, lo que confirma el despliegue. Nota: Cloudflare inyecta en el borde su propio script de deteccion al final del HTML; el CSP (default-src 'none', sin script-src) lo bloquea, pero el HTML que llega al navegador si contiene esa etiqueta, ajena al panel.
 
 - **2026-09-30** — Revisión visual pendiente del humano. Detectados tres defectos vistos en capturas: (1) jerga 'f1 c3', (2) lista larguísima en móvil por 4 botones por mesa, (3) previsualización con códigos falsos y datos cruzados por zona.
+
+- **2026-09-30** — Cerrada con la prueba en vivo del dueno (movio una mesa y la vio cambiar de sitio). Decisiones: D-046 (mover a una celda ocupada se rechaza con un mensaje claro, porque un boton mueve una mesa y no dos) y D-047 (la posicion no se muestra en jerga; para eso esta el mapa). Cuatro defectos los encontro la revision VISUAL y ninguna prueba podia verlos (LL-020): el contraste del estado desactivado, la jerga f1 c3, la lista larguisima en movil, y una previsualizacion que ensenaba codigos falsos y mesas de otras zonas. La prevencion quedo en el codigo: el guion que genera la previsualizacion llama a las funciones de renderizado reales y la carpeta esta ignorada por git; ademas la prueba de contraste exige los minimos y se comprobo que sabe fallar.
