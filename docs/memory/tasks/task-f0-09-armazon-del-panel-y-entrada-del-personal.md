@@ -2,7 +2,7 @@
 id: TASK-F0-09
 type: task
 title: Armazon del panel y entrada del personal
-status: review
+status: done
 date: 2026-09-30
 phase: F0
 tags:
@@ -31,8 +31,8 @@ depends_on: []
 doc: contracts/contract-pantallas-contract-pantallas-superficies-permisos-y-convenciones-del-armaz.md
 tests:
   suite: pnpm test
-  passed: false
-  evidence: null
+  passed: true
+  evidence: "2026-09-30 · pnpm test · workers/api 49 pasan, packages/db 49 pasan, tools/mcp-memory 95 pasan, 0 fallan, 0 omitidos. pnpm typecheck 0 errores; pnpm biome ci . 0 errores. En vivo contra https://camarero-api.proyectolibero.workers.dev: GET /admin y /panel devuelven el formulario de entrada; GET /panel/estilos.css 200 text/css; POST /admin/entrar con credenciales inventadas responde 401 con cuerpo identico byte a byte al de un correo inexistente; GET /admin/entrar 405 con Allow: POST. Y la prueba que faltaba: el dueno entro con su cuenta real y vio su nombre, su rol, su local y su organizacion."
 ---
 
 ## Descripcion
@@ -54,3 +54,5 @@ Construir el armazon de las pantallas dibujadas por el servidor (ADR-0023) y la 
 ## Notas
 
 - **2026-09-30** — Armazon construido y desplegado. Claves de contexto verificadas leyendo 0009_contexto_rls.sql: staff_actual() lee app.staff_id; org_actual() lee app.org_id; rol_actual() lee app.role; local_actual() lee app.location_id; en_mi_org(p) = es_org_owner() and p = org_actual() (app.role + app.org_id); es_platform_admin() = rol_actual() = 'platform_admin' (app.role); en_mi_local(p) usa app.role + app.staff_id + app.location_id. Ficheros NUEVOS: workers/api/src/ui/{html,estilos,respuesta}.ts, workers/api/src/panel/{sesion,proveedor,vistas,rutas}.ts, workers/api/tests/{html,panel}.test.ts. MODIFICADOS: base.ts (resolucion en una transaccion: claims -> fila staff -> app.* -> join orgs/locations), enrutador.ts (Entorno + SUPABASE_ANON_KEY, objeto de dependencias inyectable), auth/jwks.ts (tipo FuenteDeClaves), salud.ts (responderMetodoNoPermitido acepta metodos). Tests: workers/api 47 pasan (25 previos + 8 html + 14 panel), typecheck 0, biome ci 0 (30 infos preexistentes en tools/mcp-memory), packages/db 49 pasan (60.8s, Docker 29.6.1), wrangler deploy --dry-run compila. Commit 77b790e en main; CI 36753223726 success; Despliegue 36753315376 success. En vivo (camarero-api.proyectolibero.workers.dev): GET /admin 200 text/html con formulario; GET /panel 200; GET /panel/estilos.css 200 text/css cache public,max-age=3600; POST /admin/entrar con credenciales inventadas 401 (Content-Length 792) identico byte a byte al de un correo inexistente (mismo 401, mismo cuerpo con "Correo o contrasena incorrectos.", sin Set-Cookie); GET /admin/entrar 405 Allow:POST. CSP sin unsafe-inline ni unsafe-eval, con form-action 'self', base-uri 'none', frame-ancestors 'none', style-src 'self'; nosniff y HSTS presentes. NO VERIFICADO / PENDIENTE: SUPABASE_ANON_KEY no esta configurada como secreto del Worker (wrangler secret list solo lista SUPABASE_URL) y no dispongo del valor en el entorno; el codigo la lee y falla cerrado (login devuelve el mensaje generico), de modo que no se ha ejercitado un inicio de sesion real contra Supabase ni la aceptacion en vivo "el dueno entra y ve su nombre/rol/local". Tampoco se toca la RLS: si un rol no basta, se dibuja permiso denegado 403. No cierro la tarea.
+
+- **2026-09-30** — Rebanada 0 de D-042. Armazon de las pantallas dibujadas por el servidor y entrada del personal. Incluye la plantilla con escapado por defecto y su prueba, la hoja de estilos con CSP sin unsafe-inline, la entrada con el borde como intermediario, la cookie inalcanzable para el navegador, la salida, la pantalla de permiso denegado, el cuadro minimo y el texto de la interfaz en espanol correcto con una prueba que impide la recaida (se comprobo que el test detecta el fallo: al reponer "Contrasena" a mano se puso en rojo). Ficheros: workers/api/src/ui/{html,estilos,respuesta}.ts, workers/api/src/panel/{sesion,proveedor,vistas,rutas}.ts, tests {html,panel}.test.ts. La superficie /panel queda declarada y protegida por rol, pero su contenido de gestion es de F1/F4: lo que existe es la puerta y el permiso, no las pantallas. Defecto cosmetico detectado por el humano al mirar la pantalla y pendiente de corregir: el rol se muestra como el codigo org_owner en lugar de una palabra entendible.
