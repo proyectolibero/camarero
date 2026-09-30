@@ -1,0 +1,44 @@
+name: Configurar tunel
+
+# Crea (o actualiza) el tunel de Hyperdrive hacia Supabase, subiendo antes su certificado de
+# autoridad para poder exigir la comprobacion completa (`verify-full`).
+#
+# Se lanza A MANO desde la pestana Actions. Usa las llaves guardadas como secretos y NUNCA
+# imprime la cadena de conexion ni la contrasena: solo los identificadores.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: configurar-tunel
+  cancel-in-progress: false
+
+jobs:
+  tunel:
+    name: Crear el tunel de Hyperdrive
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Activar pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Preparar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Configurar el tunel
+        run: pnpm --filter @camarero/db run configurar:tunel
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CAMARERO_DB_URL_ADMIN: ${{ secrets.CAMARERO_DB_URL_ADMIN }}
+          CAMARERO_DB_PASSWORD_APP: ${{ secrets.CAMARERO_DB_PASSWORD_APP }}

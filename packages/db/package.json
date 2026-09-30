@@ -11,7 +11,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "migrar:remoto": "node scripts/migrar-remoto.ts"
+    "migrar:remoto": "node scripts/migrar-remoto.ts",
+    "configurar:tunel": "node scripts/configurar-tunel.ts"
   },
   "devDependencies": {
     "@types/node": "^24",
