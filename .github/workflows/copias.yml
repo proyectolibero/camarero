@@ -68,8 +68,13 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
           sudo apt-get install -y postgresql-client-17
-          pg_dump --version
-          pg_restore --version
+          # En los runners conviven varios clientes: la orden `pg_dump` a secas puede seguir
+          # apuntando al 16 aunque se instale el 17. Se fija la ruta explicita a los binarios
+          # de la 17, que es la version del servidor de Supabase.
+          /usr/lib/postgresql/17/bin/pg_dump --version
+          /usr/lib/postgresql/17/bin/pg_restore --version
+          echo "PG_DUMP=/usr/lib/postgresql/17/bin/pg_dump" >> "$GITHUB_ENV"
+          echo "PG_RESTORE=/usr/lib/postgresql/17/bin/pg_restore" >> "$GITHUB_ENV"
 
       - name: Instalar age
         run: |
@@ -100,7 +105,7 @@ jobs:
           export PGSSLROOTCERT="$GITHUB_WORKSPACE/$CLAVE_CA"
 
           # public Y auth: una copia sin auth deja el sistema sin ningun usuario de acceso.
-          pg_dump "$CAMARERO_DB_URL_ADMIN" \
+          "$PG_DUMP" "$CAMARERO_DB_URL_ADMIN" \
             --format=custom \
             --no-owner \
             --no-privileges \
@@ -176,8 +181,9 @@ jobs:
           set -euo pipefail
           pnpm exec wrangler r2 object get "${BUCKET}/copias/semanal/${FECHA}.sql.age" \
             --remote --file copia-r2.sql.age
-          echo "Tipo que ve \`file\`:"; file copia-r2.sql.age
-          if file copia-r2.sql.age | grep -qiE 'text|sql|ascii'; then
+          echo "Tipo que ve \`file\`:"; file -b copia-r2.sql.age
+          # `file -b` omite el nombre del fichero (que acaba en .sql y daria un falso positivo).
+          if file -b copia-r2.sql.age | grep -qiE 'text|sql|ascii'; then
             echo "FALLO: la copia cifrada se reconoce como texto/SQL."
             exit 1
           fi
@@ -185,7 +191,7 @@ jobs:
             echo "FALLO: el nombre real de un local aparece en claro en la copia cifrada."
             exit 1
           fi
-          if pg_restore --list copia-r2.sql.age >/dev/null 2>&1; then
+          if "$PG_RESTORE" --list copia-r2.sql.age >/dev/null 2>&1; then
             echo "FALLO: pg_restore lee la copia cifrada sin la clave."
             exit 1
           fi
@@ -214,7 +220,7 @@ jobs:
           # clave en la mano se recupera la copia entera; sin ella, el fichero de R2 no deja
           # ni leer su contenido. La marca del local es informativa: confirma que hay datos
           # reales, pero no debe tumbar el ensayo si el fixture cambiara de nombre.
-          pg_restore --file=plano.sql volcado.sql
+          "$PG_RESTORE" --file=plano.sql volcado.sql
           if ! strings plano.sql | grep -q "COPY public.orgs"; then
             echo "FALLO: el volcado descifrado no contiene la tabla public.orgs."
             exit 1
@@ -241,7 +247,7 @@ jobs:
 
           # `public` ya existe en el contenedor; el volcado lo recrea, asi que se retira antes.
           psql -h 127.0.0.1 -p 5433 -U postgres -d restaurada -c 'drop schema if exists public cascade;'
-          pg_restore \
+          "$PG_RESTORE" \
             --no-owner \
             --no-privileges \
             --exit-on-error \
