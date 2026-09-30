@@ -8,6 +8,7 @@
  */
 import type { FuenteDeClaves } from "../auth/jwks.ts"
 import type { Empleado } from "../base.ts"
+import type { AlmacenPanel } from "./datos.ts"
 
 /** Pasaporte recien emitido y lo que le queda de vida, para el Max-Age de la cookie. */
 export type Pasaporte = {
@@ -21,11 +22,12 @@ export type Autenticador = (correo: string, contrasena: string) => Promise<Pasap
 /** Resuelve la ficha del empleado a partir del `sub` ya verificado del pasaporte. */
 export type ResolvedorDeEmpleado = (usuarioDeAuth: string) => Promise<Empleado | null>
 
-/** Todo lo que sale a la red, inyectable para que las pruebas no la toquen. */
+/** Todo lo que sale a la red o a la base, inyectable para que las pruebas no lo toquen. */
 export type Dependencias = {
   readonly fuenteDeClaves: FuenteDeClaves
   readonly autenticar: Autenticador
   readonly resolverEmpleado: ResolvedorDeEmpleado
+  readonly almacen: AlmacenPanel
 }
 
 type EntornoDeIdentidad = {

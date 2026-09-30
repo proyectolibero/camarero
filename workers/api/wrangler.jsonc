@@ -26,7 +26,11 @@
     "crons": ["0 12 * * *"]
   },
   "vars": {
-    "VERSION": "0.0.0"
+    "VERSION": "0.0.0",
+    // Dominio publico unico del host (D-023). De aqui sale el destino de los QR de mesa:
+    // NUNCA se escribe a mano en el codigo, para que un cambio de dominio no deje mesas
+    // muertas por un enlace obsoleto.
+    "DOMINIO_PUBLICO": "https://camarero.proyectolibero.org"
   },
   "r2_buckets": [
     {

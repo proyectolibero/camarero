@@ -10,13 +10,13 @@ import { responderMetodoNoPermitido } from "../salud.ts"
 import { ESTILOS } from "../ui/estilos.ts"
 import { renderizar } from "../ui/html.ts"
 import { responderRedireccion, respuestaCss, respuestaHtml } from "../ui/respuesta.ts"
+import { manejarAdmin } from "./admin.ts"
 import type { Dependencias } from "./proveedor.ts"
-import { cookieDeBorrado, cookieDeSesion, subDeLaSesion } from "./sesion.ts"
+import { cookieDeBorrado, cookieDeSesion } from "./sesion.ts"
+import { type EntornoDePanel, resolverEmpleadoDeSesion } from "./sesion-panel.ts"
 import { type Superficie, vistaCuadro, vistaEntrada, vistaPermisoDenegado } from "./vistas.ts"
 
-type EntornoDePanel = {
-  readonly SUPABASE_URL?: string
-}
+export type { EntornoDePanel } from "./sesion-panel.ts"
 
 type FormularioDeEntrada = {
   readonly correo: string
@@ -91,8 +91,7 @@ async function mostrarPanel(
   ahora: Date,
   dependencias: Dependencias,
 ): Promise<Response> {
-  const sub = await subDeLaSesion(peticion, entorno, ahora, dependencias.fuenteDeClaves)
-  const empleado = sub === null ? null : await dependencias.resolverEmpleado(sub)
+  const empleado = await resolverEmpleadoDeSesion(peticion, entorno, ahora, dependencias)
   if (empleado === null) {
     return respuestaHtml(renderizar(vistaEntrada(superficie)), 200)
   }
@@ -136,5 +135,5 @@ export async function manejarPanel(
       : responderMetodoNoPermitido("POST")
   }
 
-  return null
+  return await manejarAdmin(peticion, entorno, ahora, dependencias)
 }

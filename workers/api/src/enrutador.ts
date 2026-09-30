@@ -16,6 +16,7 @@ import {
 } from "./auth/jwks.ts"
 import type { Reclamaciones } from "./auth/jwt.ts"
 import { type Empleado, resolverSesion } from "./base.ts"
+import { type AlmacenPanel, almacenDeEntorno } from "./panel/datos.ts"
 import {
   type Autenticador,
   autenticadorDeEntorno,
@@ -38,6 +39,7 @@ export type Entorno = {
   readonly VERSION?: string
   readonly SUPABASE_URL?: string
   readonly SUPABASE_ANON_KEY?: string
+  readonly DOMINIO_PUBLICO?: string
   readonly BASE?: { readonly connectionString: string }
 }
 
@@ -46,6 +48,7 @@ export type DependenciasParciales = {
   readonly fuenteDeClaves?: FuenteDeClaves
   readonly autenticar?: Autenticador
   readonly resolverEmpleado?: ResolvedorDeEmpleado
+  readonly almacen?: AlmacenPanel
 }
 
 const VERSION_POR_DEFECTO = "desconocida"
@@ -72,6 +75,7 @@ function crearDependencias(entorno: Entorno, parciales: DependenciasParciales): 
     autenticar: parciales.autenticar ?? autenticadorDeEntorno(entorno),
     resolverEmpleado:
       parciales.resolverEmpleado ?? ((sub) => resolverEmpleadoPorDefecto(entorno, sub)),
+    almacen: parciales.almacen ?? almacenDeEntorno(entorno),
   }
 }
 

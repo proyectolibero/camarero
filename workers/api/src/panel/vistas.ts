@@ -6,28 +6,36 @@
  * se escribe sin pasar por ella.
  */
 import type { Empleado } from "../base.ts"
-import { type HtmlSeguro, html } from "../ui/html.ts"
+import { type HtmlSeguro, html, htmlCrudo } from "../ui/html.ts"
+import type { DatosLocal } from "./datos.ts"
 import { nombreDeRol } from "./roles.ts"
 
 export type Superficie = "admin" | "panel"
 
-/** Inventario de CONTRACT-pantallas: las pantallas futuras de cada superficie. */
-const PANTALLAS: Readonly<Record<Superficie, readonly string[]>> = {
+/**
+ * Inventario de CONTRACT-pantallas. Una pantalla con `href` ya existe y enlaza a su sitio;
+ * una sin `href` sigue diciendo "por construir". No se adelanta trabajo del roadmap (D-042).
+ */
+type PantallaDelCuadro = { readonly titulo: string; readonly href?: string }
+
+const PANTALLAS: Readonly<Record<Superficie, readonly PantallaDelCuadro[]>> = {
   admin: [
-    "Alta del local (asistente)",
-    "Mesas, zonas y QR para imprimir",
-    "Carta (categorías, platos, precios, fotos, orden)",
-    "Personal (invitar, roles, PIN)",
-    "Ajustes (tema, logo, horarios, modo de servicio)",
-    "Pedidos e histórico, anular",
-    "Métricas",
-    "Multi-local y cuota",
+    { titulo: "El local (nombre, zona horaria, estado y modo de servicio)", href: "/admin/local" },
+    { titulo: "Zonas", href: "/admin/zonas" },
+    { titulo: "Mesas y QR para imprimir", href: "/admin/mesas" },
+    { titulo: "Alta del local (asistente)" },
+    { titulo: "Carta (categorías, platos, precios, fotos, orden)" },
+    { titulo: "Personal (invitar, roles, PIN)" },
+    { titulo: "Ajustes (tema, logo, horarios, modo de servicio)" },
+    { titulo: "Pedidos e histórico, anular" },
+    { titulo: "Métricas" },
+    { titulo: "Multi-local y cuota" },
   ],
   panel: [
-    "Organizaciones y locales (alta, suspensión, plan)",
-    "Ver como un cliente (motivo y auditoría)",
-    "Operación: estado, errores, colas, copias",
-    "Métricas globales",
+    { titulo: "Organizaciones y locales (alta, suspensión, plan)" },
+    { titulo: "Ver como un cliente (motivo y auditoría)" },
+    { titulo: "Operación: estado, errores, colas, copias" },
+    { titulo: "Métricas globales" },
   ],
 }
 
@@ -68,8 +76,10 @@ function cabecera(superficie: Superficie, empleado: Empleado): HtmlSeguro {
 }
 
 function listaDePantallas(superficie: Superficie): readonly HtmlSeguro[] {
-  return PANTALLAS[superficie].map(
-    (pantalla) => html`<li><span>${pantalla}</span><span class="pronto">por construir</span></li>`,
+  return PANTALLAS[superficie].map((pantalla) =>
+    pantalla.href === undefined
+      ? html`<li><span>${pantalla.titulo}</span><span class="pronto">por construir</span></li>`
+      : html`<li><a href="${pantalla.href}">${pantalla.titulo}</a></li>`,
   )
 }
 
@@ -133,4 +143,109 @@ export function vistaPermisoDenegado(superficie: Superficie, empleado: Empleado)
 </section>
 </main>`
   return pagina("Sin acceso", contenido)
+}
+
+const ETIQUETA_ESTADO: Readonly<Record<string, string>> = {
+  draft: "En montaje",
+  active: "En servicio",
+  paused: "En pausa",
+}
+
+const ETIQUETA_MODO: Readonly<Record<string, string>> = {
+  dine_in: "Solo mesa (dine-in)",
+  delivery: "Solo retiro o entrega (delivery)",
+  both: "Mesa y retiro/entrega (ambos)",
+}
+
+function avisoExito(mensaje: string): HtmlSeguro {
+  return html`<p class="aviso aviso-exito" role="status">${mensaje}</p>`
+}
+
+function enlaceVolverAlPanel(): HtmlSeguro {
+  return html`<p class="no-imprimir"><a class="boton boton-secundario" href="/admin">Volver al panel</a></p>`
+}
+
+function opcionesDeSelect(
+  valores: readonly string[],
+  actual: string,
+  etiquetas: Readonly<Record<string, string>>,
+): HtmlSeguro {
+  return html`${valores.map(
+    (valor) =>
+      html`<option value="${valor}"${valor === actual ? htmlCrudo(" selected") : html``}>${etiquetas[valor] ?? valor}</option>`,
+  )}`
+}
+
+export function vistaSinLocal(empleado: Empleado): HtmlSeguro {
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+<section class="tarjeta">
+<h1>Sin local</h1>
+<p>Tu cuenta no tiene un local asignado y no hay ningún local visible en tu organización.</p>
+<p>Pide a quien administra el sistema que te asigne un local.</p>
+</section>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina("Sin local", contenido)
+}
+
+export function vistaSinPermiso(empleado: Empleado, accion: string): HtmlSeguro {
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+<section class="tarjeta">
+<h1>No tienes permiso</h1>
+<p>Tu rol (${nombreDeRol(empleado.rol)}) no puede ${accion}.</p>
+<p>Si necesitas hacerlo, pide a quien administra tu organización que revise tu rol.</p>
+</section>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina("Sin permiso", contenido)
+}
+
+function formularioLocal(local: DatosLocal): HtmlSeguro {
+  return html`<form method="post" action="/admin/local">
+<label class="campo"><span>Nombre del local</span>
+<input type="text" name="nombre" value="${local.nombre}" maxlength="120" required></label>
+<label class="campo"><span>Zona horaria</span>
+<input type="text" name="zona_horaria" value="${local.timezone}" required>
+<span class="ayuda">Nombre IANA, por ejemplo America/Santiago.</span></label>
+<label class="campo"><span>Estado</span>
+<select name="estado">${opcionesDeSelect(["draft", "active", "paused"], local.status, ETIQUETA_ESTADO)}</select></label>
+<p class="aviso aviso-aviso">Pasar el local a «En servicio» es encenderlo por primera vez: a partir de ahí los comensales pueden abrir mesa y pedir. Si aún no está listo, déjalo en «En montaje».</p>
+<label class="campo"><span>Modo de servicio</span>
+<select name="modo_servicio">${opcionesDeSelect(["dine_in", "delivery", "both"], local.serviceMode, ETIQUETA_MODO)}</select></label>
+<p class="dato-fijo"><span>Moneda</span> <strong>${local.currency}</strong> — fija para el piloto en Chile.</p>
+<button class="boton" type="submit">Guardar cambios</button>
+</form>`
+}
+
+function datosLocalDeSoloLectura(local: DatosLocal): HtmlSeguro {
+  return html`<p>Puedes ver los datos de tu local, pero solo el dueño de la organización puede cambiarlos.</p>
+<dl class="datos">
+<dt>Nombre</dt><dd>${local.nombre}</dd>
+<dt>Zona horaria</dt><dd>${local.timezone}</dd>
+<dt>Estado</dt><dd>${ETIQUETA_ESTADO[local.status] ?? local.status}</dd>
+<dt>Modo de servicio</dt><dd>${ETIQUETA_MODO[local.serviceMode] ?? local.serviceMode}</dd>
+<dt>Moneda</dt><dd>${local.currency}</dd>
+</dl>`
+}
+
+export function vistaLocal(
+  empleado: Empleado,
+  local: DatosLocal,
+  puedeEditar: boolean,
+  guardado: boolean,
+  error?: string,
+): HtmlSeguro {
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${error === undefined ? html`` : avisoError(error)}
+${guardado ? avisoExito("Cambios guardados.") : html``}
+<section class="tarjeta">
+<h1>Tu local</h1>
+${puedeEditar ? formularioLocal(local) : datosLocalDeSoloLectura(local)}
+</section>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina("Tu local", contenido)
 }

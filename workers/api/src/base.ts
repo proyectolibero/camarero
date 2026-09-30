@@ -50,20 +50,44 @@ type FilaNombres = {
   readonly local_nombre: string | null
 }
 
+/** Los cuatro valores que `staff_actual()`, `en_mi_org()` y `es_platform_admin()` leen. */
+export type ContextoDeEmpleado = {
+  readonly staffId: string
+  readonly orgId: string
+  readonly rol: string
+  readonly locationId: string | null
+}
+
 /**
  * Fija las cuatro claves de contexto que leen las funciones de alcance. Se hace dentro de la
  * transaccion (`is_local = true`) para que desaparezca al terminar.
+ *
+ * Es la unica via de fijar identidad. Vive aqui para que tanto el inicio de sesion como la
+ * gestion del panel (zonas, mesas) compartan exactamente la misma cerradura, en lugar de
+ * repetir los nombres de las claves, que si se escriben mal fallan en silencio (cero filas).
  */
-async function fijarContexto(cliente: Client, fila: FilaStaff): Promise<void> {
+export async function fijarContextoDeEmpleado(
+  cliente: Client,
+  contexto: ContextoDeEmpleado,
+): Promise<void> {
   const ajustes: readonly (readonly [string, string])[] = [
-    ["app.staff_id", fila.id],
-    ["app.org_id", fila.org_id],
-    ["app.role", fila.role],
-    ["app.location_id", fila.location_id ?? ""],
+    ["app.staff_id", contexto.staffId],
+    ["app.org_id", contexto.orgId],
+    ["app.role", contexto.rol],
+    ["app.location_id", contexto.locationId ?? ""],
   ]
   for (const [clave, valor] of ajustes) {
     await cliente.query("select set_config($1::text, $2::text, true)", [clave, valor])
   }
+}
+
+function fijarContexto(cliente: Client, fila: FilaStaff): Promise<void> {
+  return fijarContextoDeEmpleado(cliente, {
+    staffId: fila.id,
+    orgId: fila.org_id,
+    rol: fila.role,
+    locationId: fila.location_id,
+  })
 }
 
 function componerEmpleado(fila: FilaStaff, nombres: FilaNombres | undefined): Empleado {

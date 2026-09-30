@@ -127,6 +127,43 @@ p {
   border-color: currentColor;
 }
 
+.aviso-aviso {
+  color: var(--tinta);
+  background: #fff7e0;
+  border-color: #e0b13a;
+}
+
+@media (prefers-color-scheme: dark) {
+  .aviso-aviso {
+    background: #3a2f10;
+    border-color: #b98a20;
+  }
+}
+
+.ayuda {
+  display: block;
+  margin-top: 0.3rem;
+  color: var(--tinta-suave);
+  font-size: 0.85rem;
+}
+
+.dato-fijo {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  color: var(--tinta-suave);
+}
+
+.campo select {
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--borde);
+  border-radius: 0.5rem;
+  background: var(--fondo);
+  color: var(--tinta);
+  font: inherit;
+}
+
 .campo {
   display: block;
   margin: 0 0 1rem;
@@ -226,6 +263,11 @@ p {
   flex: 0 0 auto;
   font-size: 0.8rem;
   color: var(--tinta-suave);
+}
+
+.pantallas a {
+  color: var(--acento);
+  font-weight: 600;
 }
 
 @media (max-width: 30rem) {
