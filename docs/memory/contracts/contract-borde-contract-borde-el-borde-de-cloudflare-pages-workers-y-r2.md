@@ -13,12 +13,14 @@ tags:
 related:
   - ADR-0002
   - ADR-0018
-  - ADR-0020
   - ADR-0019
+  - ADR-0020
+  - ADR-0021
   - TASK-F0-03
   - TASK-F0-04
   - TASK-F0-08
   - LL-014
+  - LL-016
   - RISK-001
   - RISK-020
 ---
@@ -34,7 +36,7 @@ global (D-023). Ver `ADR-0002`, `ADR-0018` y `ADR-0020`.
 | Pieza | Donde | Que hace |
 |-------|-------|----------|
 | **Web** | Cloudflare Pages, carpeta `apps/web` | Sirve la PWA (de momento, una pagina vacia). |
-| **API** | Cloudflare Worker, `workers/api` | Expone `/health`; mas adelante, web login, push, cron y rate limit. |
+| **API** | Cloudflare Worker, `workers/api` | Expone `GET /health` y `POST /auth/sesion`; mas adelante, push, cron y rate limit. |
 | **Carta** | Cloudflare R2, bucket `camarero-cartas` | Guarda las imagenes de la carta. 10 GB gratis. |
 
 ## Regla de despliegue
@@ -48,24 +50,54 @@ tests, tipos o lint no llega nunca a produccion.
 
 - La web las declara en `apps/web/_headers` (CSP, HSTS, `nosniff`, `Referrer-Policy`,
   `Permissions-Policy`, `X-Frame-Options`).
-- El Worker las pone en cada respuesta desde `workers/api/src/auth` y `src/salud.ts`.
+- El Worker las pone en cada respuesta desde `workers/api/src/salud.ts`.
 
-## Como se aplica el esquema en Supabase
+## Como se identifica el empleado
 
-El workflow **"Instalar esquema"** (`.github/workflows/migrar.yml`, lanzado a mano) aplica
-las migraciones y aprovisiona los roles. No imprime credenciales: solo el resultado.
+`POST /auth/sesion` recibe un pasaporte (JWT) y devuelve la ficha del empleado.
 
-**Tres decisiones que costaron y hay que recordar:**
+1. **Se valida la firma con la clave publica de Supabase**, leida de su JWKS
+   (`<SUPABASE_URL>/auth/v1/.well-known/jwks.json`). El proyecto firma con clave
+   **asimetrica ES256**; el borde **no guarda ningun secreto** para esto (`ADR-0021`). El
+   algoritmo no lo elige el token: se comprueba contra una lista blanca (`ES256`, `RS256`).
+   Las claves se cachean una hora en el propio Worker; si no se pueden leer, se responde
+   **503** (no poder juzgar un pasaporte no es culpa de quien llama), nunca 401.
+2. **Se resuelve la ficha del empleado** por `staff.auth_user_id`, fijando la reclamacion
+   del token dentro de una transaccion corta (si no, el pool de Hyperdrive podria arrastrar
+   el contexto de una peticion a la siguiente).
 
-1. **La conexion directa de Supabase es solo IPv6.** Los runners de GitHub no tienen IPv6.
-   Para todo lo que corra en CI se usa el **Session pooler** (IPv4, puerto **5432**, no el
-   6543 de transaccion), con el usuario en la forma `postgres.<referencia>`.
+Respuestas: `401 falta_token`, `401 token_invalido`, `403 empleado_no_vinculado`,
+`503 identidad_no_disponible`, `503 servicio_no_configurado`.
+
+## Como conecta el borde con la base
+
+Por **Hyperdrive**, sin cache, y con la conexion **directa** a Supabase
+(`db.<referencia>.supabase.co`), porque Hyperdrive vive dentro de Cloudflare y Cloudflare
+si tiene IPv6.
+
+**Cuatro capas, y las cuatro costaron:**
+
+1. **La conexion directa de Supabase es solo IPv6.** Los runners de GitHub no tienen IPv6:
+   para todo lo que corra en CI se usa el **Session pooler** (IPv4, puerto **5432**, no el
+   6543 de transaccion), con el usuario en la forma `postgres.<referencia>`. El borde no lo
+   necesita, porque sale por Hyperdrive.
 2. **Supabase firma con una raiz propia** (`Supabase Root 2021 CA`). La forma correcta es
    **confiar en esa CA** (esta en `packages/db/certs/prod-ca-2021.crt`), nunca desactivar la
    verificacion del certificado. Caduca el **2031-04-26**; si Supabase la rota, hay que
-   actualizar el fichero.
+   actualizar el fichero. **El Worker no puede comprobar esa CA por conexion directa**
+   (workerd ignora esa opcion a proposito), de modo que Hyperdrive no es una comodidad:
+   es la **unica via** de conectar el borde con `verify-full`.
 3. **La contrasena nunca va dentro de la URL.** Un caracter como `#`, `@`, `%` o `:` sin
    codificar la corta en silencio. Va en secreto aparte.
+4. **El JWKS puede llevar punto** en el usuario (`postgres.<referencia>`) y ese usuario
+   **no es un rol real**: no se puede interpolar en `alter default privileges`.
+
+**El tunel.** Se crea y se actualiza con el workflow **"Configurar tunel"**
+(`.github/workflows/configurar-tunel.yml`, lanzado a mano), que sube la CA de Supabase a
+Cloudflare como certificado de autoridad y crea el Hyperdrive en modo `verify-full`, sin
+cache. Identificadores (no son secretos): certificado de autoridad
+`ab39faff-4bb6-43c2-8b62-2ec7a8960425`, tunel `8d17257eef554341870f06bcfc93376a`. El enlace
+se declara en `workers/api/wrangler.jsonc` como binding `BASE`.
 
 **Roles.** En Supabase no se crea ningun superusuario: el administrador ya existe
 (`postgres`, que tiene BYPASSRLS). Se asegura `camarero_app`, que **no tiene BYPASSRLS y no
@@ -96,10 +128,14 @@ contrasena desde el secreto `CAMARERO_DB_PASSWORD_APP` (`RISK-020`).
 | `CAMARERO_DB_URL_ADMIN` | GitHub | Pooler, usuario de administracion, **sin contrasena** |
 | `CAMARERO_DB_PASSWORD_ADMIN` | GitHub | Contrasena del administrador |
 | `CAMARERO_DB_PASSWORD_APP` | GitHub | Contrasena del rol de la aplicacion |
-| `SUPABASE_URL`, `SUPABASE_JWT_SECRET` | Cloudflare | URL del proyecto y secreto de los tokens |
+| `SUPABASE_URL` | Cloudflare | URL del proyecto; se usa para leer el JWKS |
 | `SUPABASE_SERVICE_ROLE_KEY` | Cloudflare | Solo si hiciera falta; **salta la RLS**, nunca en el cliente |
 
 Ningun secreto vive en el repositorio, y ninguno se pega en conversaciones.
+
+**El borde no guarda secreto alguno para validar identidades.** Tuvo `SUPABASE_JWT_SECRET`
+(verificacion simetrica HS256) y se **retiro** del Worker el 2026-09-30, al pasar a
+verificacion asimetrica por JWKS (`ADR-0021`, `LL-016`).
 
 ## Por que el subdominio es neutro
 
