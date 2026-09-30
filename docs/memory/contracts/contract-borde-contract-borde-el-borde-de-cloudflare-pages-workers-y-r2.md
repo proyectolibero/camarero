@@ -16,11 +16,15 @@ related:
   - ADR-0019
   - ADR-0020
   - ADR-0021
+  - ADR-0023
+  - ADR-0024
   - TASK-F0-03
   - TASK-F0-04
   - TASK-F0-08
+  - TASK-F0-09
   - LL-014
   - LL-016
+  - CONTRACT-pantallas
   - RISK-001
   - RISK-020
 ---
@@ -29,14 +33,14 @@ related:
 
 El borde es todo lo que hay entre el comensal y la base de datos: la web, la API de
 Cloudflare y el almacen de imagenes. Un solo proveedor (Cloudflare) y un solo dominio
-global (D-023). Ver `ADR-0002`, `ADR-0018` y `ADR-0020`.
+global (D-023). Ver `ADR-0002`, `ADR-0018`, `ADR-0020` y `CONTRACT-pantallas`.
 
 ## Las tres piezas
 
 | Pieza | Donde | Que hace |
 |-------|-------|----------|
-| **Web** | Cloudflare Pages, carpeta `apps/web` | Sirve la PWA (de momento, una pagina vacia). |
-| **API** | Cloudflare Worker, `workers/api` | Expone `GET /health` y `POST /auth/sesion`; mas adelante, push, cron y rate limit. |
+| **Web** | Cloudflare Pages, carpeta `apps/web` | Sirve la PWA del comensal (de momento, una pagina vacia). |
+| **API** | Cloudflare Worker, `workers/api` | Expone `GET /health`, `POST /auth/sesion` y **los paneles del dueno (`/admin`) y de plataforma (`/panel`)**, que se dibujan en el servidor (`ADR-0023`). |
 | **Carta** | Cloudflare R2, bucket `camarero-cartas` | Guarda las imagenes de la carta. 10 GB gratis. |
 
 ## Regla de despliegue
@@ -50,24 +54,32 @@ tests, tipos o lint no llega nunca a produccion.
 
 - La web las declara en `apps/web/_headers` (CSP, HSTS, `nosniff`, `Referrer-Policy`,
   `Permissions-Policy`, `X-Frame-Options`).
-- El Worker las pone en cada respuesta desde `workers/api/src/salud.ts`.
+- El Worker las pone en cada respuesta desde `workers/api/src/salud.ts`. Las paginas HTML
+  llevan su propio CSP, **sin `unsafe-inline` ni `unsafe-eval`**: por eso los estilos van
+  en una hoja externa (`GET /panel/estilos.css`) y no en linea.
 
 ## Como se identifica el empleado
 
-`POST /auth/sesion` recibe un pasaporte (JWT) y devuelve la ficha del empleado.
-
-1. **Se valida la firma con la clave publica de Supabase**, leida de su JWKS
+1. **La entrada** (`POST /admin/entrar`, `POST /panel/entrar`) recibe correo y contrasena,
+   los presenta al proveedor de identidad y guarda el pasaporte en una **cookie que el
+   navegador no puede leer** (`ADR-0024`). El navegador nunca ve el pasaporte.
+2. **Se valida la firma con la clave publica de Supabase**, leida de su JWKS
    (`<SUPABASE_URL>/auth/v1/.well-known/jwks.json`). El proyecto firma con clave
-   **asimetrica ES256**; el borde **no guarda ningun secreto** para esto (`ADR-0021`). El
-   algoritmo no lo elige el token: se comprueba contra una lista blanca (`ES256`, `RS256`).
-   Las claves se cachean una hora en el propio Worker; si no se pueden leer, se responde
-   **503** (no poder juzgar un pasaporte no es culpa de quien llama), nunca 401.
-2. **Se resuelve la ficha del empleado** por `staff.auth_user_id`, fijando la reclamacion
-   del token dentro de una transaccion corta (si no, el pool de Hyperdrive podria arrastrar
-   el contexto de una peticion a la siguiente).
+   **asimetrica ES256**; el borde **no guarda ningun secreto para verificar** (`ADR-0021`).
+   El algoritmo no lo elige el token: se comprueba contra una lista blanca (`ES256`,
+   `RS256`). Las claves se cachean una hora en el propio Worker; si no se pueden leer, se
+   responde **503** (no poder juzgar un pasaporte no es culpa de quien llama), nunca 401.
+3. **Se resuelve la ficha del empleado** por `staff.auth_user_id`, en una transaccion
+   corta: primero se fija `request.jwt.claims` (permite leer la propia fila por la politica
+   `staff_select_auth`), y despues `app.*` con lo que diga la fila, para poder leer el
+   nombre de la organizacion y del local. La transaccion importa: sin ella, el pool de
+   Hyperdrive podria arrastrar el contexto de una peticion a la siguiente.
+4. `POST /auth/sesion` (para clientes que ya traen el pasaporte) devuelve la misma ficha:
+   `401 falta_token`, `401 token_invalido`, `403 empleado_no_vinculado`,
+   `503 identidad_no_disponible`, `503 servicio_no_configurado`.
 
-Respuestas: `401 falta_token`, `401 token_invalido`, `403 empleado_no_vinculado`,
-`503 identidad_no_disponible`, `503 servicio_no_configurado`.
+**Con credenciales que no valen, la respuesta es identica a la de un correo que no existe**
+(mismo codigo y mismo mensaje): la pantalla no sirve para averiguar quien tiene cuenta.
 
 ## Como conecta el borde con la base
 
@@ -89,8 +101,8 @@ si tiene IPv6.
    es la **unica via** de conectar el borde con `verify-full`.
 3. **La contrasena nunca va dentro de la URL.** Un caracter como `#`, `@`, `%` o `:` sin
    codificar la corta en silencio. Va en secreto aparte.
-4. **El JWKS puede llevar punto** en el usuario (`postgres.<referencia>`) y ese usuario
-   **no es un rol real**: no se puede interpolar en `alter default privileges`.
+4. **El usuario del pooler puede llevar punto** (`postgres.<referencia>`) y **no es un rol
+   real**: no se puede interpolar en `alter default privileges`.
 
 **El tunel.** Se crea y se actualiza con el workflow **"Configurar tunel"**
 (`.github/workflows/configurar-tunel.yml`, lanzado a mano), que sube la CA de Supabase a
@@ -128,14 +140,20 @@ contrasena desde el secreto `CAMARERO_DB_PASSWORD_APP` (`RISK-020`).
 | `CAMARERO_DB_URL_ADMIN` | GitHub | Pooler, usuario de administracion, **sin contrasena** |
 | `CAMARERO_DB_PASSWORD_ADMIN` | GitHub | Contrasena del administrador |
 | `CAMARERO_DB_PASSWORD_APP` | GitHub | Contrasena del rol de la aplicacion |
-| `SUPABASE_URL` | Cloudflare | URL del proyecto; se usa para leer el JWKS |
+| `SUPABASE_URL` | Cloudflare | URL del proyecto; sirve para leer el JWKS |
+| `SUPABASE_ANON_KEY` | Cloudflare (+ GitHub, para instalarla) | Clave **publishable**: **publica por diseno**, la misma que lleva el navegador de cualquier cliente. Sirve para presentar credenciales al proveedor de identidad, no para verificar pasaportes. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Cloudflare | Solo si hiciera falta; **salta la RLS**, nunca en el cliente |
 
-Ningun secreto vive en el repositorio, y ninguno se pega en conversaciones.
+Ningun secreto vive en el repositorio, y ninguno se pega en conversaciones. La clave
+publishable es la **unica excepcion explicita**: no es un secreto (esta disenada para ir en
+el navegador), pero **se confunde con facilidad con la clave de servicio**, que es la llave
+maestra. Ante la duda, no se copia nada.
 
-**El borde no guarda secreto alguno para validar identidades.** Tuvo `SUPABASE_JWT_SECRET`
-(verificacion simetrica HS256) y se **retiro** del Worker el 2026-09-30, al pasar a
-verificacion asimetrica por JWKS (`ADR-0021`, `LL-016`).
+**Para verificar** un pasaporte el borde **no guarda ningun secreto**: solo la clave
+publica del proveedor. Tuvo `SUPABASE_JWT_SECRET` (verificacion simetrica HS256) y se
+**retiro** del Worker el 2026-09-30, al pasar a verificacion asimetrica por JWKS
+(`ADR-0021`, `LL-016`). La clave publishable no verifica nada: solo abre la puerta del
+proveedor para presentar credenciales.
 
 ## Por que el subdominio es neutro
 
