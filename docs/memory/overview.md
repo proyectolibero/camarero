@@ -1,11 +1,25 @@
 ---
 id: overview
 type: overview
-title: "Vista general del sistema"
+title: overview — Vista general del sistema
 status: active
-date: 2026-09-27
-tags: [mapa]
-related: [ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0006, ADR-0007]
+date: 2026-09-30
+tags:
+  - mapa
+related:
+  - ADR-0001
+  - ADR-0002
+  - ADR-0003
+  - ADR-0004
+  - ADR-0005
+  - ADR-0006
+  - ADR-0007
+  - ADR-0017
+  - ADR-0022
+  - ADR-0023
+  - ADR-0024
+  - CONTRACT-pantallas
+  - LL-011
 ---
 
 ## Que es el sistema
@@ -22,16 +36,21 @@ del establecimiento.
 
 ## Arquitectura en texto
 
-- **Clientes (PWA):** tres superficies sobre el mismo dominio global. Comensal en
-  `app.dominio/t/<codigo>`, personal en `app.dominio/staff` (KDS + toma de comanda) y
-  dueno en `app.dominio/admin`.
+- **Clientes:** cuatro superficies sobre el mismo dominio global (ver `CONTRACT-pantallas`
+  y `ADR-0022`). Comensal en `app.camarero…/t/<codigo>` (publica y anonima), personal en
+  `/staff` (KDS y toma de comanda), dueno en `/admin` y plataforma en `/panel`. Las dos
+  ultimas las **dibuja el servidor**; las dos primeras son aplicaciones pequenas en el
+  navegador sin dependencias de terceros (`ADR-0023`).
 - **Borde:** Cloudflare Pages sirve los estaticos y Cloudflare Workers expone la API de
-  borde: web push, cron, rate limit y validacion. Las fotos de carta viven en Cloudflare
-  R2.
+  borde: autenticacion, web push, cron, rate limit y validacion. Las fotos de carta viven
+  en Cloudflare R2.
 - **Datos:** Supabase. Postgres es la primera clase: la logica de negocio vive en
-  funciones Postgres `SECURITY DEFINER`, con RLS activada y probada en cada tabla, Auth
-  para el personal y Realtime para las notificaciones. La clave de servicio (role de
-  servicio) nunca llega al cliente: solo existe como secreto en Workers.
+  disparadores y funciones **`SECURITY INVOKER`**, con RLS activada y probada en cada
+  tabla, Auth para el personal y Realtime para las notificaciones. **Nunca `SECURITY
+  DEFINER` sin endurecer**: un definer lee como su dueno y abre fuga entre organizaciones
+  (`ADR-0017`, `LL-011`). La clave de servicio nunca llega al cliente ni al borde.
+- **Sesion:** el pasaporte del personal vive en una cookie que el navegador no puede leer;
+  el borde hace de intermediario en la entrada (`ADR-0024`).
 - **Regla de dinero:** los importes son enteros de pesos chilenos (CLP). Nunca coma
   flotante, nunca `.toFixed()` para calcular. Ver `CONTRACT-dinero`.
 
@@ -39,14 +58,16 @@ del establecimiento.
 
 - `apps/web` — PWA del comensal.
 - `apps/staff` — PWA del personal: KDS y toma de comanda.
-- `apps/admin` — panel web del dueno.
-- `packages/ui` — design system (tokens, componentes, accesibilidad).
-- `packages/db` — migraciones SQL, RLS, funciones y seeds.
+- `packages/ui` — piel compartida: tokens y componentes de presentacion.
+- `packages/db` — migraciones SQL, RLS, funciones y semillas.
 - `packages/domain` — logica pura: reparto de cuenta, totales, propinas, estados.
 - `packages/i18n` — traducciones de UI (es/en).
 - `packages/shared` — tipos, esquemas Zod y constantes.
-- `workers/api` — Worker de borde: web push, cron, rate limit.
-- `workers/backup` — `pg_dump` cifrado hacia R2.
+- `workers/api` — Worker de borde: autenticacion, web push, cron, rate limit. **Aqui
+  viven los paneles del dueno y de plataforma**, que se dibujan en el servidor
+  (`workers/api/src/admin` y `workers/api/src/panel`). No hay aplicacion de cliente para
+  ellos: seria una pieza mas que mantener sin ganar nada.
+- `workers/backup` — copia cifrada de la base hacia R2.
 - `tools/mcp-memory` — el servidor MCP y el validador de esta memoria.
 - `docs/memory` — la memoria estructurada del proyecto (este arbol).
 
