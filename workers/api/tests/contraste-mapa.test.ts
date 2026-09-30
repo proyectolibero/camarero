@@ -13,6 +13,24 @@ import { ESTILOS } from "../src/ui/estilos.ts"
 const MINIMO_TEXTO = 4.5
 const MINIMO_GRAFICO = 3
 
+/**
+ * Opacidad real que el CSS aplica al estado desactivado de la LISTA (`.mesa-inactiva`).
+ * Si baja de 1, el color que llega al ojo no es el de la variable, y el contraste medido
+ * tiene que componer la capa sobre el fondo, como hace el navegador.
+ */
+function leerOpacidadDeLista(css: string): number {
+  const regla = /\.mesa-inactiva\s*\{[^}]*opacity\s*:\s*([0-9]*\.?[0-9]+)\s*;/i.exec(css)
+  return regla?.[1] === undefined ? 1 : Number.parseFloat(regla[1])
+}
+
+function componerSobre(frente: string, fondo: string, alfa: number): string {
+  const canalMezclado = (indice: number): string =>
+    Math.round(canal(frente, indice) * alfa + canal(fondo, indice) * (1 - alfa))
+      .toString(16)
+      .padStart(2, "0")
+  return `#${canalMezclado(1)}${canalMezclado(3)}${canalMezclado(5)}`
+}
+
 function aLineal(canal: number): number {
   const proporcion = canal / 255
   return proporcion <= 0.03928 ? proporcion / 12.92 : ((proporcion + 0.055) / 1.055) ** 2.4
@@ -52,6 +70,11 @@ function valorDeMapa(nombre: string, oscuro: boolean): string {
   return valor
 }
 
+/** Contraste tal y como se ve de verdad: si hay opacidad, se compone antes de medir. */
+function contrasteVisible(frente: string, fondo: string, opacidad: number): number {
+  return contraste(componerSobre(frente, fondo, opacidad), fondo)
+}
+
 describe("Mapa: contraste con los numeros, no a ojo", () => {
   for (const oscuro of [false, true]) {
     const tema = oscuro ? "oscuro" : "claro"
@@ -76,4 +99,41 @@ describe("Mapa: contraste con los numeros, no a ojo", () => {
       expect(contraste(mesa, celda)).toBeGreaterThanOrEqual(MINIMO_GRAFICO)
     })
   }
+
+  // Apagar el texto con `opacity` es justo el defecto que dejo la mesa desactivada ilegible.
+  // La raya y el borde ya la distinguen; no hace falta bajar la opacidad de toda la fila.
+  it("no debe apagar la fila desactivada con opacity: se lee en el mapa de color, no en el DOM de color", () => {
+    expect(leerOpacidadDeLista(ESTILOS)).toBe(1)
+  })
+
+  describe("lista de mesas: el estado desactivado tambien se mide", () => {
+    for (const oscuro of [false, true]) {
+      const tema = oscuro ? "oscuro" : "claro"
+      const opacidad = leerOpacidadDeLista(ESTILOS)
+      const inactiva = valorDeMapa("--mapa-inactiva-fondo", oscuro)
+
+      it(`debe superar ${MINIMO_TEXTO}:1 la etiqueta desactivada en la lista, tema ${tema}`, () => {
+        const tinta = valorDeMapa("--mapa-inactiva-tinta", oscuro)
+        expect(contrasteVisible(tinta, inactiva, opacidad)).toBeGreaterThanOrEqual(MINIMO_TEXTO)
+      })
+
+      it(`debe superar ${MINIMO_TEXTO}:1 el codigo desactivado en la lista, tema ${tema}`, () => {
+        const tinta = valorDeMapa("--mapa-inactiva-tinta", oscuro)
+        expect(contrasteVisible(tinta, inactiva, opacidad)).toBeGreaterThanOrEqual(MINIMO_TEXTO)
+      })
+
+      it(`debe superar ${MINIMO_TEXTO}:1 el texto «desactivada» en la lista, tema ${tema}`, () => {
+        const tintaSuave = valorDeMapa("--tinta-suave", oscuro)
+        expect(contrasteVisible(tintaSuave, inactiva, opacidad)).toBeGreaterThanOrEqual(
+          MINIMO_TEXTO,
+        )
+      })
+    }
+  })
+
+  // La prueba tiene que saber fallar: con el color malo de antes (texto al 60 % sobre blanco)
+  // el mismo calculo cae por debajo del minimo. Si esto deja de caer, la guardia era decorativa.
+  it("debe saber fallar cuando la tinta desactivada se apaga con opacity", () => {
+    expect(contrasteVisible("#55555e", "#ffffff", 0.6)).toBeLessThan(MINIMO_TEXTO)
+  })
 })

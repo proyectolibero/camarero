@@ -528,8 +528,28 @@ p {
   padding-bottom: 0.55rem;
 }
 
+/*
+ * La mesa desactivada tiene que NOTARSE y LEERSE. Antes se apagaba con opacity: 0.6, que
+ * rebajaba el texto a 2,8:1 y dejaba justo la fila que el dueno busca casi invisible. Ahora
+ * se distingue por el color (fondo apagado y tinta suave) y por el borde discontinuo, sin
+ * tocar la opacidad del texto. Contraste medido en tests/contraste-mapa.test.ts.
+ */
 .mesa-inactiva {
-  opacity: 0.6;
+  background: var(--mapa-inactiva-fondo);
+}
+
+.mesa-inactiva .mesa-codigo {
+  background: transparent;
+  border-color: var(--mapa-inactiva-borde);
+  color: var(--mapa-inactiva-tinta);
+}
+
+.mesa-inactiva .mesa-datos {
+  color: var(--tinta-suave);
+}
+
+.mesa-inactiva .mesa-etiqueta {
+  color: var(--mapa-inactiva-tinta);
 }
 
 .mesa-qr {
