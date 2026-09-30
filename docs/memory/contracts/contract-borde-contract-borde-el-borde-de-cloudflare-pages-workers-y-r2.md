@@ -81,6 +81,10 @@ Por **Hyperdrive**, sin cache, y con la conexion **directa** a Supabase (`db.<re
 
 **Historial de migraciones.** `public.camarero_migraciones` anota lo aplicado, con **linea base** automatica si la base ya tenia esquema. Sin el, una segunda ejecucion intentaria crear tablas existentes. El Postgres local de los tests no lo usa: siempre parte de cero.
 
+**Por que el historial se queda en `public`.** No es comodidad, es estado: moverlo a un esquema propio dejaria la linea base **vacia** en una base ya instalada, y esta marcaria la migracion de limpieza como aplicada **sin ejecutarla**, dejando `prueba_runner` en produccion. Como `public` es el esquema que Supabase expone a su API, la proteccion se resuelve con permisos: el aprovisionamiento retira a `anon`, `authenticated` y `service_role` el uso del esquema y todos los privilegios sobre sus tablas, **incluidos los privilegios por defecto** (asi una reinstalacion tampoco los expone). La prueba `packages/db/tests/historial.test.ts` lo demuestra concediendo primero el acceso (para que la prueba no sea vacua) y leyendo despues **de verdad** como cada uno de los tres roles: los tres fallan.
+
+**`prueba_runner` ya no forma parte del esquema.** Nacio en la migracion `0001` solo para confirmar que el runner aplicaba migraciones en orden, y viajo a produccion sin querer. La retira la migracion `0016_quitar_tabla_de_pruebas.sql` (`drop table if exists public.prueba_runner`), y las pruebas del runner se crean su propia tabla en `packages/db/tests/runner.test.ts`. Aplicar el esquema desde cero ya no la crea.
+
 **El borde nunca conecta como `postgres`.** En Supabase ese rol ignora la RLS. El borde conecta como `camarero_app`, que si esta sujeto a ella.
 
 ## Operacion: copias de seguridad y restauracion

@@ -319,7 +319,7 @@ describe("Cobertura de RLS en las 28 tablas del contrato", () => {
                 where p.schemaname = 'public' and p.tablename = c.relname) as politicas
          from pg_class c
          join pg_namespace n on n.oid = c.relnamespace
-        where n.nspname = 'public' and c.relkind = 'r' and c.relname <> 'prueba_runner'
+        where n.nspname = 'public' and c.relkind = 'r'
         order by c.relname`,
     )
     const porTabla = new Map(filas.map((f) => [f.tabla, f]))
