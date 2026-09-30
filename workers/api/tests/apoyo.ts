@@ -7,6 +7,7 @@
  */
 import { aBytes, bytesABase64Url } from "../src/auth/base64.ts"
 import type { ClaveDeFirma } from "../src/auth/jwks.ts"
+import type { AlmacenCartas } from "../src/panel/cartas.ts"
 import type { AlmacenPanel } from "../src/panel/datos.ts"
 
 export const AHORA = new Date("2026-09-30T12:00:00.000Z")
@@ -85,6 +86,54 @@ export function almacenFalso(parciales: Partial<AlmacenPanel> = {}): AlmacenPane
     leerMesa: async () => null,
     moverMesa: async () => ({ ok: true }),
     acomodarMesasSinPosicion: async () => undefined,
+    listarCategorias: async () => [],
+    leerCategoria: async () => null,
+    crearCategoria: async () => ({ ok: false, motivo: "conflicto" }),
+    alternarCategoria: async () => ({ ok: true, valor: undefined }),
+    renombrarCategoria: async () => ({ ok: true, valor: undefined }),
+    moverCategoria: async () => ({ ok: true, valor: undefined }),
+    listarPlatos: async () => [],
+    leerPlato: async () => null,
+    crearPlato: async () => ({ ok: false, motivo: "conflicto" }),
+    actualizarPlato: async () => ({ ok: true, valor: undefined }),
+    alternarPlato: async () => ({ ok: true, valor: undefined }),
+    moverPlato: async () => ({ ok: true, valor: undefined }),
+    fijarFoto: async () => ({ ok: true, valor: null }),
     ...parciales,
   }
+}
+
+/** Almacen de fotos en memoria: guarda bytes y tipo, para probar sin tocar R2. */
+export function cartasFalsas(iniciales: Readonly<Record<string, string>> = {}): {
+  readonly almacen: AlmacenCartas
+  readonly objetos: Map<string, { readonly bytes: ArrayBuffer; readonly tipo: string }>
+} {
+  const objetos = new Map<string, { readonly bytes: ArrayBuffer; readonly tipo: string }>()
+  for (const [clave, texto] of Object.entries(iniciales)) {
+    objetos.set(clave, { bytes: aArrayBuffer(new TextEncoder().encode(texto)), tipo: "image/png" })
+  }
+  const almacen: AlmacenCartas = {
+    disponible: true,
+    guardar: async (clave, bytes, tipo) => {
+      objetos.set(clave, { bytes: aArrayBuffer(bytes), tipo })
+    },
+    leer: async (clave) => {
+      const objeto = objetos.get(clave)
+      if (objeto === undefined) {
+        return null
+      }
+      const respuesta = new Response(objeto.bytes)
+      return { cuerpo: respuesta.body ?? new ReadableStream(), tipo: objeto.tipo }
+    },
+    borrar: async (clave) => {
+      objetos.delete(clave)
+    },
+  }
+  return { almacen, objetos }
+}
+
+function aArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copia = new Uint8Array(bytes.byteLength)
+  copia.set(bytes)
+  return copia.buffer
 }

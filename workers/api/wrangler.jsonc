@@ -19,8 +19,20 @@
     // index.html, no un 404.
     "not_found_handling": "single-page-application",
     // El codigo atiende primero las superficies dinamicas. Se listan con y sin barra final
-    // para que /admin (a secas) no acabe sirviendose como fichero estatico.
-    "run_worker_first": ["/admin", "/admin/*", "/panel", "/panel/*", "/auth", "/auth/*", "/health"]
+    // para que /admin (a secas) no acabe sirviendose como fichero estatico. `/cartas` es
+    // imprescindible: sin el, una ruta que no es fichero estatico cae en el index.html de la
+    // PWA y la foto se serviria como HTML (ADR-0030).
+    "run_worker_first": [
+      "/admin",
+      "/admin/*",
+      "/panel",
+      "/panel/*",
+      "/auth",
+      "/auth/*",
+      "/cartas",
+      "/cartas/*",
+      "/health"
+    ]
   },
   "triggers": {
     "crons": ["0 12 * * *"]

@@ -11,6 +11,7 @@ import { ESTILOS } from "../ui/estilos.ts"
 import { renderizar } from "../ui/html.ts"
 import { responderRedireccion, respuestaCss, respuestaHtml } from "../ui/respuesta.ts"
 import { manejarAdmin } from "./admin.ts"
+import { manejarCarta } from "./carta.ts"
 import type { Dependencias } from "./proveedor.ts"
 import { cookieDeBorrado, cookieDeSesion } from "./sesion.ts"
 import { type EntornoDePanel, resolverEmpleadoDeSesion } from "./sesion-panel.ts"
@@ -133,6 +134,11 @@ export async function manejarPanel(
     return peticion.method === "POST"
       ? responderRedireccion(`/${salir}`, cookieDeBorrado())
       : responderMetodoNoPermitido("POST")
+  }
+
+  const respuestaCarta = await manejarCarta(peticion, entorno, ahora, dependencias)
+  if (respuestaCarta !== null) {
+    return respuestaCarta
   }
 
   return await manejarAdmin(peticion, entorno, ahora, dependencias)

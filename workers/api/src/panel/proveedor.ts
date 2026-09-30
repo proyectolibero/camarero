@@ -8,6 +8,7 @@
  */
 import type { FuenteDeClaves } from "../auth/jwks.ts"
 import type { Empleado } from "../base.ts"
+import type { AlmacenCartas } from "./cartas.ts"
 import type { AlmacenPanel } from "./datos.ts"
 
 /** Pasaporte recien emitido y lo que le queda de vida, para el Max-Age de la cookie. */
@@ -28,6 +29,7 @@ export type Dependencias = {
   readonly autenticar: Autenticador
   readonly resolverEmpleado: ResolvedorDeEmpleado
   readonly almacen: AlmacenPanel
+  readonly cartas: AlmacenCartas
 }
 
 type EntornoDeIdentidad = {

@@ -8,7 +8,8 @@
 import type { Empleado } from "../base.ts"
 import { type HtmlSeguro, html, htmlCrudo } from "../ui/html.ts"
 import { generarQrSvg } from "../ui/qr.ts"
-import type { DatosLocal, Mesa, Zona } from "./datos.ts"
+import { ALERGENOS, ESTACIONES, etiquetaDe, type Opcion, TAGS } from "./carta-catalogo.ts"
+import type { Categoria, DatosLocal, Mesa, Plato, Zona } from "./datos.ts"
 import { svgDeZona } from "./mapa-svg.ts"
 import { nombreDeRol } from "./roles.ts"
 
@@ -26,7 +27,7 @@ const PANTALLAS: Readonly<Record<Superficie, readonly PantallaDelCuadro[]>> = {
     { titulo: "Zonas", href: "/admin/zonas" },
     { titulo: "Mesas y QR para imprimir", href: "/admin/mesas" },
     { titulo: "Alta del local (asistente)" },
-    { titulo: "Carta (categorías, platos, precios, fotos, orden)" },
+    { titulo: "Carta (categorías, platos, precios, fotos, orden)", href: "/admin/carta" },
     { titulo: "Personal (invitar, roles, PIN)" },
     { titulo: "Ajustes (tema, logo, horarios, modo de servicio)" },
     { titulo: "Pedidos e histórico, anular" },
@@ -528,4 +529,319 @@ ${introduccion}
 <p class="no-imprimir"><a class="boton boton-secundario" href="/admin/mesas">Volver a las mesas</a></p>
 </main>`
   return pagina("QR de las mesas", cuerpo)
+}
+
+// ---------------------------------------------------------------------------
+// La carta: categorias, platos y bebidas
+// ---------------------------------------------------------------------------
+
+const FORMATO_CLP = new Intl.NumberFormat("es-CL", { maximumFractionDigits: 0 })
+
+function formatearPrecio(clp: number): string {
+  return `$ ${FORMATO_CLP.format(clp)}`
+}
+
+function opcionesDeCatalogo(
+  opciones: readonly Opcion[],
+  actual: string | null,
+  vacio: string,
+): HtmlSeguro {
+  return html`<option value=""${actual === null ? htmlCrudo(" selected") : html``}>${vacio}</option>${opciones.map(
+    (opcion) =>
+      html`<option value="${opcion.valor}"${opcion.valor === actual ? htmlCrudo(" selected") : html``}>${opcion.etiqueta}</option>`,
+  )}`
+}
+
+function casillas(
+  nombre: string,
+  opciones: readonly Opcion[],
+  seleccionados: ReadonlySet<string>,
+): HtmlSeguro {
+  return html`${opciones.map(
+    (opcion) =>
+      html`<label class="casilla"><input type="checkbox" name="${nombre}" value="${opcion.valor}"${seleccionados.has(opcion.valor) ? htmlCrudo(" checked") : html``}><span>${opcion.etiqueta}</span></label>`,
+  )}`
+}
+
+function botonesDeOrden(accion: string): HtmlSeguro {
+  return html`<form class="mover-orden" method="post" action="${accion}">
+<button class="boton-mini" type="submit" name="direccion" value="subir" aria-label="Subir">↑</button>
+<button class="boton-mini" type="submit" name="direccion" value="bajar" aria-label="Bajar">↓</button>
+</form>`
+}
+
+function formularioAlternarCategoria(categoria: Categoria): HtmlSeguro {
+  return html`<form method="post" action="/admin/carta/categoria/${categoria.id}/alternar">
+<button class="boton-mini" type="submit">${categoria.activa ? "Ocultar" : "Mostrar"}</button>
+</form>`
+}
+
+function formularioRenombrarCategoria(categoria: Categoria): HtmlSeguro {
+  return html`<form class="renombrar" method="post" action="/admin/carta/categoria/${categoria.id}/renombrar">
+<input type="text" name="nombre" value="${categoria.nombre}" maxlength="120" required aria-label="Nuevo nombre de la categoría">
+<button class="boton-mini" type="submit">Renombrar</button>
+</form>`
+}
+
+function formularioNuevaCategoria(): HtmlSeguro {
+  return html`<form method="post" action="/admin/carta">
+<label class="campo"><span>Nueva categoría</span>
+<input type="text" name="nombre" maxlength="120" placeholder="Entrantes" required></label>
+<button class="boton" type="submit">Crear categoría</button>
+</form>`
+}
+
+function filaDeCategoria(categoria: Categoria, puedeGestionar: boolean): HtmlSeguro {
+  const estado = categoria.activa ? "Activa" : "Oculta"
+  const gestion = puedeGestionar
+    ? html`${botonesDeOrden(`/admin/carta/categoria/${categoria.id}/mover`)}
+${formularioRenombrarCategoria(categoria)}
+${formularioAlternarCategoria(categoria)}`
+    : html``
+  return html`<li class="carta-categoria${categoria.activa ? "" : " carta-oculta"}">
+<div class="carta-linea">
+<a class="carta-nombre" href="/admin/carta/${categoria.id}">${categoria.nombre}</a>
+<span class="carta-estado">${estado}</span>
+<span class="crece"></span>
+${gestion}
+</div>
+</li>`
+}
+
+function listaDeCategorias(categorias: readonly Categoria[], puedeGestionar: boolean): HtmlSeguro {
+  if (categorias.length === 0) {
+    return html`<p>Todavía no hay categorías. Crea la primera arriba.</p>`
+  }
+  return html`<ul class="carta-lista">${categorias.map((categoria) => filaDeCategoria(categoria, puedeGestionar))}</ul>`
+}
+
+export function vistaCarta(
+  empleado: Empleado,
+  categorias: readonly Categoria[],
+  puedeGestionar: boolean,
+  estado: EstadoPantalla & { readonly creada?: boolean },
+): HtmlSeguro {
+  const exito = estado.creada === true ? "Categoría creada." : estado.exito
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${avisosDeEstado({ ...estado, exito })}
+<section class="tarjeta">
+<h1>Carta</h1>
+<p>Las categorías ordenan la carta del comensal. Una categoría oculta no se ve, pero no se borra.</p>
+${puedeGestionar ? formularioNuevaCategoria() : html`<p>Puedes consultar la carta, pero solo el dueño o el encargado pueden cambiarla.</p>`}
+</section>
+<section class="tarjeta">
+<h2>Categorías</h2>
+${listaDeCategorias(categorias, puedeGestionar)}
+<p><a href="/admin/carta/sin-categoria">Ver los platos sin categoría</a></p>
+</section>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina("Carta", contenido)
+}
+
+function insigniasDePlato(plato: Plato): HtmlSeguro {
+  if (plato.activo && plato.disponible) {
+    return html`<span class="insignia insignia-ok">Disponible</span>`
+  }
+  return html`${plato.activo ? html`` : html`<span class="insignia insignia-retirado">Retirado</span>`}
+${plato.disponible ? html`` : html`<span class="insignia insignia-agotado">Agotado</span>`}`
+}
+
+function fotoDePlato(plato: Plato): HtmlSeguro {
+  if (plato.fotoClave === null) {
+    return html`<span class="plato-sinfoto" aria-hidden="true">Sin foto</span>`
+  }
+  return html`<img class="plato-foto" src="/cartas/${plato.fotoClave}" alt="Foto de ${plato.nombre}" loading="lazy">`
+}
+
+function formularioAlternarPlato(plato: Plato): HtmlSeguro {
+  return html`<form class="plato-acciones" method="post" action="/admin/carta/plato/${plato.id}/alternar">
+<button class="boton-mini" type="submit" name="campo" value="disponible">${plato.disponible ? "Marcar agotado" : "Marcar disponible"}</button>
+<button class="boton-mini" type="submit" name="campo" value="activo">${plato.activo ? "Retirar" : "Activar"}</button>
+</form>`
+}
+
+function filaDePlato(plato: Plato, puedeGestionar: boolean): HtmlSeguro {
+  const detalles = plato.estacion === null ? "" : ` · ${etiquetaDe(ESTACIONES, plato.estacion)}`
+  const gestion = puedeGestionar
+    ? html`<div class="plato-gestion">
+<a class="boton-mini" href="/admin/carta/plato/${plato.id}">Editar</a>
+<form method="post" action="/admin/carta/plato/${plato.id}/duplicar">
+<button class="boton-mini" type="submit">Duplicar</button>
+</form>
+${botonesDeOrden(`/admin/carta/plato/${plato.id}/mover`)}
+${formularioAlternarPlato(plato)}
+</div>`
+    : html``
+  const clases = ["carta-plato"]
+  if (!plato.activo) {
+    clases.push("carta-plato-retirado")
+  }
+  if (!plato.disponible) {
+    clases.push("carta-plato-agotado")
+  }
+  return html`<li class="${clases.join(" ")}">
+${fotoDePlato(plato)}
+<div class="plato-texto">
+<span class="plato-nombre">${plato.nombre}</span>
+<span class="plato-datos">${formatearPrecio(plato.precioClp)}${detalles}</span>
+${insigniasDePlato(plato)}
+</div>
+${gestion}
+</li>`
+}
+
+function listaDePlatos(platos: readonly Plato[], puedeGestionar: boolean): HtmlSeguro {
+  if (platos.length === 0) {
+    return html`<p>Todavía no hay platos ni bebidas en esta categoría.</p>`
+  }
+  return html`<ul class="carta-lista">${platos.map((plato) => filaDePlato(plato, puedeGestionar))}</ul>`
+}
+
+export function vistaCategoria(
+  empleado: Empleado,
+  categoria: Categoria,
+  platos: readonly Plato[],
+  puedeGestionar: boolean,
+  estado: EstadoPantalla,
+): HtmlSeguro {
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${avisosDeEstado(estado)}
+<section class="tarjeta">
+<h1>${categoria.nombre}</h1>
+<p><a class="boton boton-secundario" href="/admin/carta">Volver a la carta</a>
+${
+  puedeGestionar
+    ? html`<a class="boton" href="/admin/carta/plato?categoria=${categoria.id}">Añadir plato o bebida</a>`
+    : html``
+}
+</p>
+</section>
+<section class="tarjeta">
+<h2>Platos y bebidas</h2>
+${listaDePlatos(platos, puedeGestionar)}
+</section>
+</main>`
+  return pagina(categoria.nombre, contenido)
+}
+
+function campoSeleccion(
+  etiqueta: string,
+  nombre: string,
+  actual: string | null,
+  opciones: readonly Opcion[],
+  vacio: string,
+): HtmlSeguro {
+  return html`<label class="campo"><span>${etiqueta}</span>
+<select name="${nombre}">${opcionesDeCatalogo(opciones, actual, vacio)}</select></label>`
+}
+
+function campoCategoria(categorias: readonly Categoria[], actual: string | null): HtmlSeguro {
+  return html`<label class="campo"><span>Categoría</span>
+<select name="categoria">${opcionesDeCatalogo(
+    categorias.map((categoria) => ({ valor: categoria.id, etiqueta: categoria.nombre })),
+    actual,
+    "Sin categoría",
+  )}</select></label>`
+}
+
+function formularioPlato(
+  plato: Plato | null,
+  categorias: readonly Categoria[],
+  categoriaInicial: string | null,
+): HtmlSeguro {
+  const nombre = plato?.nombre ?? ""
+  const descripcion = plato?.descripcion ?? ""
+  const precio = plato === null ? "" : String(plato.precioClp)
+  const categoria = plato?.categoriaId ?? categoriaInicial
+  const estacion = plato?.estacion ?? null
+  const disponible = plato?.disponible ?? true
+  const activo = plato?.activo ?? true
+  const desde = plato?.desde ?? ""
+  const hasta = plato?.hasta ?? ""
+  const orden = plato === null ? "0" : String(plato.orden)
+  const tags = new Set(plato?.tags ?? [])
+  const allergens = new Set(plato?.allergens ?? [])
+  const accion = plato === null ? "/admin/carta/plato" : `/admin/carta/plato/${plato.id}`
+  return html`<form method="post" action="${accion}">
+<label class="campo"><span>Nombre</span>
+<input type="text" name="nombre" value="${nombre}" maxlength="120" required></label>
+<label class="campo"><span>Descripción</span>
+<textarea name="descripcion" rows="3" maxlength="500">${descripcion}</textarea>
+<span class="ayuda">Opcional. Ingredientes, tamaño de la ración, lo que ayude a elegir.</span></label>
+<label class="campo"><span>Precio (pesos chilenos)</span>
+<input type="text" name="precio" inputmode="numeric" value="${precio}" placeholder="4500" required>
+<span class="ayuda">Número entero de pesos, sin decimales ni puntos. Por ejemplo: 4500.</span></label>
+${campoCategoria(categorias, categoria)}
+${campoSeleccion("Estación de preparación", "estacion", estacion, ESTACIONES, "Sin estación")}
+<fieldset class="grupo">
+<legend>Disponibilidad</legend>
+<label class="casilla"><input type="checkbox" name="disponible" value="1"${disponible ? htmlCrudo(" checked") : html``}><span>Disponible ahora</span></label>
+<label class="casilla"><input type="checkbox" name="activo" value="1"${activo ? htmlCrudo(" checked") : html``}><span>Activo en la carta</span></label>
+<span class="ayuda">«Agotado» es temporal y volverá; «retirado» es quitarlo de la carta sin borrar su historial.</span>
+<label class="campo campo-en-linea"><span>Desde</span>
+<input type="time" name="desde" value="${desde}"></label>
+<label class="campo campo-en-linea"><span>Hasta</span>
+<input type="time" name="hasta" value="${hasta}"></label>
+<span class="ayuda">Vacío significa todo el día. Por ejemplo, desayunos de 08:00 a 11:30.</span>
+</fieldset>
+<label class="campo"><span>Orden</span>
+<input type="number" name="orden" min="0" max="9999" value="${orden}"></label>
+<fieldset class="grupo">
+<legend>Etiquetas dietéticas</legend>
+${casillas("tags", TAGS, tags)}
+</fieldset>
+<fieldset class="grupo">
+<legend>Alérgenos</legend>
+${casillas("alergenos", ALERGENOS, allergens)}
+</fieldset>
+<button class="boton" type="submit">${plato === null ? "Crear plato" : "Guardar cambios"}</button>
+</form>`
+}
+
+function seccionFoto(plato: Plato): HtmlSeguro {
+  const actual =
+    plato.fotoClave === null
+      ? html`<p class="ayuda">Este plato todavía no tiene foto.</p>`
+      : html`<div class="foto-actual">
+${fotoDePlato(plato)}
+<form method="post" action="/admin/carta/plato/${plato.id}/foto/borrar">
+<button class="boton-mini" type="submit">Quitar foto</button>
+</form>
+</div>`
+  return html`<section class="tarjeta">
+<h2>Foto</h2>
+${actual}
+<form method="post" action="/admin/carta/plato/${plato.id}/foto" enctype="multipart/form-data">
+<label class="campo"><span>${plato.fotoClave === null ? "Subir una foto" : "Sustituir la foto"}</span>
+<input type="file" name="foto" accept="image/jpeg,image/png,image/webp" required></label>
+<span class="ayuda">Solo JPEG, PNG o WebP, hasta 5 MB. El SVG no se acepta.</span>
+<button class="boton" type="submit">Subir foto</button>
+</form>
+</section>`
+}
+
+export function vistaPlato(
+  empleado: Empleado,
+  plato: Plato | null,
+  categorias: readonly Categoria[],
+  categoriaInicial: string | null,
+  estado: EstadoPantalla,
+): HtmlSeguro {
+  const titulo = plato === null ? "Nuevo plato o bebida" : `Editar: ${plato.nombre}`
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${avisosDeEstado(estado)}
+<section class="tarjeta">
+<h1>${titulo}</h1>
+${formularioPlato(plato, categorias, categoriaInicial)}
+</section>
+${plato === null ? html`` : seccionFoto(plato)}
+<p><a class="boton boton-secundario" href="/admin/carta${
+    plato?.categoriaId === null || plato?.categoriaId === undefined ? "" : `/${plato.categoriaId}`
+  }">Volver a la categoría</a></p>
+</main>`
+  return pagina(titulo, contenido)
 }

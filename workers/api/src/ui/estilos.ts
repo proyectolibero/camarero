@@ -682,4 +682,216 @@ p {
     max-width: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   La carta. Las filas se leen de un vistazo: nombre, precio, estación e insignias.
+   Lo agotado y lo retirado se distinguen por color y por texto, NO por opacidad
+   (LL-020: apagar el texto deja invisible justo la fila que se busca).
+   --------------------------------------------------------------------------- */
+
+.carta-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--borde);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.carta-lista li {
+  border-top: 1px solid var(--borde);
+}
+
+.carta-lista li:first-child {
+  border-top: 0;
+}
+
+.carta-categoria .carta-linea {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.75rem;
+  padding: 0.65rem 0.9rem;
+}
+
+.carta-categoria.carta-oculta {
+  background: var(--mapa-inactiva-fondo);
+}
+
+.carta-categoria.carta-oculta .carta-nombre {
+  color: var(--mapa-inactiva-tinta);
+}
+
+.carta-nombre {
+  font-weight: 600;
+  color: var(--acento);
+}
+
+.carta-estado {
+  font-size: 0.8rem;
+  color: var(--tinta-suave);
+}
+
+.renombrar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.renombrar input {
+  min-width: 8rem;
+  flex: 1 1 8rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--borde);
+  border-radius: 0.4rem;
+  background: var(--fondo);
+  color: var(--tinta);
+  font: inherit;
+}
+
+.boton-mini {
+  display: inline-block;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--borde);
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--tinta);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.boton-mini:hover {
+  border-color: var(--acento);
+}
+
+.mover-orden {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.carta-plato {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+  padding: 0.65rem 0.9rem;
+}
+
+.carta-plato-retirado {
+  background: var(--mapa-inactiva-fondo);
+}
+
+.carta-plato-agotado {
+  background: var(--error-fondo);
+}
+
+.plato-foto {
+  width: 3.5rem;
+  height: 3.5rem;
+  object-fit: cover;
+  border-radius: 0.4rem;
+  border: 1px solid var(--borde);
+  background: var(--fondo);
+}
+
+.plato-sinfoto {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  border: 1px dashed var(--borde);
+  border-radius: 0.4rem;
+  color: var(--tinta-suave);
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+.plato-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 8rem;
+  flex: 1 1 8rem;
+}
+
+.plato-nombre {
+  font-weight: 600;
+}
+
+.plato-datos {
+  color: var(--tinta-suave);
+  font-size: 0.9rem;
+}
+
+.plato-gestion,
+.plato-acciones {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.insignia {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.insignia-ok {
+  color: var(--exito);
+}
+
+.insignia-retirado {
+  color: var(--tinta-suave);
+}
+
+.insignia-agotado {
+  color: var(--error);
+}
+
+.grupo {
+  border: 1px solid var(--borde);
+  border-radius: 0.5rem;
+  padding: 0.75rem 0.9rem;
+  margin: 0 0 1rem;
+}
+
+.grupo legend {
+  font-weight: 600;
+  padding: 0 0.35rem;
+}
+
+.casilla {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.2rem 0;
+}
+
+.casilla input {
+  width: auto;
+}
+
+.campo-en-linea {
+  max-width: 12rem;
+}
+
+.foto-actual {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.foto-actual .plato-foto {
+  width: 6rem;
+  height: 6rem;
+}
 `

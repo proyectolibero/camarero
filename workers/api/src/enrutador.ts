@@ -16,6 +16,12 @@ import {
 } from "./auth/jwks.ts"
 import type { Reclamaciones } from "./auth/jwt.ts"
 import { type Empleado, resolverSesion } from "./base.ts"
+import {
+  type AlmacenCartas,
+  type CuboR2,
+  cartasDeEntorno,
+  manejarCartasPublicas,
+} from "./panel/cartas.ts"
 import { type AlmacenPanel, almacenDeEntorno } from "./panel/datos.ts"
 import {
   type Autenticador,
@@ -41,6 +47,7 @@ export type Entorno = {
   readonly SUPABASE_ANON_KEY?: string
   readonly DOMINIO_PUBLICO?: string
   readonly BASE?: { readonly connectionString: string }
+  readonly CARTAS?: CuboR2
 }
 
 /** Lo que las pruebas pueden sustituir para no salir a la red ni tocar la base. */
@@ -49,6 +56,7 @@ export type DependenciasParciales = {
   readonly autenticar?: Autenticador
   readonly resolverEmpleado?: ResolvedorDeEmpleado
   readonly almacen?: AlmacenPanel
+  readonly cartas?: AlmacenCartas
 }
 
 const VERSION_POR_DEFECTO = "desconocida"
@@ -76,6 +84,7 @@ function crearDependencias(entorno: Entorno, parciales: DependenciasParciales): 
     resolverEmpleado:
       parciales.resolverEmpleado ?? ((sub) => resolverEmpleadoPorDefecto(entorno, sub)),
     almacen: parciales.almacen ?? almacenDeEntorno(entorno),
+    cartas: parciales.cartas ?? cartasDeEntorno(entorno),
   }
 }
 
@@ -139,6 +148,14 @@ export async function manejar(
       return responderMetodoNoPermitido("POST")
     }
     return await manejarSesion(peticion, entorno, ahora, completas.fuenteDeClaves)
+  }
+
+  // Fotos de la carta: ruta publica a proposito (el comensal no tiene sesion). Va ANTES del
+  // panel y va declarada en `run_worker_first`; si no, los estaticos devolverian el index de
+  // la PWA en lugar de la imagen.
+  const respuestaCartas = await manejarCartasPublicas(peticion, url, completas.cartas)
+  if (respuestaCartas !== null) {
+    return respuestaCartas
   }
 
   const respuestaPanel = await manejarPanel(peticion, entorno, ahora, completas)

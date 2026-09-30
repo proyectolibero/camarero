@@ -22,3 +22,11 @@ export function puedeEditarLocal(empleado: Empleado): boolean {
 export function puedeGestionarPlano(empleado: Empleado): boolean {
   return puedeEditarLocal(empleado) || empleado.rol === "location_manager"
 }
+
+/**
+ * La carta la escribe quien `puede_gestionar` en la base: plataforma, dueno de la organizacion
+ * o encargado del local. Cocina y garzon la ven, pero no la tocan (la RLS tampoco les deja).
+ */
+export function puedeGestionarCarta(empleado: Empleado): boolean {
+  return puedeGestionarPlano(empleado)
+}

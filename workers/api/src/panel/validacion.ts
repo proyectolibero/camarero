@@ -8,6 +8,7 @@
  * Cada funcion valida UN campo y devuelve un resultado explicito (nunca lanza para un dato
  * esperado malo). Ninguna confia en el navegador: el HTML puede mentir.
  */
+import { ALERGENOS, depurarContraCatalogo, ESTACIONES, TAGS, valoresDe } from "./carta-catalogo.ts"
 
 export type Valido<T> = { readonly ok: true; readonly valor: T }
 export type Invalido = { readonly ok: false; readonly error: string }
@@ -29,6 +30,9 @@ export type TipoDeMesa = "mesa" | "barra"
 export const LARGO_NOMBRE_MAXIMO = 120
 export const CAPACIDAD_MINIMA = 1
 export const CAPACIDAD_MAXIMA = 99
+export const LARGO_DESCRIPCION_MAXIMO = 500
+export const ORDEN_MAXIMO = 9999
+export const PRECIO_MAXIMO = 2_147_483_647
 
 const ESTADOS: readonly EstadoLocal[] = ["draft", "active", "paused"]
 const MODOS: readonly ModoDeServicio[] = ["dine_in", "delivery", "both"]
@@ -95,4 +99,100 @@ export function validarCapacidad(valor: string): Validacion<number> {
     return invalido(`La capacidad tiene que estar entre ${CAPACIDAD_MINIMA} y ${CAPACIDAD_MAXIMA}.`)
   }
   return valido(numero)
+}
+
+/**
+ * Precio en pesos chilenos: entero, sin coma, sin decimal, sin signo (CONTRACT-dinero). Se
+ * acepta `0` (un plato invitado), pero jamas un negativo ni una fraccion. El mensaje es el
+ * mismo para cualquier forma fraccionaria, para no dar pistas de por que fallo.
+ */
+export function validarPrecio(valor: string): Validacion<number> {
+  const limpio = valor.trim()
+  if (limpio === "") {
+    return invalido("El precio no puede quedar vacío.")
+  }
+  if (!/^[0-9]+$/.test(limpio)) {
+    return invalido("El precio debe ser un número entero de pesos, sin decimales.")
+  }
+  const numero = Number.parseInt(limpio, 10)
+  if (!Number.isSafeInteger(numero) || numero > PRECIO_MAXIMO) {
+    return invalido("Ese precio es demasiado alto.")
+  }
+  return valido(numero)
+}
+
+/** Descripcion opcional: vacia se guarda como null; con tope de largo para no reventar la carta. */
+export function validarDescripcion(valor: string): Validacion<string | null> {
+  const limpio = valor.trim()
+  if (limpio === "") {
+    return valido(null)
+  }
+  if (limpio.length > LARGO_DESCRIPCION_MAXIMO) {
+    return invalido(`La descripción no puede pasar de ${LARGO_DESCRIPCION_MAXIMO} caracteres.`)
+  }
+  return valido(limpio)
+}
+
+/** Estacion de preparacion: una de las del `check`, o ninguna. */
+export function validarEstacion(valor: string): Validacion<string | null> {
+  const limpio = valor.trim()
+  if (limpio === "") {
+    return valido(null)
+  }
+  return esUnoDe(valoresDe(ESTACIONES), limpio)
+    ? valido(limpio)
+    : invalido("La estación de preparación no es válida.")
+}
+
+/** Orden de presentacion: entero no negativo y razonable. */
+export function validarOrden(valor: string): Validacion<number> {
+  const limpio = valor.trim()
+  if (!/^[0-9]{1,4}$/.test(limpio)) {
+    return invalido(`El orden tiene que ser un número entero entre 0 y ${ORDEN_MAXIMO}.`)
+  }
+  const numero = Number.parseInt(limpio, 10)
+  return numero > ORDEN_MAXIMO
+    ? invalido(`El orden tiene que estar entre 0 y ${ORDEN_MAXIMO}.`)
+    : valido(numero)
+}
+
+/** Hora `HH:MM` del dia, o vacia (sin limite). */
+export function validarHora(campo: string, valor: string): Validacion<string | null> {
+  const limpio = valor.trim()
+  if (limpio === "") {
+    return valido(null)
+  }
+  if (!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(limpio)) {
+    return invalido(`La hora de ${campo} no es válida. Usa el formato HH:MM.`)
+  }
+  return valido(limpio)
+}
+
+/** Ventana de disponibilidad coherente: `desde` no puede ir despues de `hasta`. */
+export function validarVentana(
+  desde: string | null,
+  hasta: string | null,
+): Validacion<readonly [string | null, string | null]> {
+  if (desde !== null && hasta !== null && desde > hasta) {
+    return invalido("La hora de inicio no puede ser posterior a la de fin.")
+  }
+  return valido([desde, hasta])
+}
+
+/** Etiquetas dieteticas: solo las del `check`, sin repetir. Una desconocida es un error. */
+export function validarTags(valores: readonly string[]): Validacion<readonly string[]> {
+  const permitidas = valoresDe(TAGS)
+  if (valores.some((valor) => !permitidas.includes(valor))) {
+    return invalido("Una de las etiquetas no es válida.")
+  }
+  return valido(depurarContraCatalogo(TAGS, valores))
+}
+
+/** Alergenos: se guardan como texto; se conserva lo que este en el catalogo. */
+export function validarAllergenos(valores: readonly string[]): Validacion<readonly string[]> {
+  const permitidos = valoresDe(ALERGENOS)
+  if (valores.some((valor) => !permitidos.includes(valor))) {
+    return invalido("Uno de los alérgenos no es válido.")
+  }
+  return valido(depurarContraCatalogo(ALERGENOS, valores))
 }

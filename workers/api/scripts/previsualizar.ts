@@ -2,20 +2,28 @@
  * Genera la previsualizacion estatica del panel (LL-020: lo que se VE se mira).
  *
  * No reinventa nada: llama a las MISMAS funciones de renderizado que sirve el Worker
- * (`vistaEntrada`, `vistaMesas`, `ESTILOS`) y solo cambia el enlace de la hoja de estilos
- * a una ruta relativa, porque esto se abre con `file://` y alli `/panel/estilos.css` no
- * resuelve. El resto del HTML es byte a byte el de produccion. La carpeta de salida esta
- * en `.gitignore` y nunca se versiona.
+ * (`vistaEntrada`, `vistaMesas`, `vistaCarta`, `vistaCategoria`, `ESTILOS`) y solo cambia el
+ * enlace de la hoja de estilos y el de las fotos a rutas relativas, porque esto se abre con
+ * `file://` o desde un servidor estatico local. El resto del HTML es byte a byte el de
+ * produccion. La carpeta de salida esta en `.gitignore` y nunca se versiona: la imagen de
+ * prueba se genera aqui, no vive en el repositorio.
  *
  * Uso: `node workers/api/scripts/previsualizar.ts`
  */
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { crc32, deflateSync } from "node:zlib"
 import type { Empleado } from "../src/base.ts"
 import { generarCodigoMesa } from "../src/panel/codigo-mesa.ts"
-import type { Mesa, Zona } from "../src/panel/datos.ts"
-import { vistaEntrada, vistaMesas } from "../src/panel/vistas.ts"
+import type { Categoria, Mesa, Plato, Zona } from "../src/panel/datos.ts"
+import {
+  vistaCarta,
+  vistaCategoria,
+  vistaEntrada,
+  vistaMesas,
+  vistaPlato,
+} from "../src/panel/vistas.ts"
 import { ESTILOS } from "../src/ui/estilos.ts"
 import { renderizar } from "../src/ui/html.ts"
 
@@ -96,16 +104,225 @@ const MESAS: readonly Mesa[] = [
 /** La previsualizacion ensena una mesa elegida para que se vean el mando y su etiqueta. */
 const MESA_ELEGIDA = "t3"
 
+// ---------------------------------------------------------------------------
+// La carta de ejemplo: tres categorias, nueve fichas, dos con foto.
+// ---------------------------------------------------------------------------
+
+const CATEGORIAS: readonly Categoria[] = [
+  { id: "c1", nombre: "Entrantes", orden: 0, activa: true, disponible: true },
+  { id: "c2", nombre: "Principales", orden: 1, activa: true, disponible: true },
+  { id: "c3", nombre: "Bebidas", orden: 2, activa: true, disponible: true },
+]
+
+const FOTO_CEVICHE = "foto-ceviche.png"
+const FOTO_LOMO = "foto-lomo.png"
+
+function plato(parcial: Partial<Plato> & { readonly id: string; readonly nombre: string }): Plato {
+  return {
+    categoriaId: "c1",
+    descripcion: null,
+    precioClp: 0,
+    fotoClave: null,
+    allergens: [],
+    tags: [],
+    estacion: null,
+    disponible: true,
+    desde: null,
+    hasta: null,
+    orden: 0,
+    activo: true,
+    ...parcial,
+  }
+}
+
+const PLATOS: readonly Plato[] = [
+  plato({
+    id: "p1",
+    nombre: "Ceviche clásico",
+    descripcion: "Corvina, limón de pica, cebolla morada y cilantro.",
+    precioClp: 8900,
+    fotoClave: FOTO_CEVICHE,
+    allergens: ["pescado", "sulfitos"],
+    estacion: "frio",
+    categoriaId: "c1",
+  }),
+  plato({
+    id: "p2",
+    nombre: "Empanadas de queso",
+    precioClp: 5000,
+    disponible: false,
+    estacion: "caliente",
+    allergens: ["gluten", "leche"],
+    tags: ["vegetariano"],
+    categoriaId: "c1",
+  }),
+  plato({
+    id: "p3",
+    nombre: "Tabla de quesos del sur",
+    precioClp: 12500,
+    activo: false,
+    estacion: "frio",
+    allergens: ["leche"],
+    tags: ["vegetariano"],
+    categoriaId: "c1",
+  }),
+  plato({
+    id: "p4",
+    nombre: "Lomo a lo pobre",
+    descripcion: "Con papas fritas, huevo y cebolla caramelizada.",
+    precioClp: 15900,
+    fotoClave: FOTO_LOMO,
+    allergens: ["huevo"],
+    estacion: "caliente",
+    categoriaId: "c2",
+  }),
+  plato({
+    id: "p5",
+    nombre: "Pastel de choclo",
+    precioClp: 11900,
+    estacion: "caliente",
+    categoriaId: "c2",
+  }),
+  plato({
+    id: "p6",
+    nombre: "Cazuela de ave con un nombre larguísimo para ver cómo se comporta la ficha",
+    precioClp: 10900,
+    estacion: "caliente",
+    categoriaId: "c2",
+  }),
+  plato({
+    id: "p7",
+    nombre: "Pisco sour",
+    descripcion: "Pisco, limón, azúcar y clara de huevo.",
+    precioClp: 5900,
+    estacion: "bar",
+    allergens: ["huevo", "sulfitos"],
+    categoriaId: "c3",
+  }),
+  plato({
+    id: "p8",
+    nombre: "Copa de vino de la casa",
+    precioClp: 4500,
+    estacion: "bebidas",
+    allergens: ["sulfitos"],
+    categoriaId: "c3",
+  }),
+  plato({
+    id: "p9",
+    nombre: "Agua mineral",
+    precioClp: 2500,
+    estacion: "bebidas",
+    categoriaId: "c3",
+  }),
+]
+
+function platosDe(categoriaId: string): readonly Plato[] {
+  return PLATOS.filter((ficha) => ficha.categoriaId === categoriaId)
+}
+
+// ---------------------------------------------------------------------------
+// Imagen de prueba: un PNG de verdad, generado aqui y jamas versionado.
+// ---------------------------------------------------------------------------
+
+const FIRMA_PNG = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])
+
+function concatenar(trozos: readonly Uint8Array[]): Uint8Array {
+  const total = trozos.reduce((suma, trozo) => suma + trozo.byteLength, 0)
+  const salida = new Uint8Array(total)
+  let posicion = 0
+  for (const trozo of trozos) {
+    salida.set(trozo, posicion)
+    posicion += trozo.byteLength
+  }
+  return salida
+}
+
+function trozoPng(tipo: string, datos: Uint8Array): Uint8Array {
+  // largo(4) + tipo(4) + datos + crc(4) = 12 + datos.
+  const salida = new Uint8Array(12 + datos.byteLength)
+  const vista = new DataView(salida.buffer)
+  vista.setUint32(0, datos.byteLength)
+  for (let i = 0; i < 4; i += 1) {
+    salida[4 + i] = tipo.charCodeAt(i)
+  }
+  salida.set(datos, 8)
+  vista.setUint32(8 + datos.byteLength, crc32(salida.subarray(4, 8 + datos.byteLength)) >>> 0)
+  return salida
+}
+
+type Color = readonly [number, number, number]
+
+function pngDePrueba(
+  ancho: number,
+  alto: number,
+  color: (x: number, y: number) => Color,
+): Uint8Array {
+  const filas = new Uint8Array((ancho * 3 + 1) * alto)
+  let posicion = 0
+  for (let y = 0; y < alto; y += 1) {
+    filas[posicion] = 0
+    posicion += 1
+    for (let x = 0; x < ancho; x += 1) {
+      const [r, g, b] = color(x, y)
+      filas[posicion] = r
+      filas[posicion + 1] = g
+      filas[posicion + 2] = b
+      posicion += 3
+    }
+  }
+  const ihdr = new Uint8Array(13)
+  const vista = new DataView(ihdr.buffer)
+  vista.setUint32(0, ancho)
+  vista.setUint32(4, alto)
+  ihdr[8] = 8
+  ihdr[9] = 2
+  return concatenar([
+    FIRMA_PNG,
+    trozoPng("IHDR", ihdr),
+    trozoPng("IDAT", new Uint8Array(deflateSync(filas))),
+    trozoPng("IEND", new Uint8Array()),
+  ])
+}
+
+// ---------------------------------------------------------------------------
+// Composicion y escritura
+// ---------------------------------------------------------------------------
+
 /** En produccion la CSP permite la ruta absoluta; en `file://` hace falta una relativa. */
 function conHojaDeEstilosRelativa(pagina: string): string {
   return pagina.replace('href="/panel/estilos.css"', 'href="estilos.css"')
 }
 
-function escribir(nombre: string, contenido: string): void {
-  writeFileSync(join(SALIDA, nombre), contenido, "utf8")
+/** La foto se sirve en `/cartas/<clave>`; en local se resuelve al fichero de al lado. */
+function conFotosRelativas(pagina: string): string {
+  return pagina.replaceAll('src="/cartas/', 'src="')
+}
+
+/** El interior del `<main>` de una vista, para componer una pagina con varias secciones. */
+function cuerpoPrincipal(pagina: string): string {
+  const inicio = pagina.indexOf('<main class="contenedor">')
+  const fin = pagina.indexOf("</main>", inicio)
+  if (inicio === -1 || fin === -1) {
+    throw new Error("La vista de previsualizacion no tiene <main>")
+  }
+  return pagina.slice(inicio, fin + "</main>".length)
+}
+
+function escribir(nombre: string, contenido: string | Uint8Array): void {
+  writeFileSync(join(SALIDA, nombre), contenido)
 }
 
 mkdirSync(SALIDA, { recursive: true })
+
+// Imagenes de prueba: dos patrones distintos, para que se vea que son fichas diferentes.
+escribir(
+  FOTO_CEVICHE,
+  pngDePrueba(320, 220, (x, y) => [40 + (x % 120), 120 + (y % 90), 90] as const),
+)
+escribir(
+  FOTO_LOMO,
+  pngDePrueba(320, 220, (x, y) => [180, 90 + (x % 120), 60 + (y % 90)] as const),
+)
 
 escribir("estilos.css", ESTILOS)
 escribir("entrada.html", conHojaDeEstilosRelativa(renderizar(vistaEntrada("admin"))))
@@ -113,6 +330,30 @@ escribir(
   "mapa.html",
   conHojaDeEstilosRelativa(
     renderizar(vistaMesas(DUENO, MESAS, ZONAS, true, { exito: "Mesa movida." }, MESA_ELEGIDA)),
+  ),
+)
+
+// `carta.html`: el indice de categorias seguido de cada categoria con sus fichas.
+const indice = renderizar(vistaCarta(DUENO, CATEGORIAS, true, { creada: true }))
+const secciones = CATEGORIAS.map((categoria) =>
+  cuerpoPrincipal(renderizar(vistaCategoria(DUENO, categoria, platosDe(categoria.id), true, {}))),
+)
+const cartaCompleta = conFotosRelativas(
+  conHojaDeEstilosRelativa(
+    indice.replace(cuerpoPrincipal(indice), cuerpoPrincipal(indice) + secciones.join("\n")),
+  ),
+)
+escribir("carta.html", cartaCompleta)
+
+// `plato.html`: la ficha de edicion, con la subida de foto y los estados diferenciados.
+const ceviche = PLATOS[0]
+if (ceviche === undefined) {
+  throw new Error("Falta el plato de previsualizacion")
+}
+escribir(
+  "plato.html",
+  conFotosRelativas(
+    conHojaDeEstilosRelativa(renderizar(vistaPlato(DUENO, ceviche, CATEGORIAS, null, {}))),
   ),
 )
 

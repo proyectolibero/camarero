@@ -70,6 +70,46 @@ export type NuevaMesa = {
   readonly kind: string
 }
 
+/** Categoria de la carta. `name_i18n` se lee y se escribe solo en español por ahora. */
+export type Categoria = {
+  readonly id: string
+  readonly nombre: string
+  readonly orden: number
+  readonly activa: boolean
+  readonly disponible: boolean
+}
+
+export type EntradaCategoria = {
+  readonly nombre: string
+}
+
+/** Plato o bebida. La bebida es un plato con `estacion` de barra (D-048). */
+export type Plato = {
+  readonly id: string
+  readonly categoriaId: string | null
+  readonly nombre: string
+  readonly descripcion: string | null
+  readonly precioClp: number
+  readonly fotoClave: string | null
+  readonly allergens: readonly string[]
+  readonly tags: readonly string[]
+  readonly estacion: string | null
+  readonly disponible: boolean
+  readonly desde: string | null
+  readonly hasta: string | null
+  readonly orden: number
+  readonly activo: boolean
+}
+
+/** Lo que el formulario manda para crear o editar un plato. */
+export type EntradaPlato = Omit<Plato, "id" | "fotoClave">
+
+/** Los dos estados que se alternan sin borrar la ficha: activo (retirar) y disponible (agotar). */
+export type CampoDePlato = "activo" | "disponible"
+
+/** Subir o bajar una ficha dentro de su orden. */
+export type DireccionOrden = "subir" | "bajar"
+
 export type MotivoDeFallo = "sin_permiso" | "no_existe" | "conflicto"
 
 export type Resultado<T = void> =
@@ -99,6 +139,49 @@ export type AlmacenPanel = {
     direccion: Direccion,
   ) => Promise<ResultadoMovimiento>
   readonly acomodarMesasSinPosicion: (empleado: Empleado) => Promise<void>
+  readonly listarCategorias: (empleado: Empleado) => Promise<readonly Categoria[]>
+  readonly leerCategoria: (empleado: Empleado, categoriaId: string) => Promise<Categoria | null>
+  readonly crearCategoria: (
+    empleado: Empleado,
+    datos: EntradaCategoria,
+  ) => Promise<Resultado<Categoria>>
+  readonly alternarCategoria: (empleado: Empleado, categoriaId: string) => Promise<Resultado>
+  readonly renombrarCategoria: (
+    empleado: Empleado,
+    categoriaId: string,
+    nombre: string,
+  ) => Promise<Resultado>
+  readonly moverCategoria: (
+    empleado: Empleado,
+    categoriaId: string,
+    direccion: DireccionOrden,
+  ) => Promise<Resultado>
+  readonly listarPlatos: (
+    empleado: Empleado,
+    categoriaId: string | null,
+  ) => Promise<readonly Plato[]>
+  readonly leerPlato: (empleado: Empleado, platoId: string) => Promise<Plato | null>
+  readonly crearPlato: (empleado: Empleado, datos: EntradaPlato) => Promise<Resultado<Plato>>
+  readonly actualizarPlato: (
+    empleado: Empleado,
+    platoId: string,
+    datos: EntradaPlato,
+  ) => Promise<Resultado>
+  readonly alternarPlato: (
+    empleado: Empleado,
+    platoId: string,
+    campo: CampoDePlato,
+  ) => Promise<Resultado>
+  readonly moverPlato: (
+    empleado: Empleado,
+    platoId: string,
+    direccion: DireccionOrden,
+  ) => Promise<Resultado>
+  readonly fijarFoto: (
+    empleado: Empleado,
+    platoId: string,
+    clave: string | null,
+  ) => Promise<Resultado<string | null>>
 }
 
 type FilaLocal = {
@@ -133,7 +216,38 @@ type FilaMesa = {
   readonly pos_columna: number | null
 }
 
+type FilaCategoria = {
+  readonly id: string
+  readonly name_i18n: Readonly<Record<string, unknown>> | null
+  readonly sort_order: number
+  readonly active: boolean
+  readonly available: boolean
+}
+
+type FilaPlato = {
+  readonly id: string
+  readonly location_id: string
+  readonly category_id: string | null
+  readonly name_i18n: Readonly<Record<string, unknown>> | null
+  readonly description_i18n: Readonly<Record<string, unknown>> | null
+  readonly price_clp: number
+  readonly photo_r2_key: string | null
+  readonly allergens: string[]
+  readonly tags: string[]
+  readonly prep_station: string | null
+  readonly available: boolean
+  readonly available_from: string | null
+  readonly available_until: string | null
+  readonly sort_order: number
+  readonly active: boolean
+}
+
 const COLUMNAS_LOCAL = "id, org_id, slug, name, timezone, currency, status, service_mode"
+
+const COLUMNAS_CATEGORIA = "id, name_i18n, sort_order, active, available"
+
+const COLUMNAS_PLATO =
+  "id, location_id, category_id, name_i18n, description_i18n, price_clp, photo_r2_key, allergens, tags, prep_station, available, available_from, available_until, sort_order, active"
 
 const COLUMNAS_MESA =
   "t.id, t.location_id, t.code, t.label, t.capacity, t.kind, t.active, t.zone_id, t.pos_fila, t.pos_columna, z.name as zone_name"
@@ -167,6 +281,60 @@ function aMesa(fila: FilaMesa): Mesa {
     zonaNombre: fila.zone_name,
     posFila: fila.pos_fila,
     posColumna: fila.pos_columna,
+  }
+}
+
+/**
+ * Saca el texto en español de un campo `*_i18n`. Si no hay español, cae al primer idioma que
+ * traiga algo; si esta vacio o mal formado, devuelve null. Nunca inventa un nombre.
+ */
+function textoEs(valor: Readonly<Record<string, unknown>> | null): string | null {
+  if (valor === null) {
+    return null
+  }
+  const es = valor["es"]
+  if (typeof es === "string" && es.trim() !== "") {
+    return es
+  }
+  for (const candidato of Object.values(valor)) {
+    if (typeof candidato === "string" && candidato.trim() !== "") {
+      return candidato
+    }
+  }
+  return null
+}
+
+/** Postgres devuelve `time` como `HH:MM:SS`; para el formulario basta `HH:MM`. */
+function horaCorta(valor: string | null): string | null {
+  return valor === null ? null : valor.slice(0, 5)
+}
+
+function aCategoria(fila: FilaCategoria): Categoria {
+  return {
+    id: fila.id,
+    nombre: textoEs(fila.name_i18n) ?? "Sin nombre",
+    orden: fila.sort_order,
+    activa: fila.active,
+    disponible: fila.available,
+  }
+}
+
+function aPlato(fila: FilaPlato): Plato {
+  return {
+    id: fila.id,
+    categoriaId: fila.category_id,
+    nombre: textoEs(fila.name_i18n) ?? "Sin nombre",
+    descripcion: textoEs(fila.description_i18n),
+    precioClp: fila.price_clp,
+    fotoClave: fila.photo_r2_key,
+    allergens: fila.allergens,
+    tags: fila.tags,
+    estacion: fila.prep_station,
+    disponible: fila.available,
+    desde: horaCorta(fila.available_from),
+    hasta: horaCorta(fila.available_until),
+    orden: fila.sort_order,
+    activo: fila.active,
   }
 }
 
@@ -470,6 +638,310 @@ async function escribirMovimiento(
 
 const INTENTOS_CODIGO = 5
 
+// ---------------------------------------------------------------------------
+// La carta: categorias, platos y bebidas
+// ---------------------------------------------------------------------------
+
+async function listarFilaCategorias(cliente: Client, localId: string): Promise<FilaCategoria[]> {
+  const resultado = await cliente.query<FilaCategoria>(
+    `select ${COLUMNAS_CATEGORIA} from public.menu_categories
+     where location_id = $1
+     order by sort_order, created_at, id`,
+    [localId],
+  )
+  return resultado.rows
+}
+
+async function leerFilaCategoria(cliente: Client, id: string): Promise<FilaCategoria | null> {
+  const resultado = await cliente.query<FilaCategoria>(
+    `select ${COLUMNAS_CATEGORIA} from public.menu_categories where id = $1`,
+    [id],
+  )
+  return resultado.rows[0] ?? null
+}
+
+async function escribirCategoria(
+  cliente: Client,
+  localId: string,
+  datos: EntradaCategoria,
+): Promise<Resultado<Categoria>> {
+  try {
+    const resultado = await cliente.query<FilaCategoria>(
+      `insert into public.menu_categories (location_id, name_i18n, sort_order)
+       values ($1, $2::jsonb,
+         coalesce((select max(sort_order) + 1 from public.menu_categories where location_id = $1), 0))
+       returning ${COLUMNAS_CATEGORIA}`,
+      [localId, JSON.stringify({ es: datos.nombre })],
+    )
+    const fila = resultado.rows[0]
+    if (fila === undefined) {
+      throw new Error("La inserción de categoría no devolvió fila")
+    }
+    return { ok: true, valor: aCategoria(fila) }
+  } catch (error) {
+    const motivo = motivoDeErrorDeEscritura(error)
+    if (motivo === null) {
+      throw error
+    }
+    return { ok: false, motivo }
+  }
+}
+
+async function renombrarFilaCategoria(
+  cliente: Client,
+  id: string,
+  nombre: string,
+): Promise<Resultado> {
+  try {
+    const resultado = await cliente.query(
+      `update public.menu_categories set name_i18n = $2::jsonb where id = $1 returning id`,
+      [id, JSON.stringify({ es: nombre })],
+    )
+    if (resultado.rowCount === 1) {
+      return { ok: true, valor: undefined }
+    }
+    const visible = await leerFilaCategoria(cliente, id)
+    return { ok: false, motivo: visible === null ? "no_existe" : "sin_permiso" }
+  } catch (error) {
+    const motivo = motivoDeErrorDeEscritura(error)
+    if (motivo === null) {
+      throw error
+    }
+    return { ok: false, motivo }
+  }
+}
+
+async function alternarFilaCategoria(cliente: Client, id: string): Promise<Resultado> {
+  const resultado = await cliente.query(
+    `update public.menu_categories set active = not active where id = $1 returning id`,
+    [id],
+  )
+  if (resultado.rowCount === 1) {
+    return { ok: true, valor: undefined }
+  }
+  const visible = await leerFilaCategoria(cliente, id)
+  return { ok: false, motivo: visible === null ? "no_existe" : "sin_permiso" }
+}
+
+/** Mueve un id dentro de una lista y devuelve el nuevo orden. Null si el id no esta. */
+function moverEnLista(
+  ids: readonly string[],
+  id: string,
+  direccion: DireccionOrden,
+): readonly string[] | null {
+  const indice = ids.indexOf(id)
+  if (indice === -1) {
+    return null
+  }
+  const destino = direccion === "subir" ? indice - 1 : indice + 1
+  if (destino < 0 || destino >= ids.length) {
+    return ids
+  }
+  const copia = [...ids]
+  const origenId = copia[indice]
+  const destinoId = copia[destino]
+  if (origenId === undefined || destinoId === undefined) {
+    return ids
+  }
+  copia[indice] = destinoId
+  copia[destino] = origenId
+  return copia
+}
+
+/** Reescribe el orden de una tabla con indices limpios 0..n-1. Evita empates y huecos. */
+async function reordenar(
+  cliente: Client,
+  tabla: "menu_categories" | "menu_items",
+  ids: readonly string[],
+): Promise<void> {
+  for (const [indice, id] of ids.entries()) {
+    await cliente.query(`update public.${tabla} set sort_order = $2 where id = $1`, [id, indice])
+  }
+}
+
+async function moverFilaCategoria(
+  cliente: Client,
+  localId: string,
+  id: string,
+  direccion: DireccionOrden,
+): Promise<Resultado> {
+  const filas = await listarFilaCategorias(cliente, localId)
+  const nuevo = moverEnLista(
+    filas.map((fila) => fila.id),
+    id,
+    direccion,
+  )
+  if (nuevo === null) {
+    return { ok: false, motivo: "no_existe" }
+  }
+  await reordenar(cliente, "menu_categories", nuevo)
+  return { ok: true, valor: undefined }
+}
+
+async function listarFilaPlatos(
+  cliente: Client,
+  localId: string,
+  categoriaId: string | null,
+): Promise<FilaPlato[]> {
+  const resultado = await cliente.query<FilaPlato>(
+    `select ${COLUMNAS_PLATO} from public.menu_items
+     where location_id = $1 and category_id is not distinct from $2
+     order by sort_order, created_at, id`,
+    [localId, categoriaId],
+  )
+  return resultado.rows
+}
+
+async function leerFilaPlato(cliente: Client, id: string): Promise<FilaPlato | null> {
+  const resultado = await cliente.query<FilaPlato>(
+    `select ${COLUMNAS_PLATO} from public.menu_items where id = $1`,
+    [id],
+  )
+  return resultado.rows[0] ?? null
+}
+
+function parametrosDePlato(datos: EntradaPlato): readonly unknown[] {
+  return [
+    datos.categoriaId,
+    JSON.stringify({ es: datos.nombre }),
+    datos.descripcion === null ? null : JSON.stringify({ es: datos.descripcion }),
+    datos.precioClp,
+    datos.allergens,
+    datos.tags,
+    datos.estacion,
+    datos.disponible,
+    datos.desde,
+    datos.hasta,
+    datos.orden,
+    datos.activo,
+  ]
+}
+
+async function escribirPlato(
+  cliente: Client,
+  localId: string,
+  datos: EntradaPlato,
+): Promise<Resultado<Plato>> {
+  try {
+    const resultado = await cliente.query<FilaPlato>(
+      `insert into public.menu_items
+        (location_id, category_id, name_i18n, description_i18n, price_clp, allergens, tags,
+         prep_station, available, available_from, available_until, sort_order, active)
+       values ($1, $2, $3::jsonb, $4::jsonb, $5, $6::text[], $7::text[], $8, $9, $10::time,
+               $11::time, $12, $13)
+       returning ${COLUMNAS_PLATO}`,
+      [localId, ...parametrosDePlato(datos)],
+    )
+    const fila = resultado.rows[0]
+    if (fila === undefined) {
+      throw new Error("La inserción de plato no devolvió fila")
+    }
+    return { ok: true, valor: aPlato(fila) }
+  } catch (error) {
+    const motivo = motivoDeErrorDeEscritura(error)
+    if (motivo === null) {
+      throw error
+    }
+    return { ok: false, motivo }
+  }
+}
+
+async function actualizarFilaPlato(
+  cliente: Client,
+  id: string,
+  datos: EntradaPlato,
+): Promise<Resultado> {
+  try {
+    const resultado = await cliente.query(
+      `update public.menu_items set
+         category_id = $2, name_i18n = $3::jsonb, description_i18n = $4::jsonb, price_clp = $5,
+         allergens = $6::text[], tags = $7::text[], prep_station = $8, available = $9,
+         available_from = $10::time, available_until = $11::time, sort_order = $12, active = $13
+       where id = $1
+       returning id`,
+      [id, ...parametrosDePlato(datos)],
+    )
+    if (resultado.rowCount === 1) {
+      return { ok: true, valor: undefined }
+    }
+    const visible = await leerFilaPlato(cliente, id)
+    return { ok: false, motivo: visible === null ? "no_existe" : "sin_permiso" }
+  } catch (error) {
+    const motivo = motivoDeErrorDeEscritura(error)
+    if (motivo === null) {
+      throw error
+    }
+    return { ok: false, motivo }
+  }
+}
+
+const COLUMNA_DEL_CAMPO: Readonly<Record<CampoDePlato, string>> = {
+  activo: "active",
+  disponible: "available",
+}
+
+async function alternarFilaPlato(
+  cliente: Client,
+  id: string,
+  campo: CampoDePlato,
+): Promise<Resultado> {
+  const columna = COLUMNA_DEL_CAMPO[campo]
+  const resultado = await cliente.query(
+    `update public.menu_items set ${columna} = not ${columna} where id = $1 returning id`,
+    [id],
+  )
+  if (resultado.rowCount === 1) {
+    return { ok: true, valor: undefined }
+  }
+  const visible = await leerFilaPlato(cliente, id)
+  return { ok: false, motivo: visible === null ? "no_existe" : "sin_permiso" }
+}
+
+async function moverFilaPlato(
+  cliente: Client,
+  id: string,
+  direccion: DireccionOrden,
+): Promise<Resultado> {
+  const actual = await leerFilaPlato(cliente, id)
+  if (actual === null) {
+    return { ok: false, motivo: "no_existe" }
+  }
+  const filas = await listarFilaPlatos(cliente, actual.location_id, actual.category_id)
+  const nuevo = moverEnLista(
+    filas.map((fila) => fila.id),
+    id,
+    direccion,
+  )
+  if (nuevo === null) {
+    return { ok: false, motivo: "no_existe" }
+  }
+  await reordenar(cliente, "menu_items", nuevo)
+  return { ok: true, valor: undefined }
+}
+
+async function fijarFilaFoto(
+  cliente: Client,
+  id: string,
+  clave: string | null,
+): Promise<Resultado<string | null>> {
+  const anterior = await cliente.query<{ photo_r2_key: string | null }>(
+    `select photo_r2_key from public.menu_items where id = $1`,
+    [id],
+  )
+  const fila = anterior.rows[0]
+  if (fila === undefined) {
+    return { ok: false, motivo: "no_existe" }
+  }
+  const resultado = await cliente.query(
+    `update public.menu_items set photo_r2_key = $2 where id = $1 returning id`,
+    [id, clave],
+  )
+  if (resultado.rowCount !== 1) {
+    return { ok: false, motivo: "sin_permiso" }
+  }
+  return { ok: true, valor: fila.photo_r2_key }
+}
+
 export function almacenDeBase(cadena: string): AlmacenPanel {
   return {
     leerLocal: (empleado): Promise<DatosLocal | null> =>
@@ -563,6 +1035,61 @@ export function almacenDeBase(cadena: string): AlmacenPanel {
           await acomodarSinPosicion(cliente, id)
         }
       }),
+    listarCategorias: (empleado): Promise<readonly Categoria[]> =>
+      enTransaccion(cadena, empleado, async (cliente) => {
+        const id = await resolverLocalId(cliente, empleado)
+        return id === null ? [] : (await listarFilaCategorias(cliente, id)).map(aCategoria)
+      }),
+    leerCategoria: (empleado, categoriaId): Promise<Categoria | null> =>
+      enTransaccion(cadena, empleado, async (cliente) => {
+        const fila = await leerFilaCategoria(cliente, categoriaId)
+        return fila === null ? null : aCategoria(fila)
+      }),
+    crearCategoria: (empleado, datos): Promise<Resultado<Categoria>> =>
+      enTransaccion(cadena, empleado, async (cliente) => {
+        const id = await resolverLocalId(cliente, empleado)
+        return id === null
+          ? { ok: false, motivo: "no_existe" }
+          : await escribirCategoria(cliente, id, datos)
+      }),
+    alternarCategoria: (empleado, categoriaId): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, (cliente) => alternarFilaCategoria(cliente, categoriaId)),
+    renombrarCategoria: (empleado, categoriaId, nombre): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, (cliente) =>
+        renombrarFilaCategoria(cliente, categoriaId, nombre),
+      ),
+    moverCategoria: (empleado, categoriaId, direccion): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, async (cliente) => {
+        const id = await resolverLocalId(cliente, empleado)
+        return id === null
+          ? { ok: false, motivo: "no_existe" }
+          : await moverFilaCategoria(cliente, id, categoriaId, direccion)
+      }),
+    listarPlatos: (empleado, categoriaId): Promise<readonly Plato[]> =>
+      enTransaccion(cadena, empleado, async (cliente) => {
+        const id = await resolverLocalId(cliente, empleado)
+        return id === null ? [] : (await listarFilaPlatos(cliente, id, categoriaId)).map(aPlato)
+      }),
+    leerPlato: (empleado, platoId): Promise<Plato | null> =>
+      enTransaccion(cadena, empleado, async (cliente) => {
+        const fila = await leerFilaPlato(cliente, platoId)
+        return fila === null ? null : aPlato(fila)
+      }),
+    crearPlato: (empleado, datos): Promise<Resultado<Plato>> =>
+      enTransaccion(cadena, empleado, async (cliente) => {
+        const id = await resolverLocalId(cliente, empleado)
+        return id === null
+          ? { ok: false, motivo: "no_existe" }
+          : await escribirPlato(cliente, id, datos)
+      }),
+    actualizarPlato: (empleado, platoId, datos): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, (cliente) => actualizarFilaPlato(cliente, platoId, datos)),
+    alternarPlato: (empleado, platoId, campo): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, (cliente) => alternarFilaPlato(cliente, platoId, campo)),
+    moverPlato: (empleado, platoId, direccion): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, (cliente) => moverFilaPlato(cliente, platoId, direccion)),
+    fijarFoto: (empleado, platoId, clave): Promise<Resultado<string | null>> =>
+      enTransaccion(cadena, empleado, (cliente) => fijarFilaFoto(cliente, platoId, clave)),
   }
 }
 
@@ -579,6 +1106,25 @@ export function almacenNoConfigurado(): AlmacenPanel {
     leerMesa: async (): Promise<Mesa | null> => null,
     moverMesa: async (): Promise<ResultadoMovimiento> => ({ ok: false, motivo: "no_existe" }),
     acomodarMesasSinPosicion: async (): Promise<void> => undefined,
+    listarCategorias: async (): Promise<readonly Categoria[]> => [],
+    leerCategoria: async (): Promise<Categoria | null> => null,
+    crearCategoria: async (): Promise<Resultado<Categoria>> => ({
+      ok: false,
+      motivo: "no_existe",
+    }),
+    alternarCategoria: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
+    renombrarCategoria: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
+    moverCategoria: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
+    listarPlatos: async (): Promise<readonly Plato[]> => [],
+    leerPlato: async (): Promise<Plato | null> => null,
+    crearPlato: async (): Promise<Resultado<Plato>> => ({ ok: false, motivo: "no_existe" }),
+    actualizarPlato: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
+    alternarPlato: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
+    moverPlato: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
+    fijarFoto: async (): Promise<Resultado<string | null>> => ({
+      ok: false,
+      motivo: "no_existe",
+    }),
   }
 }
 
