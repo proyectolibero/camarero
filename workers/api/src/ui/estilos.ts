@@ -19,6 +19,19 @@ export const ESTILOS = `:root {
   --error-fondo: #fbecec;
   --exito: #14532d;
   --exito-fondo: #e8f5ec;
+
+  /* Paleta propia del mapa (LL-020): la ficha de la mesa tiene que distinguirse de un vistazo
+     de la celda, que solo es una referencia. La etiqueta supera 4,5:1 sobre su relleno en los
+     dos temas; el valor se comprueba en tests/contraste-mapa.test.ts, no a ojo. */
+  --mapa-celda-fondo: #eef0ee;
+  --mapa-celda-borde: #d9d9d1;
+  --mapa-mesa-fondo: #1f6b4a;
+  --mapa-mesa-borde: #ffffff;
+  --mapa-mesa-tinta: #ffffff;
+  --mapa-inactiva-fondo: #e7e9eb;
+  --mapa-inactiva-raya: #9aa0a6;
+  --mapa-inactiva-borde: #6b7076;
+  --mapa-inactiva-tinta: #1b1b1f;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -34,6 +47,16 @@ export const ESTILOS = `:root {
     --error-fondo: #3a1e1e;
     --exito: #b6e6c6;
     --exito-fondo: #17301f;
+
+    --mapa-celda-fondo: #24242b;
+    --mapa-celda-borde: #33333c;
+    --mapa-mesa-fondo: #4fae7e;
+    --mapa-mesa-borde: #1e1e24;
+    --mapa-mesa-tinta: #0f1b14;
+    --mapa-inactiva-fondo: #2a2a31;
+    --mapa-inactiva-raya: #5a5a63;
+    --mapa-inactiva-borde: #8a8a93;
+    --mapa-inactiva-tinta: #ececf1;
   }
 }
 
@@ -351,43 +374,43 @@ p {
 }
 
 .mapa-celda {
-  fill: var(--fondo);
-  stroke: var(--borde);
+  fill: var(--mapa-celda-fondo);
+  stroke: var(--mapa-celda-borde);
   stroke-width: 1;
 }
 
 .mapa-mesa {
-  stroke: var(--papel);
+  stroke: var(--mapa-mesa-borde);
   stroke-width: 2;
 }
 
 .mapa-mesa-activa {
-  fill: var(--acento);
+  fill: var(--mapa-mesa-fondo);
 }
 
 /* Sin fill en la hoja: manda el atributo con el patron de rayas. */
 .mapa-mesa-inactiva {
-  stroke: var(--tinta-suave);
+  stroke: var(--mapa-inactiva-borde);
   stroke-dasharray: 4 3;
 }
 
 .mapa-inactiva-fondo {
-  fill: var(--tinta-suave);
+  fill: var(--mapa-inactiva-fondo);
 }
 
 .mapa-raya {
-  stroke: var(--papel);
+  stroke: var(--mapa-inactiva-raya);
   stroke-width: 2;
 }
 
 .mapa-etiqueta {
-  fill: var(--acento-tinta);
+  fill: var(--mapa-mesa-tinta);
   font-size: 13px;
   font-weight: 600;
 }
 
 .mapa-etiqueta-inactiva {
-  fill: var(--papel);
+  fill: var(--mapa-inactiva-tinta);
 }
 
 /* Botones grandes: se pulsan con el pulgar en un movil. La posicion va en el centro. */
