@@ -17,3 +17,6 @@ dist/
 # Sistema operativo
 .DS_Store
 Thumbs.db
+
+# Previsualizaciones locales (LL-020): se miran, no se versionan
+.previsualizacion/

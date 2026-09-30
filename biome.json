@@ -8,6 +8,7 @@
       "!**/coverage",
       "!**/*.tsbuildinfo",
       "!**/.wrangler",
+      "!**/.previsualizacion",
       "!.opencode",
       "!opencode.json",
       "!docs/memory"
