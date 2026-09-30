@@ -57,3 +57,5 @@ Rebanada del mapa visual de mesas (ADR-0029). El dueno ve cada zona dibujada y c
 ## Notas
 
 - **2026-09-30** — Build completa y desplegada. No se marca done: falta que el dueno mueva una mesa en /admin/mesas desde el movil. La celda ocupada se rechaza con 409 (D-046); la cuadricula crece hacia abajo y a la derecha y bloquea los indices negativos. Verificacion en vivo de /admin/mesas sin sesion: 200 con la entrada, SIN cabecera Location (la pantalla se muestra, no redirige); el CSS /panel/estilos.css ya sirve .mapa-svg, .mover-boton, .mapa-mesa-inactiva, lo que confirma el despliegue. Nota: Cloudflare inyecta en el borde su propio script de deteccion al final del HTML; el CSP (default-src 'none', sin script-src) lo bloquea, pero el HTML que llega al navegador si contiene esa etiqueta, ajena al panel.
+
+- **2026-09-30** — Revisión visual pendiente del humano. Detectados tres defectos vistos en capturas: (1) jerga 'f1 c3', (2) lista larguísima en móvil por 4 botones por mesa, (3) previsualización con códigos falsos y datos cruzados por zona.
