@@ -8,9 +8,17 @@
  */
 import type { Empleado } from "../base.ts"
 import { responderMetodoNoPermitido } from "../salud.ts"
-import { renderizar } from "../ui/html.ts"
+import { type HtmlSeguro, renderizar } from "../ui/html.ts"
 import { responderRedireccion, respuestaHtml } from "../ui/respuesta.ts"
-import type { AlmacenPanel, CambiosLocal, NuevaMesa, NuevaZona, Resultado, Zona } from "./datos.ts"
+import type {
+  AlmacenPanel,
+  CambiosLocal,
+  Mesa,
+  NuevaMesa,
+  NuevaZona,
+  Resultado,
+  Zona,
+} from "./datos.ts"
 import { puedeEditarLocal, puedeGestionarPlano } from "./permisos.ts"
 import type { Dependencias } from "./proveedor.ts"
 import { type EntornoDePanel, resolverEmpleadoDeSesion } from "./sesion-panel.ts"
@@ -28,9 +36,12 @@ import {
 } from "./validacion.ts"
 import {
   type EstadoPantalla,
+  vistaAviso,
   vistaEntrada,
   vistaLocal,
   vistaMesas,
+  vistaQrMesa,
+  vistaQrTodas,
   vistaSinLocal,
   vistaSinPermiso,
   vistaZonas,
@@ -347,6 +358,88 @@ async function rutaMesas(
 }
 
 // ---------------------------------------------------------------------------
+// QR para imprimir
+// ---------------------------------------------------------------------------
+
+/** Dominio publico desde la configuracion. null si falta o no es https: no se inventa. */
+function dominioDeEntorno(entorno: EntornoDePanel): string | null {
+  const dominio = entorno.DOMINIO_PUBLICO?.trim()
+  if (dominio === undefined || dominio === "" || !dominio.startsWith("https://")) {
+    return null
+  }
+  return dominio.replace(/\/+$/, "")
+}
+
+function contenidoDeMesa(dominio: string, mesa: Mesa): string {
+  return `${dominio}/t/${mesa.codigo}`
+}
+
+async function rutaQrTodas(
+  peticion: Request,
+  empleado: Empleado | null,
+  entorno: EntornoDePanel,
+  almacen: AlmacenPanel,
+): Promise<Response> {
+  if (peticion.method !== "GET") {
+    return responderMetodoNoPermitido("GET")
+  }
+  if (empleado === null) {
+    return respuestaHtml(renderizar(vistaEntrada("admin")), 200)
+  }
+  if (!puedeGestionarPlano(empleado)) {
+    return respuestaHtml(renderizar(vistaSinPermiso(empleado, "imprimir los QR")), 403)
+  }
+  const dominio = dominioDeEntorno(entorno)
+  if (dominio === null) {
+    return respuestaHtml(renderizar(vistaAvisoSinDominio(empleado)), 503)
+  }
+  const mesas = await almacen.listarMesas(empleado)
+  const vista = vistaQrTodas(empleado, mesas, (mesa) => contenidoDeMesa(dominio, mesa))
+  return respuestaHtml(renderizar(vista), 200)
+}
+
+async function rutaQrMesa(
+  peticion: Request,
+  empleado: Empleado | null,
+  entorno: EntornoDePanel,
+  mesaId: string,
+  almacen: AlmacenPanel,
+): Promise<Response> {
+  if (peticion.method !== "GET") {
+    return responderMetodoNoPermitido("GET")
+  }
+  if (empleado === null) {
+    return respuestaHtml(renderizar(vistaEntrada("admin")), 200)
+  }
+  if (!puedeGestionarPlano(empleado)) {
+    return respuestaHtml(renderizar(vistaSinPermiso(empleado, "imprimir el QR")), 403)
+  }
+  const dominio = dominioDeEntorno(entorno)
+  if (dominio === null) {
+    return respuestaHtml(renderizar(vistaAvisoSinDominio(empleado)), 503)
+  }
+  const mesa = await almacen.leerMesa(empleado, mesaId)
+  if (mesa === null) {
+    const aviso = vistaAviso(
+      empleado,
+      "Mesa no encontrada",
+      "Esa mesa no existe o no es de un local que puedas gestionar.",
+    )
+    return respuestaHtml(renderizar(aviso), 404)
+  }
+  const vista = vistaQrMesa(empleado, mesa, contenidoDeMesa(dominio, mesa))
+  return respuestaHtml(renderizar(vista), 200)
+}
+
+function vistaAvisoSinDominio(empleado: Empleado): HtmlSeguro {
+  return vistaAviso(
+    empleado,
+    "El QR no está configurado",
+    "A esta instalación le falta la variable DOMINIO_PUBLICO. Sin ella, el QR no puede apuntar a la dirección correcta.",
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Enrutado
 // ---------------------------------------------------------------------------
 
@@ -355,6 +448,8 @@ type RutaAdmin =
   | { readonly tipo: "zonas" }
   | { readonly tipo: "mesas" }
   | { readonly tipo: "alternar"; readonly mesaId: string }
+  | { readonly tipo: "qr_todas" }
+  | { readonly tipo: "qr_mesa"; readonly mesaId: string }
 
 function reconocerRuta(segmentos: readonly string[]): RutaAdmin | null {
   if (segmentos[0] !== "admin") {
@@ -367,13 +462,17 @@ function reconocerRuta(segmentos: readonly string[]): RutaAdmin | null {
     }
     return null
   }
+  if (segmentos.length === 3 && segmentos[1] === "mesas" && segmentos[2] === "qr") {
+    return { tipo: "qr_todas" }
+  }
   const [, seccion, tercero, cuarto] = segmentos
-  if (
-    segmentos.length === 4 &&
-    seccion === "mesas" &&
-    tercero !== undefined &&
-    cuarto === "alternar"
-  ) {
+  if (segmentos.length !== 4 || seccion !== "mesas" || tercero === undefined) {
+    return null
+  }
+  if (cuarto === "qr") {
+    return { tipo: "qr_mesa", mesaId: tercero }
+  }
+  if (cuarto === "alternar") {
     return { tipo: "alternar", mesaId: tercero }
   }
   return null
@@ -383,6 +482,7 @@ async function despachar(
   ruta: RutaAdmin,
   peticion: Request,
   url: URL,
+  entorno: EntornoDePanel,
   empleado: Empleado | null,
   almacen: AlmacenPanel,
 ): Promise<Response> {
@@ -397,6 +497,10 @@ async function despachar(
       return peticion.method === "POST"
         ? await alternarMesa(empleado, ruta.mesaId, almacen)
         : responderMetodoNoPermitido("POST")
+    case "qr_todas":
+      return await rutaQrTodas(peticion, empleado, entorno, almacen)
+    case "qr_mesa":
+      return await rutaQrMesa(peticion, empleado, entorno, ruta.mesaId, almacen)
   }
 }
 
@@ -413,5 +517,5 @@ export async function manejarAdmin(
     return null
   }
   const empleado = await resolverEmpleadoDeSesion(peticion, entorno, ahora, dependencias)
-  return await despachar(ruta, peticion, url, empleado, dependencias.almacen)
+  return await despachar(ruta, peticion, url, entorno, empleado, dependencias.almacen)
 }

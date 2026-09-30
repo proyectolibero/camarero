@@ -7,6 +7,7 @@
  */
 import type { Empleado } from "../base.ts"
 import { type HtmlSeguro, html, htmlCrudo } from "../ui/html.ts"
+import { generarQrSvg } from "../ui/qr.ts"
 import type { DatosLocal, Mesa, Zona } from "./datos.ts"
 import { nombreDeRol } from "./roles.ts"
 
@@ -361,10 +362,14 @@ function formularioAlternar(mesa: Mesa): HtmlSeguro {
 
 function filaDeMesa(mesa: Mesa, puedeGestionar: boolean): HtmlSeguro {
   const estado = mesa.activa ? "" : " · desactivada"
+  const enlaceQr = puedeGestionar
+    ? html`<a class="mesa-qr" href="/admin/mesas/${mesa.id}/qr">QR</a>`
+    : html``
   return html`<li class="mesa${mesa.activa ? "" : " mesa-inactiva"}">
 <span class="mesa-etiqueta">${mesa.etiqueta}</span>
 <span class="mesa-codigo">${mesa.codigo}</span>
 <span class="mesa-datos">${mesa.capacidad} plazas · ${ETIQUETA_MESA[mesa.kind] ?? mesa.kind}${estado}</span>
+${enlaceQr}
 ${puedeGestionar ? formularioAlternar(mesa) : html``}
 </li>`
 }
@@ -401,9 +406,72 @@ ${puedeGestionar ? formularioMesa(zonas) : html`<p>Solo el dueño o el encargado
 </section>
 <section class="tarjeta">
 <h2>Mesas</h2>
+${
+  puedeGestionar
+    ? html`<p class="no-imprimir"><a class="boton boton-secundario" href="/admin/mesas/qr">Imprimir todos los QR</a></p>`
+    : html``
+}
 ${listaDeMesas(mesas, puedeGestionar)}
 </section>
 ${enlaceVolverAlPanel()}
 </main>`
   return pagina("Mesas", contenido)
+}
+
+/** Pantalla sencilla para un aviso claro que no encaja en las tarjetas de gestion. */
+export function vistaAviso(empleado: Empleado, titulo: string, mensaje: string): HtmlSeguro {
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+<section class="tarjeta">
+<h1>${titulo}</h1>
+<p>${mensaje}</p>
+</section>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina(titulo, contenido)
+}
+
+function fichaDeQr(etiqueta: string, codigo: string, contenido: string): HtmlSeguro {
+  return html`<section class="qr-ficha">
+<p class="qr-etiqueta">${etiqueta}</p>
+<div class="qr">${htmlCrudo(generarQrSvg(contenido, `QR de ${etiqueta}`))}</div>
+<p class="qr-codigo">${codigo}</p>
+</section>`
+}
+
+export function vistaQrMesa(empleado: Empleado, mesa: Mesa, contenido: string): HtmlSeguro {
+  const cuerpo = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+<section class="tarjeta">
+<h1>${mesa.etiqueta}</h1>
+<div class="qr">${htmlCrudo(generarQrSvg(contenido, `QR de ${mesa.etiqueta}`))}</div>
+<p class="qr-codigo">${mesa.codigo}</p>
+<p class="qr-url">${contenido}</p>
+</section>
+<p class="no-imprimir">
+<a class="boton" href="/admin/mesas/qr">Imprimir todos</a>
+<a class="boton boton-secundario" href="/admin/mesas">Volver a las mesas</a>
+</p>
+</main>`
+  return pagina(`QR · ${mesa.etiqueta}`, cuerpo)
+}
+
+export function vistaQrTodas(
+  empleado: Empleado,
+  mesas: readonly Mesa[],
+  contenidoDeMesa: (mesa: Mesa) => string,
+): HtmlSeguro {
+  const fichas = mesas.map((mesa) => fichaDeQr(mesa.etiqueta, mesa.codigo, contenidoDeMesa(mesa)))
+  const introduccion =
+    mesas.length === 0
+      ? html`<p class="no-imprimir">Todavía no hay mesas que imprimir.</p>`
+      : html`<div class="hoja-mesas">${fichas}</div>`
+  const cuerpo = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+<h1 class="no-imprimir">QR de las mesas</h1>
+<p class="no-imprimir">Usa «Imprimir» del navegador. Cada ficha lleva su código en grande para dictarlo por teléfono.</p>
+${introduccion}
+<p class="no-imprimir"><a class="boton boton-secundario" href="/admin/mesas">Volver a las mesas</a></p>
+</main>`
+  return pagina("QR de las mesas", cuerpo)
 }

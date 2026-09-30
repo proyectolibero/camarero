@@ -337,6 +337,55 @@ p {
   opacity: 0.6;
 }
 
+.mesa-qr {
+  color: var(--acento);
+  font-weight: 600;
+}
+
+.qr {
+  background: #ffffff;
+  padding: 0.5rem;
+  border: 1px solid var(--borde);
+  border-radius: 0.5rem;
+}
+
+.qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.qr-ficha {
+  max-width: 18rem;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.qr-etiqueta {
+  font-weight: 600;
+  margin: 0 0 0.4rem;
+}
+
+.qr-codigo {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.9rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  margin: 0.4rem 0 0;
+}
+
+.qr-url {
+  color: var(--tinta-suave);
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.hoja-mesas {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 1.25rem;
+}
+
 @media (max-width: 30rem) {
   .tarjeta {
     padding: 1.1rem;
@@ -349,6 +398,73 @@ p {
 
   .datos dt {
     margin-top: 0.5rem;
+  }
+}
+
+/*
+ * Impresion de las hojas de QR. Una hoja que imprime mal es una mesa muerta: fuera cabecera,
+ * botones y fondos; el QR grande y en negro puro sobre blanco.
+ */
+@media print {
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    background: #ffffff;
+    color: #000000;
+  }
+
+  .cabecera,
+  .no-imprimir,
+  .boton,
+  .boton-salir {
+    display: none !important;
+  }
+
+  .contenedor {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .tarjeta {
+    background: #ffffff;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+  }
+
+  .qr {
+    background: #ffffff;
+    border: 0;
+    padding: 0;
+  }
+
+  .qr svg {
+    width: 70mm;
+    height: auto;
+  }
+
+  .qr-codigo,
+  .qr-etiqueta,
+  .qr-url {
+    color: #000000;
+  }
+
+  .qr-codigo {
+    font-size: 3rem;
+  }
+
+  .hoja-mesas {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+
+  .qr-ficha {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    max-width: none;
   }
 }
 `
