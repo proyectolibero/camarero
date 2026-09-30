@@ -2,7 +2,7 @@
 id: TASK-F0-08
 type: task
 title: Adaptar el esquema y los roles para aplicarlo en Supabase
-status: doing
+status: done
 date: 2026-09-29
 phase: F0
 tags:
@@ -27,8 +27,8 @@ depends_on:
 doc: contracts/contract-borde-contract-borde-el-borde-de-cloudflare-pages-workers-y-r2.md
 tests:
   suite: pnpm test
-  passed: false
-  evidence: null
+  passed: true
+  evidence: "2026-09-30 · pnpm test · packages/db 49 pasan, 0 fallan, en los dos modos (local y gestionado; en gestionado se omite 1 a proposito, el del propietario sujeto a FORCE, porque alli el dueno es el administrador). Aplicacion real en Supabase: 15 migraciones en el historial, 30 tablas, 98 politicas. Prueba de aislamiento: el rol camarero_app ve 0 filas sin contexto. Y la prueba definitiva del criterio 2: el borde conecto de verdad por Hyperdrive con camarero_app y el dueno entro en /admin viendo unicamente su ficha. Documentado en CONTRACT-borde."
 ---
 
 ## Descripcion
@@ -51,3 +51,5 @@ Nuestro esquema se aplica hoy en un Postgres de Docker donde el runner crea cama
 - **2026-09-29** — AVANCE GRANDE: el esquema se aplica YA en el Supabase real. Verificado con la ejecucion del workflow Instalar esquema en success: 15 migraciones en el historial, 30 tablas y 98 politicas en public. El modo gestionado revoca los permisos por defecto de anon, authenticated y service_role, y asegura camarero_app sin BYPASSRLS. Camino recorrido: IPv6 (usar el pooler), CA propia de Supabase (confiarla explicitamente, no desactivar la verificacion), contrasena fuera de la URL (secreto aparte), identificadores entrecomillados (postgres.referencia lleva punto y no es rol real), y historial de migraciones con linea base para poder repetir la instalacion. Tests locales 49 en verde, typecheck y biome en 0. FALTA para cerrar la tarea: (1) fijar contrasena a camarero_app (ALTER ROLE ... LOGIN PASSWORD), (2) crear la configuracion de Hyperdrive apuntando al pooler IPv4 con ese rol, y (3) probar que el borde conecta con camarero_app y ve solo lo que la RLS le permite. Limpieza pendiente: la tabla prueba_runner viaja a produccion y deberia salir del conjunto de migraciones, y el historial camarero_migraciones vive en public.
 
 - **2026-09-30** — AVANCE: el rol camarero_app tiene contrasena, se autentica en el Supabase real por el pooler (usuario derivado camarero_app.referencia) y la RLS le aisla. Verificado con la prueba de aislamiento del workflow Instalar esquema: se crea una organizacion de prueba, el rol de la app ve 0 filas sin contexto, y se borra. Salida literal: 'Aislamiento: filas que ve el rol de la app sin contexto: 0 (esperado 0)'. Estado del esquema: 15 migraciones en el historial, 30 tablas y 98 politicas. Todo el workflow en success. FALTA: (1) que el BORDE (el Worker) se conecte de verdad, con Hyperdrive apuntando al pooler y camarero_app; (2) el endpoint de inicio de sesion de F0-04; (3) documentado ya en CONTRACT-borde. Limpieza pendiente: prueba_runner viaja a produccion.
+
+- **2026-09-30** — Cerrada. Los tres pendientes que quedaban estan hechos: (1) el borde conecta con camarero_app por Hyperdrive en modo verify-full, sin cache y sin BYPASSRLS; (2) el endpoint de inicio de sesion existe y se probo con un pasaporte real; (3) CONTRACT-borde documenta como se aplica el esquema, con que rol conecta el borde y el runbook de recuperacion de contrasena. Deuda que NO se cierra aqui y se traslada a TASK-F0-10: la tabla prueba_runner viaja a produccion y no deberia, y camarero_migraciones vive en el esquema public.
