@@ -5,7 +5,10 @@
  * cuesta la contrasena del rol del borde (RISK-020). El cron diario del Worker hace DOS
  * cosas, porque la pausa se decide por actividad y no esta claro que cuenta como tal:
  *   - una consulta real a Postgres a traves del enlace `BASE` de Hyperdrive, y
- *   - una llamada a la API REST del proyecto (`GET /rest/v1/` con la clave anonima).
+ *   - una llamada al endpoint de salud de Auth (`GET /auth/v1/health` con la publishable).
+ *
+ * El endpoint raiz de PostgREST (`/rest/v1/`) NO sirve: exige una clave secreta que por
+ * diseno no tenemos, respondia 401 permanente y el codigo lo contaba como exito (LL-019).
  *
  * Cada sondeo se intenta POR SEPARADO: si uno falla, el otro sigue. Un fallo se registra,
  * nunca se esconde, y jamas tumba el cron: un keep-alive que revienta al primer tropiezo
@@ -14,7 +17,11 @@
  */
 import { Client } from "pg"
 
-/** Un sondeo. Debe resolver si el destino respondio, aunque sea con un codigo de error. */
+/**
+ * Un sondeo. Debe resolver SOLO si el destino confirma su salud con una respuesta concreta
+ * (un 2xx del endpoint elegido). Cualquier otra respuesta o un error de red es un fallo y se
+ * manifiesta lanzando: un sondeo que acepta cualquier respuesta no sondea nada (LL-019).
+ */
 export type Sondeo = () => Promise<void>
 
 export type DependenciasDeLatido = {
@@ -81,13 +88,21 @@ export function consultarBase(connectionString: string): Sondeo {
 }
 
 /**
- * Llamada a la API REST del proyecto. NO se exige un 200: basta con que responda, porque lo
- * que se persigue es que el proyecto registre actividad. Un error de red si es un fallo.
+ * Llamada al endpoint de salud de Auth. Exige un 2xx: un 401 o un 404 son FALLOS, no exitos.
+ *
+ * Se eligio `/auth/v1/health` porque ACEPTA la clase de credencial que tenemos (la
+ * publishable) y responde 200. El endpoint raiz de PostgREST exige una clave secreta y
+ * devolvia 401 ("Secret API key required"), que este codigo contaba como exito (LL-019).
  */
-export function llamarApi(urlBase: string, claveAnonima: string): Sondeo {
+export function llamarApi(urlBase: string, clavePublicable: string): Sondeo {
   const raiz = urlBase.replace(/\/+$/, "")
   return async () => {
-    await fetch(`${raiz}/rest/v1/`, { headers: { apikey: claveAnonima } })
+    const respuesta = await fetch(`${raiz}/auth/v1/health`, {
+      headers: { apikey: clavePublicable },
+    })
+    if (!respuesta.ok) {
+      throw new Error(`la API de salud respondio ${respuesta.status}`)
+    }
   }
 }
 

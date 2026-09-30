@@ -137,7 +137,7 @@ Las contrasenas de roles propios **no viajan en las copias** (`pg_dump` no vuelc
 
 ### El keep-alive (`RISK-001`)
 
-El borde lleva un **cron diario** (`0 12 * * *`) que consulta la base y llama a su API REST, para que el proyecto no se pause por inactividad. Vive en **Cloudflare** y no en GitHub a proposito (`ADR-0026`): GitHub **desactiva los flujos programados tras 60 dias sin actividad en el repositorio**, y este repositorio puede pasar semanas quieto. Si el cron de GitHub se desactivara, se perderia la **copia**, no la vida del proyecto. Es una mitigacion, no una garantia: si Cloudflare no ejecuta el cron, el proyecto se pausa igual.
+El borde lleva un **cron diario** (`0 12 * * *`) con **dos sondeos independientes**: una consulta real a Postgres por Hyperdrive (`select 1`) y una llamada a **`GET /auth/v1/health` con la clave publishable**, para que el proyecto no se pause por inactividad. Cada sondeo exige una **respuesta concreta** —un 2xx del endpoint elegido—: un 401 o un 404 son **fallos**, nunca exitos, y un fallo de uno no tumba el cron ni impide el otro. El endpoint raiz de PostgREST (`/rest/v1/`) **no sirve** para esto: exige una clave secreta que por diseno no tenemos y devolvia un 401 permanente que el codigo contaba como exito (`LL-019`). Vive en **Cloudflare** y no en GitHub a proposito (`ADR-0026`): GitHub **desactiva los flujos programados tras 60 dias sin actividad en el repositorio**, y este repositorio puede pasar semanas quieto. Si el cron de GitHub se desactivara, se perderia la **copia**, no la vida del proyecto. Es una mitigacion, no una garantia: si Cloudflare no ejecuta el cron, el proyecto se pausa igual.
 
 ## Secretos
 
