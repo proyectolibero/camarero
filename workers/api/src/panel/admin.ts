@@ -14,11 +14,13 @@ import type {
   AlmacenPanel,
   CambiosLocal,
   Mesa,
+  MotivoDeMovimiento,
   NuevaMesa,
   NuevaZona,
   Resultado,
   Zona,
 } from "./datos.ts"
+import { esDireccion } from "./mapa.ts"
 import { puedeEditarLocal, puedeGestionarPlano } from "./permisos.ts"
 import type { Dependencias } from "./proveedor.ts"
 import { type EntornoDePanel, resolverEmpleadoDeSesion } from "./sesion-panel.ts"
@@ -276,7 +278,11 @@ function validarNuevaMesa(
 async function renderMesas(
   empleado: Empleado,
   almacen: AlmacenPanel,
-  estado: EstadoPantalla & { readonly creada?: boolean; readonly cambiada?: boolean },
+  estado: EstadoPantalla & {
+    readonly creada?: boolean
+    readonly cambiada?: boolean
+    readonly movida?: boolean
+  },
 ): Promise<Response> {
   const mesas = await almacen.listarMesas(empleado)
   const zonas = await almacen.listarZonas(empleado)
@@ -336,6 +342,60 @@ async function alternarMesa(
   return responderRedireccion("/admin/mesas?cambiada=1")
 }
 
+function mensajeDeMovimiento(motivo: MotivoDeMovimiento): {
+  readonly error: string
+  readonly estadoError: number
+} {
+  if (motivo === "ocupada") {
+    return {
+      error: "Esa casilla ya está ocupada por otra mesa. Muévela primero.",
+      estadoError: 409,
+    }
+  }
+  if (motivo === "fuera_de_cuadricula") {
+    return {
+      error:
+        "No se puede mover más allá del borde: la cuadrícula no tiene filas ni columnas negativas.",
+      estadoError: 400,
+    }
+  }
+  if (motivo === "sin_permiso") {
+    return { error: "No tienes permiso para mover esa mesa.", estadoError: 403 }
+  }
+  return { error: "Esa mesa ya no existe o no es de tu local.", estadoError: 404 }
+}
+
+async function moverMesa(
+  peticion: Request,
+  empleado: Empleado | null,
+  mesaId: string,
+  almacen: AlmacenPanel,
+): Promise<Response> {
+  if (empleado === null) {
+    return respuestaHtml(renderizar(vistaEntrada("admin")), 401)
+  }
+  if (!puedeGestionarPlano(empleado)) {
+    return respuestaHtml(renderizar(vistaSinPermiso(empleado, "mover mesas")), 403)
+  }
+  const campos = await leerCampos(peticion)
+  const direccion = campos["direccion"] ?? ""
+  if (!esDireccion(direccion)) {
+    return await renderMesas(empleado, almacen, {
+      error: "Esa dirección no es válida.",
+      estadoError: 400,
+    })
+  }
+  const resultado = await almacen.moverMesa(empleado, mesaId, direccion)
+  if (!resultado.ok) {
+    const fallo = mensajeDeMovimiento(resultado.motivo)
+    return await renderMesas(empleado, almacen, {
+      error: fallo.error,
+      estadoError: fallo.estadoError,
+    })
+  }
+  return responderRedireccion("/admin/mesas?movida=1")
+}
+
 async function rutaMesas(
   peticion: Request,
   url: URL,
@@ -351,9 +411,13 @@ async function rutaMesas(
   if (empleado === null) {
     return respuestaHtml(renderizar(vistaEntrada("admin")), 200)
   }
+  // Una mesa sin posicion (anterior a la migracion 0017) se coloca sola en el primer hueco
+  // libre y se guarda asi. Es idempotente: con todas colocadas no cambia nada.
+  await almacen.acomodarMesasSinPosicion(empleado)
   return await renderMesas(empleado, almacen, {
     creada: url.searchParams.get("creada") === "1",
     cambiada: url.searchParams.get("cambiada") === "1",
+    movida: url.searchParams.get("movida") === "1",
   })
 }
 
@@ -448,6 +512,7 @@ type RutaAdmin =
   | { readonly tipo: "zonas" }
   | { readonly tipo: "mesas" }
   | { readonly tipo: "alternar"; readonly mesaId: string }
+  | { readonly tipo: "mover"; readonly mesaId: string }
   | { readonly tipo: "qr_todas" }
   | { readonly tipo: "qr_mesa"; readonly mesaId: string }
 
@@ -475,6 +540,9 @@ function reconocerRuta(segmentos: readonly string[]): RutaAdmin | null {
   if (cuarto === "alternar") {
     return { tipo: "alternar", mesaId: tercero }
   }
+  if (cuarto === "mover") {
+    return { tipo: "mover", mesaId: tercero }
+  }
   return null
 }
 
@@ -496,6 +564,10 @@ async function despachar(
     case "alternar":
       return peticion.method === "POST"
         ? await alternarMesa(empleado, ruta.mesaId, almacen)
+        : responderMetodoNoPermitido("POST")
+    case "mover":
+      return peticion.method === "POST"
+        ? await moverMesa(peticion, empleado, ruta.mesaId, almacen)
         : responderMetodoNoPermitido("POST")
     case "qr_todas":
       return await rutaQrTodas(peticion, empleado, entorno, almacen)

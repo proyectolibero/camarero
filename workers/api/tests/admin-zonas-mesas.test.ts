@@ -44,6 +44,8 @@ const MESA_TERRAZA: Mesa = {
   activa: true,
   zonaId: "z1",
   zonaNombre: "Terraza",
+  posFila: 0,
+  posColumna: 0,
 }
 const MESA_SUELTA: Mesa = {
   id: "m2",
@@ -54,6 +56,8 @@ const MESA_SUELTA: Mesa = {
   activa: false,
   zonaId: null,
   zonaNombre: null,
+  posFila: 0,
+  posColumna: 1,
 }
 
 type EspiaZonas = {

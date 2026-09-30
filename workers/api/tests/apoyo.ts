@@ -83,6 +83,8 @@ export function almacenFalso(parciales: Partial<AlmacenPanel> = {}): AlmacenPane
     crearMesa: async () => ({ ok: false, motivo: "conflicto" }),
     alternarMesa: async () => ({ ok: true, valor: undefined }),
     leerMesa: async () => null,
+    moverMesa: async () => ({ ok: true }),
+    acomodarMesasSinPosicion: async () => undefined,
     ...parciales,
   }
 }

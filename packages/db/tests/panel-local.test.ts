@@ -93,6 +93,21 @@ async function contar(contexto: Contexto, tabla: string): Promise<number> {
   return filas[0]?.n ?? -1
 }
 
+/** Varias sentencias en una sola transaccion (para probar restricciones que necesitan estado). */
+async function enTransaccion<T>(
+  contexto: Contexto,
+  trabajo: (cliente: ClientePostgres) => Promise<T>,
+): Promise<T> {
+  const cliente = clienteApp()
+  await cliente.query("begin")
+  try {
+    await aplicarContexto(cliente, contexto)
+    return await trabajo(cliente)
+  } finally {
+    await cliente.query("rollback")
+  }
+}
+
 async function sembrarEscenario(admin: ParametrosConexion): Promise<void> {
   const cliente = await conectar(admin)
   try {
@@ -235,5 +250,75 @@ describe("Mesas: codigo unico y roles", () => {
 
   it("no debe dejar ver las mesas de otra organizacion", async () => {
     expect(await contar(CONTEXTO_OWNER2, "tables")).toBe(1)
+  })
+})
+
+describe("Mesas: posicion en la cuadricula (migracion 0017)", () => {
+  it("debe rechazar una posicion negativa", async () => {
+    await expect(
+      conContexto(
+        CONTEXTO_MANAGER_A,
+        `insert into public.tables (location_id, zone_id, label, code, pos_fila, pos_columna)
+         values ($1, $2, 'Negativa', 'MNPQRSTU', -1, 0)`,
+        [LOC_A, ZONE_A],
+      ),
+    ).rejects.toThrow()
+  })
+
+  it("debe rechazar media posicion", async () => {
+    await expect(
+      conContexto(
+        CONTEXTO_MANAGER_A,
+        `insert into public.tables (location_id, zone_id, label, code, pos_fila, pos_columna)
+         values ($1, $2, 'A medias', 'MNPQRSTU', 1, null)`,
+        [LOC_A, ZONE_A],
+      ),
+    ).rejects.toThrow()
+  })
+
+  it("debe rechazar dos mesas en la misma celda de una zona", async () => {
+    await expect(
+      enTransaccion(CONTEXTO_MANAGER_A, async (cliente) => {
+        await cliente.query(
+          `insert into public.tables (location_id, zone_id, label, code, pos_fila, pos_columna)
+           values ($1, $2, 'Celda 1', 'MNPQRSTU', 5, 5)`,
+          [LOC_A, ZONE_A],
+        )
+        await cliente.query(
+          `insert into public.tables (location_id, zone_id, label, code, pos_fila, pos_columna)
+           values ($1, $2, 'Celda 2', 'VWXYZ234', 5, 5)`,
+          [LOC_A, ZONE_A],
+        )
+      }),
+    ).rejects.toThrow()
+  })
+
+  it("debe permitir la misma celda en zonas distintas", async () => {
+    const total = await enTransaccion(CONTEXTO_MANAGER_A, async (cliente) => {
+      const zonaB = await cliente.query<{ id: string }>(
+        `insert into public.zones (location_id, name, kind) values ($1, 'Barra A', 'barra') returning id`,
+        [LOC_A],
+      )
+      const zonaId = zonaB.rows[0]?.id
+      if (zonaId === undefined) {
+        throw new Error("La zona nueva no devolvio id")
+      }
+      await cliente.query(
+        `insert into public.tables (location_id, zone_id, label, code, pos_fila, pos_columna)
+         values ($1, $2, 'Celda A', 'MNPQRSTU', 7, 7)`,
+        [LOC_A, ZONE_A],
+      )
+      await cliente.query(
+        `insert into public.tables (location_id, zone_id, label, code, pos_fila, pos_columna)
+         values ($1, $2, 'Celda B', 'VWXYZ234', 7, 7)`,
+        [LOC_A, zonaId],
+      )
+      const filas = await cliente.query<{ n: number }>(
+        `select count(*)::int as n from public.tables where location_id = $1 and pos_fila = 7 and pos_columna = 7`,
+        [LOC_A],
+      )
+      return filas.rows[0]?.n ?? -1
+    })
+    expect(total).toBe(2)
   })
 })

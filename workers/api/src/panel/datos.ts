@@ -11,6 +11,14 @@
 import { Client } from "pg"
 import { type ContextoDeEmpleado, type Empleado, fijarContextoDeEmpleado } from "../base.ts"
 import { esConflictoDeCodigo, generarCodigoMesa } from "./codigo-mesa.ts"
+import {
+  type Celda,
+  type Direccion,
+  desplazar,
+  dimensionesDeMapa,
+  type Posicion,
+  primerHuecoLibre,
+} from "./mapa.ts"
 
 export type DatosLocal = {
   readonly id: string
@@ -51,6 +59,8 @@ export type Mesa = {
   readonly activa: boolean
   readonly zonaId: string | null
   readonly zonaNombre: string | null
+  readonly posFila: number | null
+  readonly posColumna: number | null
 }
 
 export type NuevaMesa = {
@@ -66,6 +76,13 @@ export type Resultado<T = void> =
   | { readonly ok: true; readonly valor: T }
   | { readonly ok: false; readonly motivo: MotivoDeFallo }
 
+/** Por que no se pudo mover una mesa. Se explica en pantalla, nunca se ignora (D-046). */
+export type MotivoDeMovimiento = "sin_permiso" | "no_existe" | "ocupada" | "fuera_de_cuadricula"
+
+export type ResultadoMovimiento =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly motivo: MotivoDeMovimiento }
+
 /** Lo que el panel necesita de la base. Se inyecta para poder probar sin tocar Postgres. */
 export type AlmacenPanel = {
   readonly leerLocal: (empleado: Empleado) => Promise<DatosLocal | null>
@@ -76,6 +93,12 @@ export type AlmacenPanel = {
   readonly crearMesa: (empleado: Empleado, datos: NuevaMesa) => Promise<Resultado<Mesa>>
   readonly alternarMesa: (empleado: Empleado, mesaId: string) => Promise<Resultado>
   readonly leerMesa: (empleado: Empleado, mesaId: string) => Promise<Mesa | null>
+  readonly moverMesa: (
+    empleado: Empleado,
+    mesaId: string,
+    direccion: Direccion,
+  ) => Promise<ResultadoMovimiento>
+  readonly acomodarMesasSinPosicion: (empleado: Empleado) => Promise<void>
 }
 
 type FilaLocal = {
@@ -98,6 +121,7 @@ type FilaZona = {
 
 type FilaMesa = {
   readonly id: string
+  readonly location_id: string
   readonly code: string
   readonly label: string
   readonly capacity: number
@@ -105,12 +129,14 @@ type FilaMesa = {
   readonly active: boolean
   readonly zone_id: string | null
   readonly zone_name: string | null
+  readonly pos_fila: number | null
+  readonly pos_columna: number | null
 }
 
 const COLUMNAS_LOCAL = "id, org_id, slug, name, timezone, currency, status, service_mode"
 
 const COLUMNAS_MESA =
-  "t.id, t.code, t.label, t.capacity, t.kind, t.active, t.zone_id, z.name as zone_name"
+  "t.id, t.location_id, t.code, t.label, t.capacity, t.kind, t.active, t.zone_id, t.pos_fila, t.pos_columna, z.name as zone_name"
 
 function aDatosLocal(fila: FilaLocal): DatosLocal {
   return {
@@ -139,6 +165,8 @@ function aMesa(fila: FilaMesa): Mesa {
     activa: fila.active,
     zonaId: fila.zone_id,
     zonaNombre: fila.zone_name,
+    posFila: fila.pos_fila,
+    posColumna: fila.pos_columna,
   }
 }
 
@@ -250,6 +278,42 @@ function motivoDeErrorDeEscritura(error: unknown): MotivoDeFallo | null {
   return null
 }
 
+/** Restriccion unica de celda por zona (migracion 0017). */
+const RESTRICCION_POSICION = "tables_posicion_unica"
+
+function esConflictoDePosicion(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false
+  }
+  const { code, constraint } = error as { readonly code?: unknown; readonly constraint?: unknown }
+  return code === "23505" && constraint === RESTRICCION_POSICION
+}
+
+/** Celdas ocupadas en una zona (o en el grupo sin zona). Una posicion nula no ocupa celda. */
+async function listarCeldasDeZona(
+  cliente: Client,
+  localId: string,
+  zonaId: string | null,
+): Promise<Celda[]> {
+  const resultado = await cliente.query<{ pos_fila: number; pos_columna: number }>(
+    `select pos_fila, pos_columna from public.tables
+     where location_id = $1 and zone_id is not distinct from $2 and pos_fila is not null`,
+    [localId, zonaId],
+  )
+  return resultado.rows.map((fila) => ({ posFila: fila.pos_fila, posColumna: fila.pos_columna }))
+}
+
+async function celdaOcupada(cliente: Client, fila: FilaMesa, destino: Posicion): Promise<boolean> {
+  const resultado = await cliente.query(
+    `select 1 from public.tables
+     where location_id = $1 and id <> $2 and zone_id is not distinct from $3
+       and pos_fila = $4 and pos_columna = $5
+     limit 1`,
+    [fila.location_id, fila.id, fila.zone_id, destino.fila, destino.columna],
+  )
+  return (resultado.rowCount ?? 0) > 0
+}
+
 async function escribirZona(
   cliente: Client,
   localId: string,
@@ -271,10 +335,36 @@ async function escribirZona(
   }
 }
 
+async function insertarMesa(
+  cliente: Client,
+  localId: string,
+  datos: NuevaMesa,
+  codigo: string,
+  hueco: Posicion,
+): Promise<FilaMesa | undefined> {
+  const resultado = await cliente.query<FilaMesa>(
+    `insert into public.tables (location_id, zone_id, label, code, capacity, kind, pos_fila, pos_columna)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
+     returning id, location_id, code, label, capacity, kind, active, zone_id, pos_fila, pos_columna, null::text as zone_name`,
+    [
+      localId,
+      datos.zonaId,
+      datos.etiqueta,
+      codigo,
+      datos.capacidad,
+      datos.kind,
+      hueco.fila,
+      hueco.columna,
+    ],
+  )
+  return resultado.rows[0]
+}
+
 /**
- * Inserta una mesa con un codigo recien generado. Si el codigo choca con el de otra mesa del
- * local, se reintenta. El `savepoint` es imprescindible: tras un choque, la transaccion queda
- * abortada y el siguiente INSERT fallaria con 25P02 sin poder volver atras.
+ * Inserta una mesa con un codigo recien generado y la coloca en el primer hueco libre de su
+ * zona. Si el codigo o la celda chocan, se reintenta: el `savepoint` es imprescindible porque,
+ * tras un choque, la transaccion queda abortada y el siguiente INSERT fallaria con 25P02 sin
+ * poder volver atras.
  */
 async function escribirMesa(
   cliente: Client,
@@ -285,21 +375,17 @@ async function escribirMesa(
     const codigo = generarCodigoMesa()
     await cliente.query("savepoint codigo_mesa")
     try {
-      const resultado = await cliente.query<FilaMesa>(
-        `insert into public.tables (location_id, zone_id, label, code, capacity, kind)
-         values ($1, $2, $3, $4, $5, $6)
-         returning id, code, label, capacity, kind, active, zone_id, null::text as zone_name`,
-        [localId, datos.zonaId, datos.etiqueta, codigo, datos.capacidad, datos.kind],
-      )
+      const celdas = await listarCeldasDeZona(cliente, localId, datos.zonaId)
+      const hueco = primerHuecoLibre(celdas, dimensionesDeMapa(celdas).columnas)
+      const fila = await insertarMesa(cliente, localId, datos, codigo, hueco)
       await cliente.query("release savepoint codigo_mesa")
-      const fila = resultado.rows[0]
       if (fila === undefined) {
         throw new Error("La inserción de mesa no devolvió fila")
       }
       return { ok: true, valor: aMesa(fila) }
     } catch (error) {
       await cliente.query("rollback to savepoint codigo_mesa")
-      if (esConflictoDeCodigo(error)) {
+      if (esConflictoDeCodigo(error) || esConflictoDePosicion(error)) {
         continue
       }
       const motivo = motivoDeErrorDeEscritura(error)
@@ -310,6 +396,76 @@ async function escribirMesa(
     }
   }
   return { ok: false, motivo: "conflicto" }
+}
+
+type FilaAcomodo = {
+  readonly id: string
+  readonly zone_id: string | null
+  readonly pos_fila: number | null
+  readonly pos_columna: number | null
+}
+
+/** Coloca en el primer hueco libre las mesas sin posicion de un mismo grupo (zona o sin zona). */
+async function acomodarGrupo(cliente: Client, filas: readonly FilaAcomodo[]): Promise<void> {
+  const celdas: Celda[] = filas.map((fila) => ({
+    posFila: fila.pos_fila,
+    posColumna: fila.pos_columna,
+  }))
+  for (const fila of filas) {
+    if (fila.pos_fila !== null) {
+      continue
+    }
+    const hueco = primerHuecoLibre(celdas, dimensionesDeMapa(celdas).columnas)
+    celdas.push({ posFila: hueco.fila, posColumna: hueco.columna })
+    await cliente.query(`update public.tables set pos_fila = $2, pos_columna = $3 where id = $1`, [
+      fila.id,
+      hueco.fila,
+      hueco.columna,
+    ])
+  }
+}
+
+async function acomodarSinPosicion(cliente: Client, localId: string): Promise<void> {
+  const resultado = await cliente.query<FilaAcomodo>(
+    `select id, zone_id, pos_fila, pos_columna from public.tables
+     where location_id = $1 order by label`,
+    [localId],
+  )
+  const grupos = new Map<string | null, FilaAcomodo[]>()
+  for (const fila of resultado.rows) {
+    const grupo = grupos.get(fila.zone_id)
+    if (grupo === undefined) {
+      grupos.set(fila.zone_id, [fila])
+    } else {
+      grupo.push(fila)
+    }
+  }
+  for (const filas of grupos.values()) {
+    await acomodarGrupo(cliente, filas)
+  }
+}
+
+async function escribirMovimiento(
+  cliente: Client,
+  mesaId: string,
+  destino: Posicion,
+): Promise<ResultadoMovimiento> {
+  try {
+    const resultado = await cliente.query(
+      `update public.tables set pos_fila = $2, pos_columna = $3 where id = $1 returning id`,
+      [mesaId, destino.fila, destino.columna],
+    )
+    return resultado.rowCount === 1 ? { ok: true } : { ok: false, motivo: "sin_permiso" }
+  } catch (error) {
+    if (esConflictoDePosicion(error)) {
+      return { ok: false, motivo: "ocupada" }
+    }
+    const motivo = motivoDeErrorDeEscritura(error)
+    if (motivo === null) {
+      throw error
+    }
+    return { ok: false, motivo: motivo === "conflicto" ? "ocupada" : "sin_permiso" }
+  }
 }
 
 const INTENTOS_CODIGO = 5
@@ -385,6 +541,28 @@ export function almacenDeBase(cadena: string): AlmacenPanel {
         const fila = await leerFilaMesa(cliente, mesaId)
         return fila === null ? null : aMesa(fila)
       }),
+    moverMesa: (empleado, mesaId, direccion): Promise<ResultadoMovimiento> =>
+      enTransaccion(cadena, empleado, async (cliente): Promise<ResultadoMovimiento> => {
+        const fila = await leerFilaMesa(cliente, mesaId)
+        if (fila === null || fila.pos_fila === null || fila.pos_columna === null) {
+          return { ok: false, motivo: "no_existe" }
+        }
+        const destino = desplazar({ fila: fila.pos_fila, columna: fila.pos_columna }, direccion)
+        if (destino === null) {
+          return { ok: false, motivo: "fuera_de_cuadricula" }
+        }
+        if (await celdaOcupada(cliente, fila, destino)) {
+          return { ok: false, motivo: "ocupada" }
+        }
+        return await escribirMovimiento(cliente, mesaId, destino)
+      }),
+    acomodarMesasSinPosicion: (empleado): Promise<void> =>
+      enTransaccion(cadena, empleado, async (cliente) => {
+        const id = await resolverLocalId(cliente, empleado)
+        if (id !== null) {
+          await acomodarSinPosicion(cliente, id)
+        }
+      }),
   }
 }
 
@@ -399,6 +577,8 @@ export function almacenNoConfigurado(): AlmacenPanel {
     crearMesa: async (): Promise<Resultado<Mesa>> => ({ ok: false, motivo: "no_existe" }),
     alternarMesa: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
     leerMesa: async (): Promise<Mesa | null> => null,
+    moverMesa: async (): Promise<ResultadoMovimiento> => ({ ok: false, motivo: "no_existe" }),
+    acomodarMesasSinPosicion: async (): Promise<void> => undefined,
   }
 }
 

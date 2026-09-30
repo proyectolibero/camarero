@@ -37,6 +37,8 @@ const MESA: Mesa = {
   activa: true,
   zonaId: null,
   zonaNombre: null,
+  posFila: 0,
+  posColumna: 0,
 }
 
 function deps(almacen: AlmacenPanel, empleado: Empleado | null): DependenciasParciales {

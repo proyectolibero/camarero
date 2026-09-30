@@ -329,8 +329,122 @@ p {
   font-size: 0.85rem;
 }
 
-.mesa form {
+.mesa-cabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  width: 100%;
+}
+
+.mesa-cabecera form {
   margin-left: auto;
+}
+
+/* El mapa no tiene JavaScript: se dibuja en el servidor y se adapta al ancho del movil. */
+.mapa-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 40rem;
+  margin: 0 0 0.75rem;
+}
+
+.mapa-celda {
+  fill: var(--fondo);
+  stroke: var(--borde);
+  stroke-width: 1;
+}
+
+.mapa-mesa {
+  stroke: var(--papel);
+  stroke-width: 2;
+}
+
+.mapa-mesa-activa {
+  fill: var(--acento);
+}
+
+/* Sin fill en la hoja: manda el atributo con el patron de rayas. */
+.mapa-mesa-inactiva {
+  stroke: var(--tinta-suave);
+  stroke-dasharray: 4 3;
+}
+
+.mapa-inactiva-fondo {
+  fill: var(--tinta-suave);
+}
+
+.mapa-raya {
+  stroke: var(--papel);
+  stroke-width: 2;
+}
+
+.mapa-etiqueta {
+  fill: var(--acento-tinta);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mapa-etiqueta-inactiva {
+  fill: var(--papel);
+}
+
+/* Botones grandes: se pulsan con el pulgar en un movil. La posicion va en el centro. */
+.mover {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(2.75rem, 3rem));
+  grid-template-rows: repeat(3, auto);
+  gap: 0.35rem;
+  justify-content: center;
+  margin-top: 0.6rem;
+  width: 100%;
+}
+
+.mover-boton {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  border: 1px solid var(--borde);
+  border-radius: 0.5rem;
+  background: var(--papel);
+  color: var(--tinta);
+  font: inherit;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mover-boton:hover {
+  border-color: var(--acento);
+}
+
+.mover-arriba {
+  grid-area: 1 / 2 / 2 / 3;
+}
+
+.mover-izquierda {
+  grid-area: 2 / 1 / 3 / 2;
+}
+
+.mover-posicion {
+  grid-area: 2 / 2 / 3 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tinta-suave);
+  font-size: 0.8rem;
+}
+
+.mover-derecha {
+  grid-area: 2 / 3 / 3 / 4;
+}
+
+.mover-abajo {
+  grid-area: 3 / 2 / 4 / 3;
+}
+
+.plano li.mesa {
+  display: block;
 }
 
 .mesa-inactiva {

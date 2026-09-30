@@ -9,6 +9,7 @@ import type { Empleado } from "../base.ts"
 import { type HtmlSeguro, html, htmlCrudo } from "../ui/html.ts"
 import { generarQrSvg } from "../ui/qr.ts"
 import type { DatosLocal, Mesa, Zona } from "./datos.ts"
+import { svgDeZona } from "./mapa-svg.ts"
 import { nombreDeRol } from "./roles.ts"
 
 export type Superficie = "admin" | "panel"
@@ -360,17 +361,37 @@ function formularioAlternar(mesa: Mesa): HtmlSeguro {
 </form>`
 }
 
+/** Cuatro botones grandes, uno por direccion. Sin JavaScript: cada uno manda su direccion por POST. */
+function controlesDeMovimiento(mesa: Mesa): HtmlSeguro {
+  if (mesa.posFila === null || mesa.posColumna === null) {
+    return html``
+  }
+  const posicion = `f${mesa.posFila + 1} c${mesa.posColumna + 1}`
+  return html`<form class="mover" method="post" action="/admin/mesas/${mesa.id}/mover">
+<button class="mover-boton mover-arriba" type="submit" name="direccion" value="arriba" aria-label="Mover ${mesa.etiqueta} arriba">↑</button>
+<button class="mover-boton mover-izquierda" type="submit" name="direccion" value="izquierda" aria-label="Mover ${mesa.etiqueta} a la izquierda">←</button>
+<span class="mover-posicion" aria-hidden="true">${posicion}</span>
+<button class="mover-boton mover-derecha" type="submit" name="direccion" value="derecha" aria-label="Mover ${mesa.etiqueta} a la derecha">→</button>
+<button class="mover-boton mover-abajo" type="submit" name="direccion" value="abajo" aria-label="Mover ${mesa.etiqueta} abajo">↓</button>
+</form>`
+}
+
 function filaDeMesa(mesa: Mesa, puedeGestionar: boolean): HtmlSeguro {
   const estado = mesa.activa ? "" : " · desactivada"
   const enlaceQr = puedeGestionar
     ? html`<a class="mesa-qr" href="/admin/mesas/${mesa.id}/qr">QR</a>`
     : html``
+  const alternar = puedeGestionar ? formularioAlternar(mesa) : html``
+  const controles = puedeGestionar ? controlesDeMovimiento(mesa) : html``
   return html`<li class="mesa${mesa.activa ? "" : " mesa-inactiva"}">
+<div class="mesa-cabecera">
 <span class="mesa-etiqueta">${mesa.etiqueta}</span>
 <span class="mesa-codigo">${mesa.codigo}</span>
 <span class="mesa-datos">${mesa.capacidad} plazas · ${ETIQUETA_MESA[mesa.kind] ?? mesa.kind}${estado}</span>
 ${enlaceQr}
-${puedeGestionar ? formularioAlternar(mesa) : html``}
+${alternar}
+</div>
+${controles}
 </li>`
 }
 
@@ -379,9 +400,10 @@ function listaDeMesas(mesas: readonly Mesa[], puedeGestionar: boolean): HtmlSegu
     return html`<p>Todavía no hay mesas en tu local.</p>`
   }
   return html`${agruparPorZona(mesas).map(
-    (grupo) =>
+    (grupo, indice) =>
       html`<section class="plano-grupo">
 <h3>${grupo.zona}</h3>
+${svgDeZona(grupo.zona, grupo.mesas, indice)}
 <ul class="plano">${grupo.mesas.map((mesa) => filaDeMesa(mesa, puedeGestionar))}</ul>
 </section>`,
   )}`
@@ -392,11 +414,16 @@ export function vistaMesas(
   mesas: readonly Mesa[],
   zonas: readonly Zona[],
   puedeGestionar: boolean,
-  estado: EstadoPantalla & { readonly creada?: boolean; readonly cambiada?: boolean },
+  estado: EstadoPantalla & {
+    readonly creada?: boolean
+    readonly cambiada?: boolean
+    readonly movida?: boolean
+  },
 ): HtmlSeguro {
   const creada = estado.creada === true ? "Mesa creada." : undefined
   const cambiada = estado.cambiada === true ? "Mesa actualizada." : undefined
-  const exito = estado.exito ?? creada ?? cambiada
+  const movida = estado.movida === true ? "Mesa movida." : undefined
+  const exito = estado.exito ?? creada ?? cambiada ?? movida
   const contenido = html`${cabecera("admin", empleado)}
 <main class="contenedor">
 ${avisosDeEstado({ ...estado, exito })}
