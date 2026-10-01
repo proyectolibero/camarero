@@ -423,11 +423,14 @@ describe("Panel: ortografía en español correcto", () => {
     )
 
     // El comensal: carta, cesta, pedidos, código desconocido, local sin abrir y sesión cerrada.
+    // Se guardan aparte porque el texto del comensal tiene una criba adicional: no puede dar
+    // por hecho que toda la comanda va a la cocina (LL-025, ADR-0033/0034).
+    const paginasDelComensal: string[] = []
     const conCarta = deps({ comensal: comensalFalso({ abrir: async () => lecturaDeCarta() }) })
-    paginas.push(
+    paginasDelComensal.push(
       textoVisible(await (await manejar(peticion("/t/ABCDEFGH"), ENTORNO, AHORA, conCarta)).text()),
     )
-    paginas.push(
+    paginasDelComensal.push(
       textoVisible(
         await (
           await manejar(
@@ -439,7 +442,7 @@ describe("Panel: ortografía en español correcto", () => {
         ).text(),
       ),
     )
-    paginas.push(
+    paginasDelComensal.push(
       textoVisible(
         await (
           await manejar(
@@ -460,7 +463,7 @@ describe("Panel: ortografía en español correcto", () => {
         ).text(),
       ),
     )
-    paginas.push(
+    paginasDelComensal.push(
       textoVisible(
         await (
           await manejar(
@@ -472,7 +475,7 @@ describe("Panel: ortografía en español correcto", () => {
         ).text(),
       ),
     )
-    paginas.push(
+    paginasDelComensal.push(
       textoVisible(
         await (
           await manejar(
@@ -484,12 +487,15 @@ describe("Panel: ortografía en español correcto", () => {
         ).text(),
       ),
     )
-    paginas.push(
+    paginasDelComensal.push(
       textoVisible(await (await manejar(peticion("/t/ZZZZZZZZ"), ENTORNO, AHORA, deps({}))).text()),
     )
 
-    for (const pagina of paginas) {
+    for (const pagina of [...paginas, ...paginasDelComensal]) {
       expect(faltasDeOrtografia(pagina)).toEqual([])
+    }
+    for (const pagina of paginasDelComensal) {
+      expect(afirmacionesDeCocina(pagina)).toEqual([])
     }
 
     // Los seis rótulos de rol se dibujan y pasan por la misma criba (D-043).
@@ -507,6 +513,13 @@ describe("Panel: ortografía en español correcto", () => {
   it("debe saber fallar: una palabra sin tilde se detecta como falta", () => {
     expect(faltasDeOrtografia("Esta sesion no lleva tilde")).toContain("sesion")
     expect(faltasDeOrtografia("La sesión correcta pasa la criba")).toEqual([])
+  })
+
+  it("debe saber fallar: un texto que manda la comanda a la cocina se detecta", () => {
+    expect(afirmacionesDeCocina("Enviar a cocina")).toContain("enviar a cocina")
+    expect(afirmacionesDeCocina("Tu comanda va a la cocina")).toContain("a la cocina")
+    // El aviso legítimo sí nombra la cocina, pero como un puesto entre varios: no es un fallo.
+    expect(afirmacionesDeCocina("la cocina y la barra lo preparan por separado")).toEqual([])
   })
 })
 
@@ -604,4 +617,21 @@ const PALABRAS_SIN_TILDE = [
 /** Devuelve las palabras sin tilde encontradas como palabras completas (no parte de otra). */
 function faltasDeOrtografia(texto: string): readonly string[] {
   return PALABRAS_SIN_TILDE.filter((palabra) => new RegExp(`\\b${palabra}\\b`, "i").test(texto))
+}
+
+// Frases del comensal que dan por hecho que TODA la comanda va a la cocina. Desde ADR-0033 y
+// ADR-0034 la comanda se reparte por puestos (LL-025): un texto no puede presuponer un único
+// destino llamado «cocina». Nombres de puesto concretos sí son válidos si van entre varios.
+const COCINA_COMO_UNICO_DESTINO = [
+  "enviar a cocina",
+  "enviada a cocina",
+  "va a la cocina",
+  "va a cocina",
+  "a la cocina",
+] as const
+
+/** Devuelve las frases que presuponen la cocina como único destino de la comanda. */
+function afirmacionesDeCocina(texto: string): readonly string[] {
+  const plano = texto.toLowerCase()
+  return COCINA_COMO_UNICO_DESTINO.filter((frase) => plano.includes(frase))
 }

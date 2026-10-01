@@ -199,7 +199,7 @@ ${controlesDeLinea(linea.platoId, codigo)}
 }
 
 function avisoAntesDeEnviar(): HtmlSeguro {
-  return html`<p class="aviso aviso-aviso cesta-aviso" role="alert">Tu pedido va <strong>por partes</strong>: la cocina y la barra lo preparan por separado. En cuanto pulses «Enviar» <strong>no se deshace sola</strong>: si algo no está bien, avisa a quien te atiende.</p>`
+  return html`<p class="aviso aviso-aviso cesta-aviso" role="alert">Tu pedido va <strong>por partes</strong>: la cocina y la barra lo preparan por separado. En cuanto pulses «Enviar la comanda» <strong>no se deshace sola</strong>: si algo no está bien, avisa a quien te atiende.</p>`
 }
 
 export type OpcionesDeCesta = {
@@ -235,7 +235,7 @@ ${opciones.aviso === undefined ? html`` : html`<p class="aviso aviso-aviso" role
   const enviar = opciones.puedeEnviar
     ? html`<form method="post" action="/t/${codigo}/cesta/enviar">
 <input type="hidden" name="clave" value="${opciones.clave}">
-<button class="boton boton-grande" type="submit">Enviar a cocina</button>
+<button class="boton boton-grande" type="submit">Enviar la comanda</button>
 </form>`
     : html`<div class="cesta-bloqueo">
 <p>Para enviar, el local tiene que aprobar tu mesa. Pídeselo desde aquí:</p>
