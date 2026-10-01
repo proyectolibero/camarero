@@ -1,0 +1,100 @@
+name: Verificacion temporal del local
+
+# TEMPORAL. Activa SOLO el local de prueba (localizado por el codigo de su mesa) para poder
+# comprobar el camino completo del comensal en vivo. Se borra al terminar.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    name: Activar el local de prueba
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Activar pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Preparar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Escribir el script
+        run: |
+          cat > packages/db/verificacion-temp-local.mjs <<'EOF'
+          import { readFile } from "node:fs/promises"
+          import pg from "pg"
+          const { Client } = pg
+          const log = (...a) => console.log(...a)
+
+          const CODIGO = "CJ88JYEK"
+
+          function paramsFromUrl(url, pass) {
+            const u = new URL(url)
+            return {
+              host: u.hostname,
+              port: u.port === "" ? 5432 : Number(u.port),
+              database: u.pathname.replace(/^\//, "") || "postgres",
+              user: decodeURIComponent(u.username),
+              password: pass ?? decodeURIComponent(u.password),
+            }
+          }
+          async function connect(p, ca) {
+            const c = new Client({ ...p, ssl: { rejectUnauthorized: true, ca }, connectionTimeoutMillis: 20000 })
+            await c.connect()
+            return c
+          }
+
+          const url = process.env.CAMARERO_DB_URL_ADMIN
+          const adminPass = process.env.CAMARERO_DB_PASSWORD_ADMIN
+          if (!url || !adminPass) throw new Error("Faltan secretos de base")
+
+          const ca = await readFile("packages/db/certs/prod-ca-2021.crt", "utf8")
+          const admin = paramsFromUrl(url, adminPass)
+          log(`Destino: ${admin.host}:${admin.port}`)
+
+          const a = await connect(admin, ca)
+          try {
+            const fila = await a.query(
+              `select t.id as table_id, t.label, l.id as location_id, l.name, l.status
+                 from public.tables t
+                 join public.locations l on l.id = t.location_id
+                where t.code = $1`,
+              [CODIGO],
+            )
+            if (fila.rows.length !== 1) {
+              throw new Error(`Se esperaba 1 mesa con codigo ${CODIGO}, hay ${fila.rows.length}`)
+            }
+            const { location_id, name, status } = fila.rows[0]
+            log(`Mesa ${CODIGO} (${fila.rows[0].label}) -> Local "${name}" (${location_id})`)
+            log(`ESTADO ANTES = ${status}`)
+
+            const upd = await a.query("update public.locations set status = 'active' where id = $1", [
+              location_id,
+            ])
+            log(`Filas afectadas por el UPDATE (solo status de ese local): ${upd.rowCount}`)
+
+            const despues = await a.query("select status from public.locations where id = $1", [location_id])
+            log(`ESTADO DESPUES = ${despues.rows[0].status}`)
+
+            const todas = await a.query("select name, status from public.locations order by created_at")
+            log(`Estado de TODOS los locales: ${JSON.stringify(todas.rows)}`)
+          } finally {
+            await a.end()
+          }
+          EOF
+
+      - name: Activar el local
+        run: node packages/db/verificacion-temp-local.mjs
+        env:
+          CAMARERO_DB_URL_ADMIN: ${{ secrets.CAMARERO_DB_URL_ADMIN }}
+          CAMARERO_DB_PASSWORD_ADMIN: ${{ secrets.CAMARERO_DB_PASSWORD_ADMIN }}
