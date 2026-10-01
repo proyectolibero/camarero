@@ -117,11 +117,17 @@ export function ajustarLaCesta(
   })
 }
 
-/** Datos de un plato que la carta confirma: lo unico que puede fijar nombre, precio y destino. */
+/**
+ * Datos de un plato que la carta confirma: lo unico que puede fijar nombre, precio y puesto.
+ * El puesto ya viene RESUELTO por la base (plato -> categoria -> defecto del local), con su
+ * nombre para congelarlo en la comanda y con si nace aceptado.
+ */
 export type PlatoResoluble = {
   readonly nombre: string
   readonly precioClp: number
-  readonly estacion: string | null
+  readonly puestoId: string | null
+  readonly puestoNombre: string | null
+  readonly autoAcepta: boolean
 }
 
 /**
@@ -135,7 +141,9 @@ export type LineaResuelta = {
   readonly cantidad: number
   readonly precioClp: number
   readonly totalClp: number
-  readonly estacion: string | null
+  readonly puestoId: string | null
+  readonly puestoNombre: string | null
+  readonly autoAcepta: boolean
 }
 
 export function resolverCesta(
@@ -154,21 +162,25 @@ export function resolverCesta(
       cantidad: linea.cantidad,
       precioClp: plato.precioClp,
       totalClp: plato.precioClp * linea.cantidad,
-      estacion: plato.estacion,
+      puestoId: plato.puestoId,
+      puestoNombre: plato.puestoNombre,
+      autoAcepta: plato.autoAcepta,
     })
   }
   return { lineas: resueltas, totalClp: subtotalDeLineas(resueltas.map(aImporte)) }
 }
 
 /**
- * Lo minimo que viaja a la base al enviar: identificador, cantidad y la estacion que la carta
- * fijo. El destino de la comanda se deriva de esa estacion (con los platos sin estacion a
- * cocina); el borde NUNCA manda un precio.
+ * Lo minimo que viaja a la base al enviar: identificador, cantidad y el puesto que la carta
+ * resolvio, con su nombre y si nace aceptado. El reparto se hace por ese puesto real; el borde
+ * NUNCA manda un precio.
  */
 export type LineaDeEnvio = {
   readonly platoId: string
   readonly cantidad: number
-  readonly estacion: string | null
+  readonly puestoId: string | null
+  readonly puestoNombre: string | null
+  readonly autoAcepta: boolean
 }
 
 function aImporte(linea: LineaResuelta): LineaDeImporte {

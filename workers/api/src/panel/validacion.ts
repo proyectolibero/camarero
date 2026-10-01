@@ -8,7 +8,7 @@
  * Cada funcion valida UN campo y devuelve un resultado explicito (nunca lanza para un dato
  * esperado malo). Ninguna confia en el navegador: el HTML puede mentir.
  */
-import { ALERGENOS, depurarContraCatalogo, ESTACIONES, TAGS, valoresDe } from "./carta-catalogo.ts"
+import { ALERGENOS, depurarContraCatalogo, TAGS, valoresDe } from "./carta-catalogo.ts"
 
 export type Valido<T> = { readonly ok: true; readonly valor: T }
 export type Invalido = { readonly ok: false; readonly error: string }
@@ -133,15 +133,22 @@ export function validarDescripcion(valor: string): Validacion<string | null> {
   return valido(limpio)
 }
 
-/** Estacion de preparacion: una de las del `check`, o ninguna. */
-export function validarEstacion(valor: string): Validacion<string | null> {
+/**
+ * Puesto propio de un plato: uno de los puestos del local, o vacio para heredar el de su
+ * categoria. Los puestos son datos del local (ADR-0034), asi que la lista se recibe, no se
+ * asume.
+ */
+export function validarPuesto(
+  valor: string,
+  puestos: readonly string[],
+): Validacion<string | null> {
   const limpio = valor.trim()
   if (limpio === "") {
     return valido(null)
   }
-  return esUnoDe(valoresDe(ESTACIONES), limpio)
+  return puestos.includes(limpio)
     ? valido(limpio)
-    : invalido("La estación de preparación no es válida.")
+    : invalido("Ese puesto no es válido para tu local.")
 }
 
 /** Orden de presentacion: entero no negativo y razonable. */

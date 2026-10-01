@@ -1,15 +1,12 @@
 export { type LineaDeImporte, subtotalDeLineas } from "./dinero.ts"
 export {
-  DESTINO_SIN_ESTACION,
-  DESTINOS_DE_BARRA,
-  DESTINOS_DE_COCINA,
-  destinoDeEstacion,
-  destinosDelPuesto,
-  esEstacionAutomatica,
-  esPuestoDePantalla,
-  etiquetaDeEstacion,
-  PUESTOS_DE_PANTALLA,
+  esPantallaTodos,
+  nombreDePuesto,
+  PANTALLA_TODOS,
+  type PlatoConPuesto,
+  type PuestoDelLocal,
   type PuestoDePantalla,
+  puestoDePlato,
 } from "./estaciones.ts"
 export {
   ESTADO_ANULADO,

@@ -1,10 +1,10 @@
 /**
- * Las pantallas de puesto: cocina, barra y todo (`GET /admin/pedidos[/<puesto>]`).
+ * Las pantallas de puesto (`GET /admin/pedidos[/<puesto>]`, TASK-F1-09).
  *
- * Cada dispositivo abre su puesto por RUTA (`/admin/pedidos/cocina`, `/admin/pedidos/barra`,
- * `/admin/pedidos/todo`) para poder dejarlo fijado en la tablet sin tocar nada. Sin puesto,
- * la ruta sirve cocina. Las pantallas se dibujan en el servidor y sin JavaScript, y se
- * refrescan con `<meta http-equiv="refresh">`. NINGUNA muestra precios: quien prepara no cobra.
+ * Cada pantalla es un puesto del local: `/admin/pedidos/<id>` filtra por su puesto real, y
+ * `/admin/pedidos` o `/admin/pedidos/todo` muestra TODO junto, para un local con una sola
+ * pantalla. Sin puesto en la ruta se sirve «todo». Se dibujan en el servidor y sin JavaScript,
+ * y se refrescan con `<meta http-equiv="refresh">`. NINGUNA muestra precios.
  *
  * Aceptar cierra los importes en la base; anular y marcar lista son cambios de estado que
  * respetan la maquina de `CONTRACT-estados-comanda` (nunca `cerrada`, que exige un cobro
@@ -14,21 +14,19 @@
 import {
   type EstadoDeComanda,
   esEstadoDeComanda,
-  esPuestoDePantalla,
+  esPantallaTodos,
+  PANTALLA_TODOS,
   type PuestoDePantalla,
 } from "@camarero/domain"
 import type { Empleado } from "../base.ts"
 import { responderMetodoNoPermitido, responderNoEncontrado } from "../salud.ts"
 import { renderizar } from "../ui/html.ts"
 import { responderRedireccion, respuestaHtml } from "../ui/respuesta.ts"
-import type { AlmacenPanel, MotivoDeCambioComanda } from "./datos.ts"
+import type { AlmacenPanel, MotivoDeCambioComanda, Puesto } from "./datos.ts"
 import { puedeOperarCocina } from "./permisos.ts"
 import type { Dependencias } from "./proveedor.ts"
 import { type EntornoDePanel, resolverEmpleadoDeSesion } from "./sesion-panel.ts"
 import { type EstadoPantalla, vistaCocina, vistaEntrada, vistaSinPermiso } from "./vistas.ts"
-
-/** Sin puesto en la ruta se sirve cocina: la tablet de siempre sigue funcionando. */
-const PUESTO_POR_DEFECTO: PuestoDePantalla = "cocina"
 
 /** Destinos que el KDS puede escribir: los del contrato menos `cerrada` (exige cobro, F3). */
 const DESTINOS_DE_COCINA: ReadonlySet<EstadoDeComanda> = new Set([
@@ -48,30 +46,41 @@ const MENSAJE_DE_CAMBIO: Readonly<Record<MotivoDeCambioComanda, string>> = {
 
 type CamposDeCambio = {
   readonly destino: string
-  readonly puesto: PuestoDePantalla
-}
-
-function puestoDeTexto(valor: string): PuestoDePantalla {
-  return esPuestoDePantalla(valor) ? valor : PUESTO_POR_DEFECTO
+  readonly puesto: string
 }
 
 /** Lee el cuerpo del POST una sola vez: destino y puesto vienen en el mismo formulario. */
 async function leerCamposDeCambio(peticion: Request): Promise<CamposDeCambio> {
   const tipo = peticion.headers.get("content-type") ?? ""
   if (!tipo.includes("application/x-www-form-urlencoded")) {
-    return { destino: "", puesto: PUESTO_POR_DEFECTO }
+    return { destino: "", puesto: PANTALLA_TODOS }
   }
   const datos = new URLSearchParams(await peticion.text())
   return {
     destino: (datos.get("destino") ?? "").trim(),
-    puesto: puestoDeTexto((datos.get("puesto") ?? "").trim()),
+    puesto: (datos.get("puesto") ?? "").trim(),
   }
 }
 
-async function renderCocina(
+/**
+ * Resuelve la pantalla pedida: `todo` (o nada) es la que los muestra todos; cualquier otra
+ * cosa tiene que ser el identificador de un puesto del local. Null si no lo es: la pantalla
+ * nunca inventa un puesto.
+ */
+function resolverPantalla(valor: string, puestos: readonly Puesto[]): PuestoDePantalla | null {
+  const limpio = valor.trim()
+  if (limpio === "" || esPantallaTodos(limpio)) {
+    return PANTALLA_TODOS
+  }
+  return puestos.some((puesto) => puesto.id === limpio) ? limpio : null
+}
+
+/** Dibuja la pantalla de un puesto ya resuelto. Las pantallas nunca reciben importes. */
+async function pintarCocina(
   empleado: Empleado,
   almacen: AlmacenPanel,
   puesto: PuestoDePantalla,
+  puestos: readonly Puesto[],
   estado: EstadoPantalla,
 ): Promise<Response> {
   const comandas = await almacen.listarComandas(empleado, puesto)
@@ -83,7 +92,7 @@ async function renderCocina(
     mesa: solicitud.mesa,
   }))
   return respuestaHtml(
-    renderizar(vistaCocina(empleado, comandas, puesto, estado, avisos)),
+    renderizar(vistaCocina(empleado, comandas, puesto, puestos, estado, avisos)),
     estado.estadoError ?? 200,
   )
 }
@@ -92,15 +101,26 @@ async function mostrarCocina(
   url: URL,
   empleado: Empleado,
   almacen: AlmacenPanel,
-  puesto: PuestoDePantalla,
+  pantalla: string,
 ): Promise<Response> {
+  const puestos = await almacen.listarPuestos(empleado)
+  const puesto = resolverPantalla(pantalla, puestos)
+  if (puesto === null) {
+    return responderNoEncontrado()
+  }
   const exito =
     url.searchParams.get("cambiado") === "1"
       ? "Comanda actualizada."
       : url.searchParams.get("aprobada") === "1"
         ? "Emparejamiento aprobado."
         : undefined
-  return await renderCocina(empleado, almacen, puesto, exito === undefined ? {} : { exito })
+  return await pintarCocina(
+    empleado,
+    almacen,
+    puesto,
+    puestos,
+    exito === undefined ? {} : { exito },
+  )
 }
 
 async function cambiarEstado(
@@ -109,16 +129,18 @@ async function cambiarEstado(
   comandaId: string,
   almacen: AlmacenPanel,
 ): Promise<Response> {
-  const { destino, puesto } = await leerCamposDeCambio(peticion)
+  const { destino, puesto: puestoBruto } = await leerCamposDeCambio(peticion)
+  const puestos = await almacen.listarPuestos(empleado)
+  const puesto = resolverPantalla(puestoBruto, puestos) ?? PANTALLA_TODOS
   if (!esEstadoDeComanda(destino) || !DESTINOS_DE_COCINA.has(destino)) {
-    return await renderCocina(empleado, almacen, puesto, {
-      error: "Ese estado no se puede aplicar desde cocina.",
+    return await pintarCocina(empleado, almacen, puesto, puestos, {
+      error: "Ese estado no se puede aplicar desde esta pantalla.",
       estadoError: 400,
     })
   }
   const resultado = await almacen.cambiarEstadoComanda(empleado, comandaId, destino)
   if (!resultado.ok) {
-    return await renderCocina(empleado, almacen, puesto, {
+    return await pintarCocina(empleado, almacen, puesto, puestos, {
       error: MENSAJE_DE_CAMBIO[resultado.motivo],
       estadoError: resultado.motivo === "sin_permiso" ? 403 : 409,
     })
@@ -135,12 +157,12 @@ async function manejarPantallaDePuesto(
 ): Promise<Response> {
   if (segmentos.length === 2) {
     return peticion.method === "GET"
-      ? await mostrarCocina(url, empleado, almacen, PUESTO_POR_DEFECTO)
+      ? await mostrarCocina(url, empleado, almacen, PANTALLA_TODOS)
       : responderMetodoNoPermitido("GET")
   }
   if (segmentos.length === 3) {
     const puesto = segmentos[2]
-    if (puesto === undefined || !esPuestoDePantalla(puesto)) {
+    if (puesto === undefined) {
       return responderNoEncontrado()
     }
     return peticion.method === "GET"

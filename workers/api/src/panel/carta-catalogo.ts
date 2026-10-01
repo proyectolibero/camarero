@@ -1,25 +1,17 @@
 /**
  * Vocabulario de la carta que SI esta fijado por la base, con su etiqueta en español.
  *
- * `tags` y `prep_station` los limita un `check` de `0004_carta.sql`: aqui viven sus valores
- * exactos, para que la pantalla ofrezca justo lo que la base acepta y el servidor valide con
- * las mismas listas. Los `allergens` NO tienen `check` (el contrato no los enumera): se ofrece
- * el juego estandar de catorce y se guarda el `valor`; el resto es decision del local.
+ * `tags` los limita un `check` de `0004_carta.sql`: aqui viven sus valores exactos, para que
+ * la pantalla ofrezca justo lo que la base acepta y el servidor valide con las mismas listas.
+ * El PUESTO de preparacion ya NO es un vocabulario fijo: son datos del local (ADR-0034), y se
+ * leen de `kitchen_stations`. Los `allergens` NO tienen `check` (el contrato no los enumera):
+ * se ofrece el juego estandar de catorce y se guarda el `valor`; el resto es decision del local.
  */
 
 export type Opcion = { readonly valor: string; readonly etiqueta: string }
 
 /** Vista «sin categoría»: agrupa los platos que no tienen ninguna. No es una fila de la base. */
 export const SIN_CATEGORIA = "sin-categoria"
-
-/** Estaciones del `check` de `menu_items_prep_station_valido`. */
-export const ESTACIONES: readonly Opcion[] = [
-  { valor: "frio", etiqueta: "Frío" },
-  { valor: "caliente", etiqueta: "Caliente" },
-  { valor: "bar", etiqueta: "Barra" },
-  { valor: "postre", etiqueta: "Postre" },
-  { valor: "bebidas", etiqueta: "Bebidas" },
-]
 
 /** Etiquetas del `check` de `menu_items_tags_valido`, tal cual. */
 export const TAGS: readonly Opcion[] = [

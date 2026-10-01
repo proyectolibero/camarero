@@ -1,19 +1,18 @@
 /**
- * Las pantallas de puesto: cocina, barra y todo (`GET /admin/pedidos[/<puesto>]`).
+ * Las pantallas de puesto: una por puesto del local y la que muestra todo (`/admin/pedidos`).
  *
  * Se prueba el enrutador completo con la sesion y el almacen inyectados. La cerradura de
  * aislamiento (que un empleado de otro local no ve estas comandas) es de base y se prueba en
- * `packages/db`; aqui se demuestra que cada ruta sirve su puesto, que la pantalla NO ensena
- * precios, que una comanda nueva salta a la vista, que acepta y anula por POST y que no
+ * `packages/db`; aqui se demuestra que cada ruta sirve su puesto real, que la pantalla NO
+ * ensena precios, que una comanda nueva salta a la vista, que acepta y anula por POST y que no
  * ofrece `cerrada`.
  */
 
-import { destinosDelPuesto, type PuestoDePantalla } from "@camarero/domain"
 import { beforeAll, describe, expect, it } from "vitest"
 import type { Empleado } from "../src/base.ts"
 import type { DependenciasParciales } from "../src/enrutador.ts"
 import { manejar } from "../src/enrutador.ts"
-import type { ComandaDePuesto } from "../src/panel/datos.ts"
+import type { ComandaDePuesto, Puesto } from "../src/panel/datos.ts"
 import { AHORA, almacenFalso, crearFirmante, ENTORNO, type Firmante, peticion } from "./apoyo.ts"
 
 const DUENO: Empleado = {
@@ -27,11 +26,24 @@ const DUENO: Empleado = {
 
 const COCINA: Empleado = { ...DUENO, staffId: "s2", nombre: "Cocinero", rol: "kitchen" }
 
+const PUESTOS: readonly Puesto[] = [
+  {
+    id: "pu-frio",
+    nombre: "Frío",
+    orden: 0,
+    activo: true,
+    autoAcepta: false,
+    porDefecto: false,
+  },
+  { id: "pu-barra", nombre: "Barra", orden: 1, activo: true, autoAcepta: true, porDefecto: false },
+]
+
 const COMANDAS: readonly ComandaDePuesto[] = [
   {
     id: "o1",
     mesa: "Mesa 4",
-    destino: "frio",
+    puestoId: "pu-frio",
+    destino: "Frío",
     estado: "pendiente",
     creadaHaceSegundos: 5,
     lineas: [{ nombre: "Ceviche clásico", cantidad: 2 }],
@@ -39,7 +51,8 @@ const COMANDAS: readonly ComandaDePuesto[] = [
   {
     id: "o2",
     mesa: "Barra 2",
-    destino: "bebidas",
+    puestoId: "pu-barra",
+    destino: "Barra",
     estado: "aceptada",
     creadaHaceSegundos: 30,
     lineas: [{ nombre: "Agua mineral", cantidad: 1 }],
@@ -51,12 +64,16 @@ beforeAll(async () => {
   firmante = await crearFirmante()
 })
 
-function deps(empleado: Empleado | null, almacen = almacenFalso()): DependenciasParciales {
+function deps(empleado: Empleado | null, almacen = conPuestos()): DependenciasParciales {
   return {
     fuenteDeClaves: async () => [firmante.clave],
     resolverEmpleado: async () => empleado,
     almacen,
   }
+}
+
+function conPuestos(parciales: Parameters<typeof almacenFalso>[0] = {}) {
+  return almacenFalso({ listarPuestos: async () => PUESTOS, ...parciales })
 }
 
 async function conSesion(
@@ -67,7 +84,7 @@ async function conSesion(
 }
 
 describe("Puestos: cada ruta sirve su pantalla", () => {
-  it("sin puesto en la ruta debe servir cocina", async () => {
+  it("sin puesto en la ruta debe servir todo junto", async () => {
     let puestoVisto: string | null = null
     const respuesta = await manejar(
       await conSesion("/admin/pedidos"),
@@ -75,7 +92,7 @@ describe("Puestos: cada ruta sirve su pantalla", () => {
       AHORA,
       deps(
         COCINA,
-        almacenFalso({
+        conPuestos({
           listarComandas: async (_empleado, puesto) => {
             puestoVisto = puesto
             return COMANDAS
@@ -83,20 +100,20 @@ describe("Puestos: cada ruta sirve su pantalla", () => {
         }),
       ),
     )
-    expect(puestoVisto).toBe("cocina")
-    expect(await respuesta.text()).toContain("Pedidos de cocina")
+    expect(puestoVisto).toBe("todo")
+    expect(await respuesta.text()).toContain("Todos los pedidos")
   })
 
-  it("debe servir la barra y el todo por su ruta", async () => {
+  it("debe servir un puesto del local y el todo por su ruta", async () => {
     const vistos: string[] = []
-    const almacen = almacenFalso({
+    const almacen = conPuestos({
       listarComandas: async (_empleado, puesto) => {
         vistos.push(puesto)
         return COMANDAS
       },
     })
-    const barra = await manejar(
-      await conSesion("/admin/pedidos/barra"),
+    const frio = await manejar(
+      await conSesion("/admin/pedidos/pu-frio"),
       ENTORNO,
       AHORA,
       deps(COCINA, almacen),
@@ -107,14 +124,14 @@ describe("Puestos: cada ruta sirve su pantalla", () => {
       AHORA,
       deps(COCINA, almacen),
     )
-    expect(vistos).toEqual(["barra", "todo"])
-    expect(await barra.text()).toContain("Pedidos de barra")
+    expect(vistos).toEqual(["pu-frio", "todo"])
+    expect(await frio.text()).toContain("Frío")
     expect(await todo.text()).toContain("Todos los pedidos")
   })
 
-  it("no debe servir un puesto que no existe", async () => {
+  it("no debe servir un puesto que no es del local", async () => {
     const respuesta = await manejar(
-      await conSesion("/admin/pedidos/parrilla"),
+      await conSesion("/admin/pedidos/pu-parrilla"),
       ENTORNO,
       AHORA,
       deps(COCINA),
@@ -124,25 +141,21 @@ describe("Puestos: cada ruta sirve su pantalla", () => {
 
   it("debe enlazar a las otras pantallas de puesto", async () => {
     const cuerpo = await (
-      await manejar(await conSesion("/admin/pedidos/cocina"), ENTORNO, AHORA, deps(COCINA))
+      await manejar(await conSesion("/admin/pedidos/pu-frio"), ENTORNO, AHORA, deps(COCINA))
     ).text()
-    expect(cuerpo).toContain('href="/admin/pedidos/barra"')
+    expect(cuerpo).toContain('href="/admin/pedidos/pu-barra"')
     expect(cuerpo).toContain('href="/admin/pedidos/todo"')
   })
 })
 
 describe("Puestos: la pantalla no ensena precios", () => {
-  it("la cocina no debe mostrar las bebidas, y la barra si", async () => {
+  it("la pantalla de un puesto no debe mostrar las lineas de otro", async () => {
     const filtrar = async (
       _empleado: Empleado,
-      puesto: PuestoDePantalla,
-    ): Promise<readonly ComandaDePuesto[]> => {
-      const destinos = destinosDelPuesto(puesto)
-      return destinos === null
-        ? COMANDAS
-        : COMANDAS.filter((comanda) => destinos.includes(comanda.destino))
-    }
-    const almacen = almacenFalso({ listarComandas: filtrar })
+      puesto: string,
+    ): Promise<readonly ComandaDePuesto[]> =>
+      puesto === "todo" ? COMANDAS : COMANDAS.filter((comanda) => comanda.puestoId === puesto)
+    const almacen = conPuestos({ listarComandas: filtrar })
     const cuerpoDe = async (puesto: string): Promise<string> =>
       await (
         await manejar(
@@ -152,11 +165,11 @@ describe("Puestos: la pantalla no ensena precios", () => {
           deps(COCINA, almacen),
         )
       ).text()
-    const cocina = await cuerpoDe("cocina")
-    const barra = await cuerpoDe("barra")
+    const frio = await cuerpoDe("pu-frio")
+    const barra = await cuerpoDe("pu-barra")
     const todo = await cuerpoDe("todo")
-    expect(cocina).toContain("Ceviche clásico")
-    expect(cocina).not.toContain("Agua mineral")
+    expect(frio).toContain("Ceviche clásico")
+    expect(frio).not.toContain("Agua mineral")
     expect(barra).toContain("Agua mineral")
     expect(barra).not.toContain("Ceviche clásico")
     expect(todo).toContain("Ceviche clásico")
@@ -164,13 +177,13 @@ describe("Puestos: la pantalla no ensena precios", () => {
   })
 
   it("no debe contener ningun importe en ningun puesto", async () => {
-    for (const puesto of ["cocina", "barra", "todo"]) {
+    for (const puesto of ["pu-frio", "pu-barra", "todo"]) {
       const cuerpo = await (
         await manejar(
           await conSesion(`/admin/pedidos/${puesto}`),
           ENTORNO,
           AHORA,
-          deps(COCINA, almacenFalso({ listarComandas: async () => COMANDAS })),
+          deps(COCINA, conPuestos({ listarComandas: async () => COMANDAS })),
         )
       ).text()
       expect(cuerpo).not.toContain("$")
@@ -185,7 +198,7 @@ describe("Puestos: la pantalla no ensena precios", () => {
         await conSesion("/admin/pedidos/todo"),
         ENTORNO,
         AHORA,
-        deps(COCINA, almacenFalso({ listarComandas: async () => COMANDAS })),
+        deps(COCINA, conPuestos({ listarComandas: async () => COMANDAS })),
       )
     ).text()
     expect(cuerpo).toContain("Mesa 4")
@@ -197,10 +210,10 @@ describe("Puestos: la pantalla no ensena precios", () => {
   it("debe hacer que la comanda nueva salte a la vista", async () => {
     const cuerpo = await (
       await manejar(
-        await conSesion("/admin/pedidos/cocina"),
+        await conSesion("/admin/pedidos/pu-frio"),
         ENTORNO,
         AHORA,
-        deps(COCINA, almacenFalso({ listarComandas: async () => COMANDAS })),
+        deps(COCINA, conPuestos({ listarComandas: async () => COMANDAS })),
       )
     ).text()
     expect(cuerpo).toContain("pedido-cocina-pendiente")
@@ -210,10 +223,10 @@ describe("Puestos: la pantalla no ensena precios", () => {
   it("debe refrescarse sola, declarado en la pagina", async () => {
     const cuerpo = await (
       await manejar(
-        await conSesion("/admin/pedidos/cocina"),
+        await conSesion("/admin/pedidos/pu-frio"),
         ENTORNO,
         AHORA,
-        deps(COCINA, almacenFalso({ listarComandas: async () => COMANDAS })),
+        deps(COCINA, conPuestos({ listarComandas: async () => COMANDAS })),
       )
     ).text()
     expect(cuerpo).toContain('http-equiv="refresh" content="15"')
@@ -222,10 +235,10 @@ describe("Puestos: la pantalla no ensena precios", () => {
   it("debe decir cuando no hay pedidos abiertos", async () => {
     const cuerpo = await (
       await manejar(
-        await conSesion("/admin/pedidos/cocina"),
+        await conSesion("/admin/pedidos/pu-frio"),
         ENTORNO,
         AHORA,
-        deps(COCINA, almacenFalso({ listarComandas: async () => [] })),
+        deps(COCINA, conPuestos({ listarComandas: async () => [] })),
       )
     ).text()
     expect(cuerpo).toContain("No hay pedidos abiertos")
@@ -247,13 +260,13 @@ describe("Puestos: aceptar, marcar lista y anular", () => {
     const respuesta = await manejar(
       await conSesion("/admin/pedidos/o1/estado", {
         method: "POST",
-        formulario: { destino: "aceptada", puesto: "barra" },
+        formulario: { destino: "aceptada", puesto: "pu-barra" },
       }),
       ENTORNO,
       AHORA,
       deps(
         COCINA,
-        almacenFalso({
+        conPuestos({
           cambiarEstadoComanda: async (_empleado, id, destino) => {
             visto = { id, destino }
             return { ok: true, valor: { estado: destino } }
@@ -263,7 +276,7 @@ describe("Puestos: aceptar, marcar lista y anular", () => {
     )
     expect(visto).toEqual({ id: "o1", destino: "aceptada" })
     expect(respuesta.status).toBe(303)
-    expect(respuesta.headers.get("location")).toBe("/admin/pedidos/barra?cambiado=1")
+    expect(respuesta.headers.get("location")).toBe("/admin/pedidos/pu-barra?cambiado=1")
   })
 
   it("debe anular una comanda", async () => {
@@ -271,13 +284,13 @@ describe("Puestos: aceptar, marcar lista y anular", () => {
     await manejar(
       await conSesion("/admin/pedidos/o1/estado", {
         method: "POST",
-        formulario: { destino: "anulada", puesto: "cocina" },
+        formulario: { destino: "anulada", puesto: "todo" },
       }),
       ENTORNO,
       AHORA,
       deps(
         COCINA,
-        almacenFalso({
+        conPuestos({
           cambiarEstadoComanda: async (_empleado, _id, destino) => {
             destinoVisto = destino
             return { ok: true, valor: { estado: destino } }
@@ -288,18 +301,18 @@ describe("Puestos: aceptar, marcar lista y anular", () => {
     expect(destinoVisto).toBe("anulada")
   })
 
-  it("no debe admitir un estado fuera de la cocina, como cerrar la cuenta", async () => {
+  it("no debe admitir un estado fuera de la pantalla, como cerrar la cuenta", async () => {
     let llamado = false
     const respuesta = await manejar(
       await conSesion("/admin/pedidos/o1/estado", {
         method: "POST",
-        formulario: { destino: "cerrada", puesto: "cocina" },
+        formulario: { destino: "cerrada", puesto: "todo" },
       }),
       ENTORNO,
       AHORA,
       deps(
         COCINA,
-        almacenFalso({
+        conPuestos({
           cambiarEstadoComanda: async () => {
             llamado = true
             return { ok: false, motivo: "transicion_invalida" }
@@ -309,20 +322,20 @@ describe("Puestos: aceptar, marcar lista y anular", () => {
     )
     expect(llamado).toBe(false)
     expect(respuesta.status).toBe(400)
-    expect(await respuesta.text()).toContain("no se puede aplicar desde cocina")
+    expect(await respuesta.text()).toContain("no se puede aplicar desde esta pantalla")
   })
 
   it("debe explicar una transicion no permitida", async () => {
     const respuesta = await manejar(
       await conSesion("/admin/pedidos/o2/estado", {
         method: "POST",
-        formulario: { destino: "aceptada", puesto: "cocina" },
+        formulario: { destino: "aceptada", puesto: "todo" },
       }),
       ENTORNO,
       AHORA,
       deps(
         COCINA,
-        almacenFalso({
+        conPuestos({
           cambiarEstadoComanda: async () => ({ ok: false, motivo: "transicion_invalida" }),
           listarComandas: async () => [],
         }),

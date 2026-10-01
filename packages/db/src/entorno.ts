@@ -30,6 +30,15 @@ export type EntornoDePruebas = {
   detener: () => void
 }
 
+/**
+ * Opciones del entorno de pruebas. `directorioMigraciones` solo lo usa una prueba: la que
+ * quiere levantar el esquema HASTA una migracion concreta, sembrar datos con el modelo viejo
+ * y luego aplicar la migracion nueva para comparar recuentos.
+ */
+export type OpcionesDeEntorno = {
+  readonly directorioMigraciones?: string
+}
+
 function registrarLimpiezaPorSenales(nombre: string): void {
   process.once("exit", () => {
     detenerContenedor(nombre)
@@ -44,30 +53,35 @@ function registrarLimpiezaPorSenales(nombre: string): void {
   })
 }
 
-async function prepararEsquema(parametros: ParametrosDePrueba): Promise<void> {
+async function prepararEsquema(
+  parametros: ParametrosDePrueba,
+  directorio: string | undefined,
+): Promise<void> {
   if (modoDeBase() === "local") {
     // Se crean los tres roles y el esquema publico pasa a ser del dueno, que no tiene
     // BYPASSRLS: asi el FORCE ROW LEVEL SECURITY tambien le obliga a el (LL-004).
     await prepararRoles(parametros.admin, parametros.owner, parametros.app)
-    await aplicarMigraciones(parametros.owner)
+    await aplicarMigraciones(parametros.owner, directorio)
     await concederPermisosDeAplicacion(parametros.owner, parametros.app)
     return
   }
   // Modo gestionado: el administrador ya existe (hace de postgres) y no se crea dueno del
   // esquema. Sirve para comprobar que el mismo esquema se aplica en un Postgres gestionado.
   await prepararRolDeAplicacion(parametros.admin, parametros.app)
-  await aplicarMigraciones(parametros.admin)
+  await aplicarMigraciones(parametros.admin, directorio)
   await concederPermisosDeAplicacion(parametros.admin, parametros.app)
 }
 
-export async function levantarEntornoDePruebas(): Promise<EntornoDePruebas> {
+export async function levantarEntornoDePruebas(
+  opciones: OpcionesDeEntorno = {},
+): Promise<EntornoDePruebas> {
   comprobarDemonioDocker()
   const nombre = nombreDeContenedorUnico()
   const parametros = parametrosDePrueba()
   arrancarContenedor(nombre, puertoDePrueba(), parametros.admin)
   try {
     await esperarBaseLista(parametros.admin)
-    await prepararEsquema(parametros)
+    await prepararEsquema(parametros, opciones.directorioMigraciones)
   } catch (error) {
     // Si algo falla a mitad, no se deja el contenedor vivo esperando a nadie.
     detenerContenedor(nombre)

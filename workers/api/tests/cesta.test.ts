@@ -37,7 +37,9 @@ function carta(parciales: Partial<CartaDelComensal> = {}): CartaDelComensal {
             descripcion: null,
             precioClp: 8900,
             fotoClave: null,
-            estacion: "frio",
+            puestoId: "pu-frio",
+            puestoNombre: "Frío",
+            autoAcepta: false,
           },
           {
             id: P2,
@@ -45,7 +47,9 @@ function carta(parciales: Partial<CartaDelComensal> = {}): CartaDelComensal {
             descripcion: null,
             precioClp: 5000,
             fotoClave: null,
-            estacion: "caliente",
+            puestoId: "pu-barra",
+            puestoNombre: "Barra",
+            autoAcepta: true,
           },
         ],
       },
@@ -243,12 +247,14 @@ describe("Cesta: enviar la comanda", () => {
     expect(respuesta.headers.get("location")).toBe("/t/ABCDEFGH/pedidos")
     const cookies = respuesta.headers.getSetCookie()
     expect(cookies.some((cookie) => cookie.includes("camarero_cesta=;"))).toBe(true)
-    // Las lineas que viajan a la base llevan solo identificador, cantidad y estacion de la
-    // carta: jamas un precio.
+    // Las lineas que viajan a la base llevan solo identificador, cantidad y el puesto que la
+    // carta resolvio (con su nombre y si nace aceptado): jamas un precio.
     expect(Object.keys(lineasVistas[0]?.[0] ?? {}).sort()).toEqual([
+      "autoAcepta",
       "cantidad",
-      "estacion",
       "platoId",
+      "puestoId",
+      "puestoNombre",
     ])
   })
 

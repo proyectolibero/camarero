@@ -10,7 +10,6 @@
  * `INSERT ... RETURNING` aplica tambien las politicas de SELECT, y en ese instante la sesion
  * aun no esta en el contexto. Se lee despues, ya con `app.session_id` fijado.
  */
-import { destinoDeEstacion, esEstacionAutomatica } from "@camarero/domain"
 import { Client } from "pg"
 import type { LineaDeEnvio } from "./cesta.ts"
 
@@ -20,7 +19,9 @@ export type PlatoDeCarta = {
   readonly descripcion: string | null
   readonly precioClp: number
   readonly fotoClave: string | null
-  readonly estacion: string | null
+  readonly puestoId: string | null
+  readonly puestoNombre: string | null
+  readonly autoAcepta: boolean
 }
 
 export type CategoriaDeCarta = {
@@ -121,7 +122,9 @@ type FilaPlato = {
   readonly description_i18n: Readonly<Record<string, unknown>> | null
   readonly price_clp: number
   readonly photo_r2_key: string | null
-  readonly prep_station: string | null
+  readonly prep_station_id: string | null
+  readonly prep_station_name: string | null
+  readonly auto_accept: boolean
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -311,7 +314,9 @@ function agrupar(
       descripcion: textoEs(plato.description_i18n),
       precioClp: plato.price_clp,
       fotoClave: plato.photo_r2_key,
-      estacion: plato.prep_station,
+      puestoId: plato.prep_station_id,
+      puestoNombre: plato.prep_station_name,
+      autoAcepta: plato.auto_accept,
     }
     const grupo = plato.category_id === null ? undefined : porId.get(plato.category_id)
     if (grupo === undefined) {
@@ -344,10 +349,27 @@ async function cargarCarta(
      where location_id = $1 and active and available order by sort_order, created_at, id`,
     [mesa.location_id],
   )
+  // El puesto del plato se resuelve aqui mismo, con la MISMA regla que la base: el suyo, si
+  // lo trae; el de su categoria; y el puesto por defecto del local. El comensal puede leer
+  // los puestos de su local (politica de 0021), que es lo unico que necesita.
   const platos = await cliente.query<FilaPlato>(
-    `select id, category_id, name_i18n, description_i18n, price_clp, photo_r2_key, prep_station
-     from public.menu_items
-     where location_id = $1 and active and available order by sort_order, created_at, id`,
+    `select mi.id, mi.category_id, mi.name_i18n, mi.description_i18n, mi.price_clp,
+            mi.photo_r2_key,
+            coalesce(mi.prep_station_id, mc.prep_station_id, d.id) as prep_station_id,
+            coalesce(mks.name, cks.name, d.name) as prep_station_name,
+            coalesce(mks.auto_accept, cks.auto_accept, d.auto_accept, false) as auto_accept
+       from public.menu_items mi
+       left join public.menu_categories mc on mc.id = mi.category_id
+       left join public.kitchen_stations mks on mks.id = mi.prep_station_id
+       left join public.kitchen_stations cks on cks.id = mc.prep_station_id
+       left join lateral (
+         select ks.id, ks.name, ks.auto_accept
+           from public.kitchen_stations ks
+          where ks.location_id = mi.location_id and ks.is_default
+          limit 1
+       ) d on true
+      where mi.location_id = $1 and mi.active and mi.available
+      order by mi.sort_order, mi.created_at, mi.id`,
     [mesa.location_id],
   )
   const { estado, restante } = calcularEstado(sesion, ultima.rows[0]?.state ?? null)
@@ -505,62 +527,85 @@ async function leerPedidoPorClave(
   return resultado.rows[0]?.id ?? null
 }
 
-/** Una comanda a crear: su destino y las lineas que van a el. */
+/**
+ * Una comanda a crear: el puesto real, su nombre congelado, si nace aceptada y las lineas que
+ * van a el. `clave` es el identificador estable del puesto para derivar la idempotencia.
+ */
 type GrupoDeEnvio = {
-  readonly destino: string
+  readonly clave: string
+  readonly puestoId: string | null
+  readonly puestoNombre: string | null
+  readonly autoAcepta: boolean
   readonly lineas: readonly LineaDeEnvio[]
 }
 
-/**
- * Reparte el envio por destino. Una cesta con un plato y una bebida produce dos grupos: la
- * cocina y la barra avanzan por separado (ADR-0033). Un plato sin estacion va a cocina.
- */
-function agruparPorDestino(lineas: readonly LineaDeEnvio[]): readonly GrupoDeEnvio[] {
-  const grupos = new Map<string, LineaDeEnvio[]>()
-  for (const linea of lineas) {
-    const destino = destinoDeEstacion(linea.estacion)
-    const lista = grupos.get(destino)
-    if (lista === undefined) {
-      grupos.set(destino, [linea])
-    } else {
-      lista.push(linea)
-    }
-  }
-  return [...grupos.entries()].map(([destino, lista]) => ({ destino, lineas: lista }))
+type AcumuladorDeEnvio = {
+  readonly clave: string
+  readonly puestoId: string | null
+  readonly puestoNombre: string | null
+  readonly autoAcepta: boolean
+  readonly lineas: LineaDeEnvio[]
 }
 
 /**
- * Clave de idempotencia de una comanda hermana. La clave del envio se comparte entre destinos,
- * pero `orders.idempotency_key` es unica en TODO el sistema: se deriva una clave por destino
+ * Reparte el envio por el puesto REAL del plato (plato -> categoria -> defecto del local, ya
+ * resuelto en la carta). Una cesta con una parrilla y una bebida produce dos comandas que
+ * avanzan por separado (ADR-0033). Un plato sin puesto por ningun lado va al defecto del local.
+ */
+function agruparPorDestino(lineas: readonly LineaDeEnvio[]): readonly GrupoDeEnvio[] {
+  const grupos = new Map<string, AcumuladorDeEnvio>()
+  for (const linea of lineas) {
+    const clave = linea.puestoId ?? "sin-puesto"
+    const existente = grupos.get(clave)
+    if (existente !== undefined) {
+      existente.lineas.push(linea)
+      continue
+    }
+    grupos.set(clave, {
+      clave,
+      puestoId: linea.puestoId,
+      puestoNombre: linea.puestoNombre,
+      autoAcepta: linea.autoAcepta,
+      lineas: [linea],
+    })
+  }
+  return [...grupos.values()]
+}
+
+/**
+ * Clave de idempotencia de una comanda hermana. La clave del envio se comparte entre puestos,
+ * pero `orders.idempotency_key` es unica en TODO el sistema: se deriva una clave por puesto
  * para que dos comandas hermanas de la misma mesa no choquen. Reenviar el mismo envio
  * reproduce las mismas claves y no crea comandas nuevas.
  */
-function claveDeDestino(clave: string, destino: string): string {
-  return `${clave}.${destino}`
+function claveDeDestino(clave: string, puesto: string): string {
+  return `${clave}.${puesto}`
 }
 
-/** Crea la comanda de un destino con sus lineas; si ya existe, la devuelve sin crear otra. */
+/** Crea la comanda de un puesto con sus lineas; si ya existe, la devuelve sin crear otra. */
 async function crearComandaDeDestino(
   cliente: Client,
   datos: SesionValidada,
   clave: string,
   grupo: GrupoDeEnvio,
 ): Promise<string> {
-  const claveDestino = claveDeDestino(clave, grupo.destino)
+  const claveDestino = claveDeDestino(clave, grupo.clave)
   const existente = await leerPedidoPorClave(cliente, claveDestino, datos.sesion.id)
   if (existente !== null) {
     return existente
   }
   await cliente.query(
     `insert into public.orders
-       (org_id, location_id, session_id, source, client_alias, prep_station, idempotency_key)
-     values ($1, $2, $3, 'table', $4, $5, $6)`,
+       (org_id, location_id, session_id, source, client_alias, prep_station, prep_station_id,
+        idempotency_key)
+     values ($1, $2, $3, 'table', $4, $5, $6::uuid, $7)`,
     [
       datos.orgId,
       datos.mesa.location_id,
       datos.sesion.id,
       datos.mesa.label,
-      grupo.destino,
+      grupo.puestoNombre ?? "Sin puesto",
+      grupo.puestoId,
       claveDestino,
     ],
   )
@@ -574,8 +619,8 @@ async function crearComandaDeDestino(
       [pedidoId, linea.platoId, linea.cantidad],
     )
   }
-  if (esEstacionAutomatica(grupo.destino)) {
-    // Un puesto automatico nace aceptado: el disparador de cierre calcula los importes.
+  if (grupo.autoAcepta) {
+    // Un puesto auto-aceptado nace aceptado: el disparador de cierre calcula los importes.
     await cliente.query(`update public.orders set status = 'aceptada' where id = $1`, [pedidoId])
   }
   return pedidoId
@@ -596,7 +641,7 @@ async function recuperarEnvio(
     for (const grupo of grupos) {
       const id = await leerPedidoPorClave(
         cliente,
-        claveDeDestino(clave, grupo.destino),
+        claveDeDestino(clave, grupo.clave),
         datos.sesion.id,
       )
       if (id !== null) {
@@ -712,7 +757,7 @@ async function leerPedidos(
       const lineas = porOrden.get(fila.id) ?? []
       return {
         id: fila.id,
-        destino: destinoDeEstacion(fila.prep_station),
+        destino: fila.prep_station ?? "Sin puesto",
         estado: fila.status,
         creadoHaceSegundos: fila.creada,
         lineas,

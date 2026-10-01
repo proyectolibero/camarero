@@ -150,8 +150,8 @@ async function sembrar(admin: ParametrosConexion): Promise<void> {
         ('${STAFF_A}', '${ORG1}', '${LOC_A}', 'serverA@camarero.test', 'server', 'Camarero A'),
         ('${STAFF_B}', '${ORG2}', '${LOC_B}', 'serverB@camarero.test', 'server', 'Camarero B');
 
-      insert into public.menu_items (id, location_id, name_i18n, price_clp, prep_station, active, available) values
-        ('${ITEM_A}', '${LOC_A}', '{"es":"Empanada A"}', 1500, 'caliente', true, true);
+      insert into public.menu_items (id, location_id, name_i18n, price_clp, active, available) values
+        ('${ITEM_A}', '${LOC_A}', '{"es":"Empanada A"}', 1500, true, true);
 
       insert into public.table_sessions (id, org_id, location_id, table_id, code, state, pairing_expires_at) values
         ('${SES_A}', '${ORG1}', '${LOC_A}', '${MESA_A1}', 'MESA-A-PAIR', 'pairing', now() + public.camarero_ventana_de_emparejamiento()),

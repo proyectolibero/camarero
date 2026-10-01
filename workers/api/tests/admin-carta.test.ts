@@ -21,6 +21,7 @@ import type {
   EntradaCategoria,
   EntradaPlato,
   Plato,
+  Puesto,
 } from "../src/panel/datos.ts"
 import {
   AHORA,
@@ -49,12 +50,18 @@ const DUENO: Empleado = {
 
 const CAMARERO: Empleado = { ...DUENO, staffId: "s2", nombre: "Garzón", rol: "server" }
 
+const PUESTOS: readonly Puesto[] = [
+  { id: "pu-frio", nombre: "Frío", orden: 0, activo: true, autoAcepta: false, porDefecto: false },
+  { id: "pu-barra", nombre: "Barra", orden: 1, activo: true, autoAcepta: true, porDefecto: false },
+]
+
 const CATEGORIA: Categoria = {
   id: "c1",
   nombre: "Entrantes",
   orden: 0,
   activa: true,
   disponible: true,
+  puestoId: "pu-frio",
 }
 
 const PLATO: Plato = {
@@ -66,7 +73,7 @@ const PLATO: Plato = {
   fotoClave: null,
   allergens: ["pescado"],
   tags: [],
-  estacion: "frio",
+  puestoId: "pu-frio",
   disponible: true,
   desde: null,
   hasta: null,
@@ -100,6 +107,7 @@ function espiaCarta(parciales: Partial<AlmacenPanel> = {}): Espia {
   const creadosPlatos: EntradaPlato[] = []
   const fotosFijadas: string[] = []
   const almacen = almacenFalso({
+    listarPuestos: async () => PUESTOS,
     listarCategorias: async () => [CATEGORIA],
     leerCategoria: async (_empleado, id) => (id === CATEGORIA.id ? CATEGORIA : null),
     crearCategoria: async (_empleado, datos) => {
@@ -387,7 +395,7 @@ describe("Platos: acceso y listado", () => {
 })
 
 describe("Platos: crear y editar", () => {
-  it("debe crear un plato con precio entero y estacion de barra", async () => {
+  it("debe crear un plato con precio entero y puesto de barra", async () => {
     const { almacen, creadosPlatos } = espiaCarta()
     const respuesta = await manejar(
       await conSesion("/admin/carta/plato", {
@@ -397,7 +405,7 @@ describe("Platos: crear y editar", () => {
           descripcion: "Con hielo",
           precio: "5900",
           categoria: "c1",
-          estacion: "bar",
+          puesto: "pu-barra",
           orden: "2",
           disponible: "1",
           activo: "1",
@@ -413,7 +421,7 @@ describe("Platos: crear y editar", () => {
     expect(respuesta.headers.get("location")).toBe("/admin/carta/c1?cambiada=1")
     expect(creadosPlatos).toHaveLength(1)
     expect(creadosPlatos[0]?.precioClp).toBe(5900)
-    expect(creadosPlatos[0]?.estacion).toBe("bar")
+    expect(creadosPlatos[0]?.puestoId).toBe("pu-barra")
     expect(creadosPlatos[0]?.tags).toEqual(["vegano"])
     expect(creadosPlatos[0]?.allergens).toEqual(["sulfitos"])
     expect(creadosPlatos[0]?.disponible).toBe(true)
@@ -729,7 +737,7 @@ describe("Alta con foto en un solo envio", () => {
       peticionAlta(
         "/admin/carta/plato",
         token,
-        { nombre: "Pisco sour", precio: "5900", categoria: "c1", estacion: "bar" },
+        { nombre: "Pisco sour", precio: "5900", categoria: "c1", puesto: "pu-barra" },
         { bytes: PNG_1X1, nombre: "pisco.png" },
       ),
       ENTORNO,
@@ -740,7 +748,7 @@ describe("Alta con foto en un solo envio", () => {
     expect(respuesta.headers.get("location")).toBe("/admin/carta/c1?cambiada=1")
     expect(creadosPlatos).toHaveLength(1)
     expect(creadosPlatos[0]?.nombre).toBe("Pisco sour")
-    expect(creadosPlatos[0]?.estacion).toBe("bar")
+    expect(creadosPlatos[0]?.puestoId).toBe("pu-barra")
     expect(objetos.size).toBe(1)
     expect(fotosFijadas).toHaveLength(1)
     expect(fotosFijadas[0]).toMatch(/\.png$/)
@@ -820,7 +828,7 @@ describe("Alta con foto en un solo envio", () => {
 })
 
 describe("Guardar y anadir otro", () => {
-  it("debe volver al formulario vacio con la categoria y la estacion usadas", async () => {
+  it("debe volver al formulario vacio con la categoria y el puesto usados", async () => {
     const { almacen, creadosPlatos } = espiaCarta()
     const token = await firmante.tokenPara("u1")
     const respuesta = await manejar(
@@ -828,7 +836,7 @@ describe("Guardar y anadir otro", () => {
         nombre: "Agua mineral",
         precio: "2500",
         categoria: "c1",
-        estacion: "bar",
+        puesto: "pu-barra",
         continuar: "otro",
       }),
       ENTORNO,
@@ -840,7 +848,7 @@ describe("Guardar y anadir otro", () => {
     const location = new URL(respuesta.headers.get("location") ?? "", "https://camarero.test")
     expect(location.pathname).toBe("/admin/carta/plato")
     expect(location.searchParams.get("categoria")).toBe("c1")
-    expect(location.searchParams.get("estacion")).toBe("bar")
+    expect(location.searchParams.get("puesto")).toBe("pu-barra")
     expect(location.searchParams.get("continuar")).toBe("1")
 
     const formulario = await manejar(
@@ -852,7 +860,7 @@ describe("Guardar y anadir otro", () => {
     const cuerpo = await formulario.text()
     expect(cuerpo).toContain('name="nombre" value=""')
     expect(cuerpo).toContain('value="c1" selected')
-    expect(cuerpo).toContain('value="bar" selected')
+    expect(cuerpo).toContain('value="pu-barra" selected')
     expect(cuerpo).toContain("Puedes añadir otro")
   })
 })
@@ -869,7 +877,6 @@ describe("Atajos de alta desde la carta", () => {
     const cuerpo = await respuesta.text()
     expect(cuerpo).toContain("Añadir plato o bebida")
     expect(cuerpo).toContain("Añadir bebida")
-    expect(cuerpo).toContain("estacion=bar")
     expect(cuerpo).toContain("bebida=1")
   })
 
@@ -880,6 +887,7 @@ describe("Atajos de alta desde la carta", () => {
       orden: 2,
       activa: true,
       disponible: true,
+      puestoId: "pu-barra",
     }
     const { almacen } = espiaCarta({ listarCategorias: async () => [CATEGORIA, BEBIDAS] })
     const respuesta = await manejar(
@@ -891,10 +899,10 @@ describe("Atajos de alta desde la carta", () => {
     expect(await respuesta.text()).toContain("categoria=c3")
   })
 
-  it("debe abrir el alta con la estacion en barra y avisar si no hay bebidas", async () => {
+  it("debe abrir el alta de bebida y heredar el puesto de la categoria", async () => {
     const { almacen } = espiaCarta()
     const respuesta = await manejar(
-      await conSesion("/admin/carta/plato?estacion=bar&bebida=1"),
+      await conSesion("/admin/carta/plato?bebida=1"),
       ENTORNO,
       AHORA,
       deps(almacen, DUENO),
@@ -903,7 +911,7 @@ describe("Atajos de alta desde la carta", () => {
     const cuerpo = await respuesta.text()
     expect(cuerpo).toContain('enctype="multipart/form-data"')
     expect(cuerpo).toContain('name="foto"')
-    expect(cuerpo).toContain('value="bar" selected')
+    expect(cuerpo).toContain("Heredar de la categoría")
     expect(cuerpo).toContain("categoría de bebidas")
   })
 
@@ -914,10 +922,11 @@ describe("Atajos de alta desde la carta", () => {
       orden: 2,
       activa: true,
       disponible: true,
+      puestoId: "pu-barra",
     }
     const { almacen } = espiaCarta({ listarCategorias: async () => [CATEGORIA, BEBIDAS] })
     const respuesta = await manejar(
-      await conSesion("/admin/carta/plato?estacion=bar&bebida=1&categoria=c3"),
+      await conSesion("/admin/carta/plato?bebida=1&categoria=c3"),
       ENTORNO,
       AHORA,
       deps(almacen, DUENO),

@@ -503,7 +503,8 @@ describe("cobertura del resto de tablas", () => {
   it("el server del local A ve su operativa y su carta, no la del local B", async () => {
     expect(await contar(CONTEXTO_SERVER_A, "zones")).toBe(1)
     expect(await contar(CONTEXTO_SERVER_A, "opening_hours")).toBe(1)
-    expect(await contar(CONTEXTO_SERVER_A, "kitchen_stations")).toBe(1)
+    // El local nace con seis puestos por defecto (disparador de 0021) mas el Parrilla del seed.
+    expect(await contar(CONTEXTO_SERVER_A, "kitchen_stations")).toBe(7)
     expect(await contar(CONTEXTO_SERVER_A, "table_links")).toBe(1)
     expect(await contar(CONTEXTO_SERVER_A, "menu_categories")).toBe(1)
     expect(await contar(CONTEXTO_SERVER_A, "modifier_groups")).toBe(1)
@@ -526,7 +527,8 @@ describe("cobertura del resto de tablas", () => {
     expect(await contar(CONTEXTO_COMENSAL_A, "modifier_options")).toBe(1)
     expect(await contar(CONTEXTO_COMENSAL_A, "item_modifier_groups")).toBe(1)
     expect(await contar(CONTEXTO_COMENSAL_A, "zones")).toBe(0)
-    expect(await contar(CONTEXTO_COMENSAL_A, "kitchen_stations")).toBe(0)
+    // El comensal ve los puestos de SU local (los necesita para el auto-aceptado de 0021).
+    expect(await contar(CONTEXTO_COMENSAL_A, "kitchen_stations")).toBe(7)
     expect(await contar(CONTEXTO_COMENSAL_A, "promotions")).toBe(0)
     expect(await contar(CONTEXTO_COMENSAL_A, "table_links")).toBe(0)
   })

@@ -78,7 +78,8 @@ const COMANDAS_DE_MESA: readonly ComandaDePuesto[] = [
   {
     id: "o1",
     mesa: "Barra 1",
-    destino: "frio",
+    puestoId: "pu-frio",
+    destino: "Frío",
     estado: "pendiente",
     creadaHaceSegundos: 5,
     lineas: [{ nombre: "Ceviche clásico", cantidad: 2 }],
@@ -86,7 +87,8 @@ const COMANDAS_DE_MESA: readonly ComandaDePuesto[] = [
   {
     id: "o2",
     mesa: "Barra 1",
-    destino: "bebidas",
+    puestoId: "pu-barra",
+    destino: "Barra",
     estado: "servida",
     creadaHaceSegundos: 600,
     lineas: [{ nombre: "Agua mineral", cantidad: 1 }],
@@ -375,10 +377,10 @@ describe("Sala: el detalle de una mesa y sus comandas", () => {
 describe("Aprobacion en las pantallas de puesto", () => {
   const PENDIENTES = [{ id: "pr-1", mesa: "Sala 2", pedidaHaceSegundos: 8, restanteSegundos: 592 }]
 
-  it("debe avisar en cocina con el numero y un camino directo para aprobar", async () => {
+  it("debe avisar en la pantalla de trabajo con el numero y un camino directo para aprobar", async () => {
     const cuerpo = await (
       await manejar(
-        await conSesion("/admin/pedidos/cocina"),
+        await conSesion("/admin/pedidos"),
         ENTORNO,
         AHORA,
         deps(CAMARERO, almacenFalso({ listarParejasPendientes: async () => PENDIENTES })),
@@ -386,13 +388,13 @@ describe("Aprobacion en las pantallas de puesto", () => {
     ).text()
     expect(cuerpo).toContain("esperando aprobación (1)")
     expect(cuerpo).toContain('action="/admin/parejas/pr-1/aprobar"')
-    expect(cuerpo).toContain('name="volver" value="/admin/pedidos/cocina"')
+    expect(cuerpo).toContain('name="volver" value="/admin/pedidos/todo"')
   })
 
   it("no debe avisar si no hay emparejamientos pendientes", async () => {
     const cuerpo = await (
       await manejar(
-        await conSesion("/admin/pedidos/barra"),
+        await conSesion("/admin/pedidos/todo"),
         ENTORNO,
         AHORA,
         deps(CAMARERO, almacenFalso()),

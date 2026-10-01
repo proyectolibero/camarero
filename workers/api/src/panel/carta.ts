@@ -20,7 +20,7 @@ import {
   type TipoDeImagen,
   tipoDeImagen,
 } from "./cartas.ts"
-import type { Categoria, EntradaPlato, MotivoDeFallo, Plato } from "./datos.ts"
+import type { Categoria, EntradaPlato, MotivoDeFallo, Plato, Puesto } from "./datos.ts"
 import { puedeGestionarCarta } from "./permisos.ts"
 import type { Dependencias } from "./proveedor.ts"
 import { type EntornoDePanel, resolverEmpleadoDeSesion } from "./sesion-panel.ts"
@@ -29,11 +29,11 @@ import {
   type Validacion,
   validarAllergenos,
   validarDescripcion,
-  validarEstacion,
   validarHora,
   validarNombre,
   validarOrden,
   validarPrecio,
+  validarPuesto,
   validarTags,
   validarVentana,
   valido,
@@ -106,7 +106,8 @@ async function renderCarta(
   estado: EstadoPantalla & { readonly creada?: boolean },
 ): Promise<Response> {
   const categorias = await almacen.listarCategorias(empleado)
-  const vista = vistaCarta(empleado, categorias, puedeGestionarCarta(empleado), estado)
+  const puestos = await almacen.listarPuestos(empleado)
+  const vista = vistaCarta(empleado, categorias, puestos, puedeGestionarCarta(empleado), estado)
   return respuestaHtml(renderizar(vista), estado.estadoError ?? 200)
 }
 
@@ -186,6 +187,37 @@ async function responderCambioCategoria(
   })
 }
 
+/** Fija el puesto por defecto de una categoría. Todas sus fichas lo heredan (ADR-0034). */
+async function cambiarPuestoCategoria(
+  peticion: Request,
+  empleado: Empleado,
+  categoriaId: string,
+  almacen: Dependencias["almacen"],
+): Promise<Response> {
+  if (!puedeGestionarCarta(empleado)) {
+    return respuestaHtml(renderizar(vistaSinPermiso(empleado, "cambiar la carta")), 403)
+  }
+  const bruto = primer(await leerCampos(peticion), "puesto")
+  const puestoId = bruto === "" ? null : bruto
+  if (puestoId !== null) {
+    const puestos = await almacen.listarPuestos(empleado)
+    if (!puestos.some((puesto) => puesto.id === puestoId)) {
+      return await renderCarta(empleado, almacen, {
+        error: "Ese puesto no es de tu local.",
+        estadoError: 400,
+      })
+    }
+  }
+  const resultado = await almacen.fijarPuestoCategoria(empleado, categoriaId, puestoId)
+  if (!resultado.ok) {
+    return await renderCarta(empleado, almacen, {
+      error: mensajeDeFallo(resultado, "cambiar el puesto de la categoría"),
+      estadoError: resultado.motivo === "sin_permiso" ? 403 : 404,
+    })
+  }
+  return responderRedireccion(`/admin/carta/${categoriaId}?cambiada=1`)
+}
+
 async function mostrarCategoria(
   url: URL,
   empleado: Empleado,
@@ -194,7 +226,14 @@ async function mostrarCategoria(
 ): Promise<Response> {
   const sinCategoria = categoriaId === SIN_CATEGORIA
   const categoria = sinCategoria
-    ? { id: SIN_CATEGORIA, nombre: "Sin categoría", orden: 0, activa: true, disponible: true }
+    ? {
+        id: SIN_CATEGORIA,
+        nombre: "Sin categoría",
+        orden: 0,
+        activa: true,
+        disponible: true,
+        puestoId: null,
+      }
     : await almacen.leerCategoria(empleado, categoriaId)
   if (categoria === null) {
     const aviso = vistaAviso(
@@ -205,9 +244,17 @@ async function mostrarCategoria(
     return respuestaHtml(renderizar(aviso), 404)
   }
   const platos = await almacen.listarPlatos(empleado, sinCategoria ? null : categoriaId)
+  const puestos = await almacen.listarPuestos(empleado)
   const cambiada = url.searchParams.get("cambiada") === "1"
   const estado: EstadoPantalla = cambiada ? { exito: "Carta actualizada." } : {}
-  const vista = vistaCategoria(empleado, categoria, platos, puedeGestionarCarta(empleado), estado)
+  const vista = vistaCategoria(
+    empleado,
+    categoria,
+    platos,
+    puestos,
+    puedeGestionarCarta(empleado),
+    estado,
+  )
   return respuestaHtml(renderizar(vista), 200)
 }
 
@@ -215,7 +262,11 @@ async function mostrarCategoria(
 // Platos y bebidas
 // ---------------------------------------------------------------------------
 
-function validarPlato(campos: Campos, categorias: readonly Categoria[]): Validacion<EntradaPlato> {
+function validarPlato(
+  campos: Campos,
+  categorias: readonly Categoria[],
+  puestos: readonly Puesto[],
+): Validacion<EntradaPlato> {
   const nombre = validarNombre("nombre", primer(campos, "nombre"))
   if (!nombre.ok) {
     return nombre
@@ -234,9 +285,12 @@ function validarPlato(campos: Campos, categorias: readonly Categoria[]): Validac
   if (categoriaId !== null && !categorias.some((categoria) => categoria.id === categoriaId)) {
     return invalido("Esa categoría no existe en tu local.")
   }
-  const estacion = validarEstacion(primer(campos, "estacion"))
-  if (!estacion.ok) {
-    return estacion
+  const puesto = validarPuesto(
+    primer(campos, "puesto"),
+    puestos.map((p) => p.id),
+  )
+  if (!puesto.ok) {
+    return puesto
   }
   const desde = validarHora("inicio", primer(campos, "desde"))
   if (!desde.ok) {
@@ -269,7 +323,7 @@ function validarPlato(campos: Campos, categorias: readonly Categoria[]): Validac
     precioClp: precio.valor,
     allergens: allergens.valor,
     tags: tags.valor,
-    estacion: estacion.valor,
+    puestoId: puesto.valor,
     disponible: marcado(campos, "disponible"),
     desde: desde.valor,
     hasta: hasta.valor,
@@ -283,11 +337,12 @@ async function renderPlato(
   plato: Plato | null,
   almacen: Dependencias["almacen"],
   estado: EstadoPantalla,
-  iniciales: InicialesPlato = { categoria: null, estacion: null, bebida: false },
+  iniciales: InicialesPlato = { categoria: null, puestoId: null, bebida: false },
   borrador: BorradorPlato | null = null,
 ): Promise<Response> {
   const categorias = await almacen.listarCategorias(empleado)
-  const vista = vistaPlato(empleado, plato, categorias, iniciales, estado, borrador)
+  const puestos = await almacen.listarPuestos(empleado)
+  const vista = vistaPlato(empleado, plato, categorias, puestos, iniciales, estado, borrador)
   return respuestaHtml(renderizar(vista), estado.estadoError ?? 200)
 }
 
@@ -310,7 +365,8 @@ async function crearPlato(
   const iniciales = inicialesDeCampos(formulario.campos)
   const borrador = borradorDeCampos(formulario.campos)
   const categorias = await almacen.listarCategorias(empleado)
-  const validado = validarPlato(formulario.campos, categorias)
+  const puestos = await almacen.listarPuestos(empleado)
+  const validado = validarPlato(formulario.campos, categorias, puestos)
   if (!validado.ok) {
     return await renderPlato(
       empleado,
@@ -365,20 +421,20 @@ async function crearPlato(
   }
   if (primer(formulario.campos, "continuar") === "otro") {
     return responderRedireccion(
-      urlDeSeguir(validado.valor.categoriaId, validado.valor.estacion, iniciales.bebida),
+      urlDeSeguir(validado.valor.categoriaId, validado.valor.puestoId, iniciales.bebida),
     )
   }
   return responderRedireccion(urlDeCategoria(validado.valor.categoriaId))
 }
 
-/** Conserva categoría y estación al encadenar altas: teclear ochenta bebidas seguidas. */
-function urlDeSeguir(categoriaId: string | null, estacion: string | null, bebida: boolean): string {
+/** Conserva categoría y puesto al encadenar altas: teclear ochenta bebidas seguidas. */
+function urlDeSeguir(categoriaId: string | null, puestoId: string | null, bebida: boolean): string {
   const parametros = new URLSearchParams()
   if (categoriaId !== null) {
     parametros.set("categoria", categoriaId)
   }
-  if (estacion !== null) {
-    parametros.set("estacion", estacion)
+  if (puestoId !== null) {
+    parametros.set("puesto", puestoId)
   }
   if (bebida) {
     parametros.set("bebida", "1")
@@ -410,7 +466,8 @@ async function guardarPlato(
     )
   }
   const categorias = await almacen.listarCategorias(empleado)
-  const validado = validarPlato(await leerCampos(peticion), categorias)
+  const puestos = await almacen.listarPuestos(empleado)
+  const validado = validarPlato(await leerCampos(peticion), categorias, puestos)
   if (!validado.ok) {
     return await renderPlato(empleado, actual, almacen, {
       error: validado.error,
@@ -452,7 +509,7 @@ async function duplicarPlato(
     precioClp: original.precioClp,
     allergens: original.allergens,
     tags: original.tags,
-    estacion: original.estacion,
+    puestoId: original.puestoId,
     disponible: original.disponible,
     desde: original.desde,
     hasta: original.hasta,
@@ -565,7 +622,7 @@ function borradorDeCampos(campos: Campos): BorradorPlato {
     descripcion: primer(campos, "descripcion"),
     precio: primer(campos, "precio"),
     categoria: primer(campos, "categoria"),
-    estacion: primer(campos, "estacion"),
+    puesto: primer(campos, "puesto"),
     disponible: marcado(campos, "disponible"),
     activo: marcado(campos, "activo"),
     desde: primer(campos, "desde"),
@@ -578,10 +635,10 @@ function borradorDeCampos(campos: Campos): BorradorPlato {
 
 function inicialesDeCampos(campos: Campos): InicialesPlato {
   const categoriaBruta = primer(campos, "categoria")
-  const estacion = validarEstacion(primer(campos, "estacion"))
+  const puesto = primer(campos, "puesto")
   return {
     categoria: categoriaBruta === "" || categoriaBruta === SIN_CATEGORIA ? null : categoriaBruta,
-    estacion: estacion.ok ? estacion.valor : null,
+    puestoId: puesto === "" ? null : puesto,
     bebida: marcado(campos, "bebida"),
   }
 }
@@ -817,6 +874,7 @@ type RutaCarta =
   | { readonly tipo: "mover_categoria"; readonly categoriaId: string }
   | { readonly tipo: "renombrar_categoria"; readonly categoriaId: string }
   | { readonly tipo: "alternar_categoria"; readonly categoriaId: string }
+  | { readonly tipo: "puesto_categoria"; readonly categoriaId: string }
   | { readonly tipo: "nuevo_plato" }
   | { readonly tipo: "editar_plato"; readonly platoId: string }
   | { readonly tipo: "duplicar_plato"; readonly platoId: string }
@@ -871,6 +929,9 @@ function reconocer(segmentos: readonly string[]): RutaCarta | null {
     if (tercero === "alternar") {
       return { tipo: "alternar_categoria", categoriaId: segundo }
     }
+    if (tercero === "puesto") {
+      return { tipo: "puesto_categoria", categoriaId: segundo }
+    }
     return null
   }
   if (resto.length === 1 && primero !== undefined) {
@@ -903,6 +964,10 @@ async function despachar(
       return peticion.method === "GET"
         ? await mostrarCategoria(url, empleado, ruta.categoriaId, almacen)
         : responderMetodoNoPermitido("GET")
+    case "puesto_categoria":
+      return peticion.method === "POST"
+        ? await cambiarPuestoCategoria(peticion, empleado, ruta.categoriaId, almacen)
+        : responderMetodoNoPermitido("POST")
     case "mover_categoria":
     case "renombrar_categoria":
     case "alternar_categoria": {
@@ -967,10 +1032,11 @@ async function mostrarFormularioPlato(
   }
   if (platoId === null) {
     const categorias = await almacen.listarCategorias(empleado)
+    const puestos = await almacen.listarPuestos(empleado)
     const iniciales = inicialesDeAlta(url)
     const continuar = url.searchParams.get("continuar") === "1"
     const estado: EstadoPantalla = continuar ? { exito: "Guardado. Puedes añadir otro." } : {}
-    const vista = vistaPlato(empleado, null, categorias, iniciales, estado)
+    const vista = vistaPlato(empleado, null, categorias, puestos, iniciales, estado)
     return respuestaHtml(renderizar(vista), 200)
   }
   const plato = await almacen.leerPlato(empleado, platoId)
@@ -981,12 +1047,14 @@ async function mostrarFormularioPlato(
     )
   }
   const categorias = await almacen.listarCategorias(empleado)
+  const puestos = await almacen.listarPuestos(empleado)
   const guardado = url.searchParams.get("guardado") === "1"
   const vista = vistaPlato(
     empleado,
     plato,
     categorias,
-    { categoria: null, estacion: null, bebida: false },
+    puestos,
+    { categoria: null, puestoId: null, bebida: false },
     {
       exito: guardado ? "Guardado." : undefined,
     },
@@ -994,13 +1062,13 @@ async function mostrarFormularioPlato(
   return respuestaHtml(renderizar(vista), 200)
 }
 
-/** Preselecciones del alta que llegan por la direccion: categoría, estación y atajo de bebidas. */
+/** Preselecciones del alta que llegan por la direccion: categoría, puesto y atajo de bebidas. */
 function inicialesDeAlta(url: URL): InicialesPlato {
   const categoria = url.searchParams.get("categoria")
-  const estacion = validarEstacion(url.searchParams.get("estacion") ?? "")
+  const puesto = url.searchParams.get("puesto") ?? ""
   return {
     categoria: categoria === null || categoria === SIN_CATEGORIA ? null : categoria,
-    estacion: estacion.ok ? estacion.valor : null,
+    puestoId: puesto === "" ? null : puesto,
     bebida: url.searchParams.get("bebida") === "1",
   }
 }

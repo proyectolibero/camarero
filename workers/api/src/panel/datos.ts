@@ -9,9 +9,9 @@
  * como `Resultado`, nunca como excepcion. Un fallo inesperado (la base caida) si sube.
  */
 import {
-  destinosDelPuesto,
   type EstadoDeComanda,
   esEstadoDeComanda,
+  esPantallaTodos,
   type PuestoDePantalla,
   transicionPermitida,
 } from "@camarero/domain"
@@ -77,6 +77,25 @@ export type NuevaMesa = {
   readonly kind: string
 }
 
+/**
+ * Un puesto del local, tal como lo nombra el dueno (ADR-0034). Uno de ellos es el puesto por
+ * defecto: el destino de un plato al que no le llega puesto por ningun lado.
+ */
+export type Puesto = {
+  readonly id: string
+  readonly nombre: string
+  readonly orden: number
+  readonly activo: boolean
+  readonly autoAcepta: boolean
+  readonly porDefecto: boolean
+}
+
+/** Lo que el formulario manda para crear un puesto. Nace con orden al final y activo. */
+export type NuevaPuesto = {
+  readonly nombre: string
+  readonly autoAcepta: boolean
+}
+
 /** Categoria de la carta. `name_i18n` se lee y se escribe solo en español por ahora. */
 export type Categoria = {
   readonly id: string
@@ -84,13 +103,14 @@ export type Categoria = {
   readonly orden: number
   readonly activa: boolean
   readonly disponible: boolean
+  readonly puestoId: string | null
 }
 
 export type EntradaCategoria = {
   readonly nombre: string
 }
 
-/** Plato o bebida. La bebida es un plato con `estacion` de barra (D-048). */
+/** Plato o bebida. Su puesto propio; nulo significa heredar el de su categoria (D-048). */
 export type Plato = {
   readonly id: string
   readonly categoriaId: string | null
@@ -100,7 +120,7 @@ export type Plato = {
   readonly fotoClave: string | null
   readonly allergens: readonly string[]
   readonly tags: readonly string[]
-  readonly estacion: string | null
+  readonly puestoId: string | null
   readonly disponible: boolean
   readonly desde: string | null
   readonly hasta: string | null
@@ -154,10 +174,14 @@ export type LineaDeComanda = {
   readonly cantidad: number
 }
 
-/** Una comanda en la pantalla de un puesto: su mesa, su destino, su estado y su antiguedad. */
+/**
+ * Una comanda en la pantalla de un puesto: su mesa, el NOMBRE del puesto congelado al enviar,
+ * su estado y su antiguedad. El identificador del puesto viaja aparte para poder filtrar.
+ */
 export type ComandaDePuesto = {
   readonly id: string
   readonly mesa: string
+  readonly puestoId: string | null
   readonly destino: string
   readonly estado: EstadoDeComanda
   readonly creadaHaceSegundos: number
@@ -205,6 +229,20 @@ export type AlmacenPanel = {
     direccion: Direccion,
   ) => Promise<ResultadoMovimiento>
   readonly acomodarMesasSinPosicion: (empleado: Empleado) => Promise<void>
+  readonly listarPuestos: (empleado: Empleado) => Promise<readonly Puesto[]>
+  readonly crearPuesto: (empleado: Empleado, datos: NuevaPuesto) => Promise<Resultado<Puesto>>
+  readonly renombrarPuesto: (
+    empleado: Empleado,
+    puestoId: string,
+    nombre: string,
+  ) => Promise<Resultado>
+  readonly moverPuesto: (
+    empleado: Empleado,
+    puestoId: string,
+    direccion: DireccionOrden,
+  ) => Promise<Resultado>
+  readonly alternarPuesto: (empleado: Empleado, puestoId: string) => Promise<Resultado>
+  readonly alternarAutoAcepta: (empleado: Empleado, puestoId: string) => Promise<Resultado>
   readonly listarCategorias: (empleado: Empleado) => Promise<readonly Categoria[]>
   readonly leerCategoria: (empleado: Empleado, categoriaId: string) => Promise<Categoria | null>
   readonly crearCategoria: (
@@ -221,6 +259,11 @@ export type AlmacenPanel = {
     empleado: Empleado,
     categoriaId: string,
     direccion: DireccionOrden,
+  ) => Promise<Resultado>
+  readonly fijarPuestoCategoria: (
+    empleado: Empleado,
+    categoriaId: string,
+    puestoId: string | null,
   ) => Promise<Resultado>
   readonly listarPlatos: (
     empleado: Empleado,
@@ -304,12 +347,22 @@ type FilaMesa = {
   readonly pos_columna: number | null
 }
 
+type FilaPuesto = {
+  readonly id: string
+  readonly name: string
+  readonly sort_order: number
+  readonly active: boolean
+  readonly auto_accept: boolean
+  readonly is_default: boolean
+}
+
 type FilaCategoria = {
   readonly id: string
   readonly name_i18n: Readonly<Record<string, unknown>> | null
   readonly sort_order: number
   readonly active: boolean
   readonly available: boolean
+  readonly prep_station_id: string | null
 }
 
 type FilaPlato = {
@@ -322,7 +375,7 @@ type FilaPlato = {
   readonly photo_r2_key: string | null
   readonly allergens: string[]
   readonly tags: string[]
-  readonly prep_station: string | null
+  readonly prep_station_id: string | null
   readonly available: boolean
   readonly available_from: string | null
   readonly available_until: string | null
@@ -332,10 +385,12 @@ type FilaPlato = {
 
 const COLUMNAS_LOCAL = "id, org_id, slug, name, timezone, currency, status, service_mode"
 
-const COLUMNAS_CATEGORIA = "id, name_i18n, sort_order, active, available"
+const COLUMNAS_CATEGORIA = "id, name_i18n, sort_order, active, available, prep_station_id"
 
 const COLUMNAS_PLATO =
-  "id, location_id, category_id, name_i18n, description_i18n, price_clp, photo_r2_key, allergens, tags, prep_station, available, available_from, available_until, sort_order, active"
+  "id, location_id, category_id, name_i18n, description_i18n, price_clp, photo_r2_key, allergens, tags, prep_station_id, available, available_from, available_until, sort_order, active"
+
+const COLUMNAS_PUESTO = "id, name, sort_order, active, auto_accept, is_default"
 
 const COLUMNAS_MESA =
   "t.id, t.location_id, t.code, t.label, t.capacity, t.kind, t.active, t.zone_id, t.pos_fila, t.pos_columna, z.name as zone_name"
@@ -397,6 +452,17 @@ function horaCorta(valor: string | null): string | null {
   return valor === null ? null : valor.slice(0, 5)
 }
 
+function aPuesto(fila: FilaPuesto): Puesto {
+  return {
+    id: fila.id,
+    nombre: fila.name,
+    orden: fila.sort_order,
+    activo: fila.active,
+    autoAcepta: fila.auto_accept,
+    porDefecto: fila.is_default,
+  }
+}
+
 function aCategoria(fila: FilaCategoria): Categoria {
   return {
     id: fila.id,
@@ -404,6 +470,7 @@ function aCategoria(fila: FilaCategoria): Categoria {
     orden: fila.sort_order,
     activa: fila.active,
     disponible: fila.available,
+    puestoId: fila.prep_station_id,
   }
 }
 
@@ -417,7 +484,7 @@ function aPlato(fila: FilaPlato): Plato {
     fotoClave: fila.photo_r2_key,
     allergens: fila.allergens,
     tags: fila.tags,
-    estacion: fila.prep_station,
+    puestoId: fila.prep_station_id,
     disponible: fila.available,
     desde: horaCorta(fila.available_from),
     hasta: horaCorta(fila.available_until),
@@ -730,6 +797,133 @@ const INTENTOS_CODIGO = 5
 // La carta: categorias, platos y bebidas
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Los puestos del local: los nombra el dueno (ADR-0034)
+// ---------------------------------------------------------------------------
+
+async function listarFilaPuestos(cliente: Client, localId: string): Promise<FilaPuesto[]> {
+  const resultado = await cliente.query<FilaPuesto>(
+    `select ${COLUMNAS_PUESTO} from public.kitchen_stations
+      where location_id = $1
+      order by sort_order, created_at, id`,
+    [localId],
+  )
+  return resultado.rows
+}
+
+async function leerFilaPuesto(cliente: Client, id: string): Promise<FilaPuesto | null> {
+  const resultado = await cliente.query<FilaPuesto>(
+    `select ${COLUMNAS_PUESTO} from public.kitchen_stations where id = $1`,
+    [id],
+  )
+  return resultado.rows[0] ?? null
+}
+
+/**
+ * Crea un puesto al final de la lista, activo y sin ser el del local: el puesto por defecto
+ * lo fija la migracion y cambiar cual lo es exigiria una operacion aparte. El nombre es unico
+ * por local: un choque se explica como conflicto, nunca como un error de sintaxis.
+ */
+async function escribirPuesto(
+  cliente: Client,
+  localId: string,
+  datos: NuevaPuesto,
+): Promise<Resultado<Puesto>> {
+  try {
+    const resultado = await cliente.query<FilaPuesto>(
+      `insert into public.kitchen_stations
+         (location_id, name, kind, sort_order, active, auto_accept, is_default)
+       values ($1, $2, 'personalizado',
+         coalesce((select max(sort_order) + 1 from public.kitchen_stations where location_id = $1), 0),
+         true, $3, false)
+       returning ${COLUMNAS_PUESTO}`,
+      [localId, datos.nombre, datos.autoAcepta],
+    )
+    const fila = resultado.rows[0]
+    if (fila === undefined) {
+      throw new Error("La inserción de puesto no devolvió fila")
+    }
+    return { ok: true, valor: aPuesto(fila) }
+  } catch (error) {
+    const motivo = motivoDeErrorDeEscritura(error)
+    if (motivo === null) {
+      throw error
+    }
+    return { ok: false, motivo }
+  }
+}
+
+async function renombrarFilaPuesto(
+  cliente: Client,
+  id: string,
+  nombre: string,
+): Promise<Resultado> {
+  try {
+    const resultado = await cliente.query(
+      `update public.kitchen_stations set name = $2 where id = $1 returning id`,
+      [id, nombre],
+    )
+    if (resultado.rowCount === 1) {
+      return { ok: true, valor: undefined }
+    }
+    const visible = await leerFilaPuesto(cliente, id)
+    return { ok: false, motivo: visible === null ? "no_existe" : "sin_permiso" }
+  } catch (error) {
+    const motivo = motivoDeErrorDeEscritura(error)
+    if (motivo === null) {
+      throw error
+    }
+    return { ok: false, motivo }
+  }
+}
+
+async function moverFilaPuesto(
+  cliente: Client,
+  localId: string,
+  id: string,
+  direccion: DireccionOrden,
+): Promise<Resultado> {
+  const filas = await listarFilaPuestos(cliente, localId)
+  const nuevo = moverEnLista(
+    filas.map((fila) => fila.id),
+    id,
+    direccion,
+  )
+  if (nuevo === null) {
+    return { ok: false, motivo: "no_existe" }
+  }
+  await reordenar(cliente, "kitchen_stations", nuevo)
+  return { ok: true, valor: undefined }
+}
+
+async function alternarFilaPuesto(cliente: Client, id: string): Promise<Resultado> {
+  const resultado = await cliente.query(
+    `update public.kitchen_stations set active = not active where id = $1 returning id`,
+    [id],
+  )
+  if (resultado.rowCount === 1) {
+    return { ok: true, valor: undefined }
+  }
+  const visible = await leerFilaPuesto(cliente, id)
+  return { ok: false, motivo: visible === null ? "no_existe" : "sin_permiso" }
+}
+
+async function alternarAutoFilaPuesto(cliente: Client, id: string): Promise<Resultado> {
+  const resultado = await cliente.query(
+    `update public.kitchen_stations set auto_accept = not auto_accept where id = $1 returning id`,
+    [id],
+  )
+  if (resultado.rowCount === 1) {
+    return { ok: true, valor: undefined }
+  }
+  const visible = await leerFilaPuesto(cliente, id)
+  return { ok: false, motivo: visible === null ? "no_existe" : "sin_permiso" }
+}
+
+// ---------------------------------------------------------------------------
+// La carta: categorias, platos y bebidas
+// ---------------------------------------------------------------------------
+
 async function listarFilaCategorias(cliente: Client, localId: string): Promise<FilaCategoria[]> {
   const resultado = await cliente.query<FilaCategoria>(
     `select ${COLUMNAS_CATEGORIA} from public.menu_categories
@@ -755,9 +949,10 @@ async function escribirCategoria(
 ): Promise<Resultado<Categoria>> {
   try {
     const resultado = await cliente.query<FilaCategoria>(
-      `insert into public.menu_categories (location_id, name_i18n, sort_order)
+      `insert into public.menu_categories (location_id, name_i18n, sort_order, prep_station_id)
        values ($1, $2::jsonb,
-         coalesce((select max(sort_order) + 1 from public.menu_categories where location_id = $1), 0))
+         coalesce((select max(sort_order) + 1 from public.menu_categories where location_id = $1), 0),
+         (select id from public.kitchen_stations where location_id = $1 and is_default))
        returning ${COLUMNAS_CATEGORIA}`,
       [localId, JSON.stringify({ es: datos.nombre })],
     )
@@ -784,6 +979,31 @@ async function renombrarFilaCategoria(
     const resultado = await cliente.query(
       `update public.menu_categories set name_i18n = $2::jsonb where id = $1 returning id`,
       [id, JSON.stringify({ es: nombre })],
+    )
+    if (resultado.rowCount === 1) {
+      return { ok: true, valor: undefined }
+    }
+    const visible = await leerFilaCategoria(cliente, id)
+    return { ok: false, motivo: visible === null ? "no_existe" : "sin_permiso" }
+  } catch (error) {
+    const motivo = motivoDeErrorDeEscritura(error)
+    if (motivo === null) {
+      throw error
+    }
+    return { ok: false, motivo }
+  }
+}
+
+/** Fija el puesto por defecto de una categoria. `null` solo si el local no tuviera defecto. */
+async function fijarPuestoDeCategoria(
+  cliente: Client,
+  id: string,
+  puestoId: string | null,
+): Promise<Resultado> {
+  try {
+    const resultado = await cliente.query(
+      `update public.menu_categories set prep_station_id = $2 where id = $1 returning id`,
+      [id, puestoId],
     )
     if (resultado.rowCount === 1) {
       return { ok: true, valor: undefined }
@@ -839,7 +1059,7 @@ function moverEnLista(
 /** Reescribe el orden de una tabla con indices limpios 0..n-1. Evita empates y huecos. */
 async function reordenar(
   cliente: Client,
-  tabla: "menu_categories" | "menu_items",
+  tabla: "menu_categories" | "menu_items" | "kitchen_stations",
   ids: readonly string[],
 ): Promise<void> {
   for (const [indice, id] of ids.entries()) {
@@ -896,7 +1116,7 @@ function parametrosDePlato(datos: EntradaPlato): readonly unknown[] {
     datos.precioClp,
     datos.allergens,
     datos.tags,
-    datos.estacion,
+    datos.puestoId,
     datos.disponible,
     datos.desde,
     datos.hasta,
@@ -914,7 +1134,7 @@ async function escribirPlato(
     const resultado = await cliente.query<FilaPlato>(
       `insert into public.menu_items
         (location_id, category_id, name_i18n, description_i18n, price_clp, allergens, tags,
-         prep_station, available, available_from, available_until, sort_order, active)
+         prep_station_id, available, available_from, available_until, sort_order, active)
        values ($1, $2, $3::jsonb, $4::jsonb, $5, $6::text[], $7::text[], $8, $9, $10::time,
                $11::time, $12, $13)
        returning ${COLUMNAS_PLATO}`,
@@ -943,7 +1163,7 @@ async function actualizarFilaPlato(
     const resultado = await cliente.query(
       `update public.menu_items set
          category_id = $2, name_i18n = $3::jsonb, description_i18n = $4::jsonb, price_clp = $5,
-         allergens = $6::text[], tags = $7::text[], prep_station = $8, available = $9,
+         allergens = $6::text[], tags = $7::text[], prep_station_id = $8, available = $9,
          available_from = $10::time, available_until = $11::time, sort_order = $12, active = $13
        where id = $1
        returning id`,
@@ -1102,6 +1322,7 @@ type FilaComanda = {
   readonly id: string
   readonly status: string
   readonly prep_station: string
+  readonly prep_station_id: string | null
   readonly creada: number
   readonly mesa: string
 }
@@ -1151,6 +1372,7 @@ function aComandaDePuesto(
   return {
     id: fila.id,
     mesa: fila.mesa,
+    puestoId: fila.prep_station_id,
     destino: fila.prep_station,
     estado: aEstado(fila.status),
     creadaHaceSegundos: fila.creada,
@@ -1158,7 +1380,7 @@ function aComandaDePuesto(
   }
 }
 
-const COLUMNAS_COMANDA = `o.id, o.status, o.prep_station,
+const COLUMNAS_COMANDA = `o.id, o.status, o.prep_station, o.prep_station_id,
   extract(epoch from (now() - o.created_at))::int as creada,
   coalesce(t.label, s.code, 'Mesa') as mesa`
 
@@ -1171,16 +1393,17 @@ async function listarFilaComandas(
   cliente: Client,
   puesto: PuestoDePantalla,
 ): Promise<readonly ComandaDePuesto[]> {
-  const destinos = destinosDelPuesto(puesto)
+  // `todo` no filtra; cualquier otra pantalla es el identificador de un puesto del local.
+  const puestoId = esPantallaTodos(puesto) ? null : puesto
   const comandas = await cliente.query<FilaComanda>(
     `select ${COLUMNAS_COMANDA}
        from public.orders o
        left join public.table_sessions s on s.id = o.session_id
        left join public.tables t on t.id = s.table_id
       where o.status <> 'cerrada'
-        and ($1::text[] is null or o.prep_station = any($1::text[]))
+        and ($1::uuid is null or o.prep_station_id = $1::uuid)
       order by o.created_at, o.id`,
-    [destinos],
+    [puestoId],
   )
   const lineas = await lineasDeComandas(
     cliente,
@@ -1392,6 +1615,31 @@ export function almacenDeBase(cadena: string): AlmacenPanel {
           await acomodarSinPosicion(cliente, id)
         }
       }),
+    listarPuestos: (empleado): Promise<readonly Puesto[]> =>
+      enTransaccion(cadena, empleado, async (cliente) => {
+        const id = await resolverLocalId(cliente, empleado)
+        return id === null ? [] : (await listarFilaPuestos(cliente, id)).map(aPuesto)
+      }),
+    crearPuesto: (empleado, datos): Promise<Resultado<Puesto>> =>
+      enTransaccion(cadena, empleado, async (cliente) => {
+        const id = await resolverLocalId(cliente, empleado)
+        return id === null
+          ? { ok: false, motivo: "no_existe" }
+          : await escribirPuesto(cliente, id, datos)
+      }),
+    renombrarPuesto: (empleado, puestoId, nombre): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, (cliente) => renombrarFilaPuesto(cliente, puestoId, nombre)),
+    moverPuesto: (empleado, puestoId, direccion): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, async (cliente) => {
+        const id = await resolverLocalId(cliente, empleado)
+        return id === null
+          ? { ok: false, motivo: "no_existe" }
+          : await moverFilaPuesto(cliente, id, puestoId, direccion)
+      }),
+    alternarPuesto: (empleado, puestoId): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, (cliente) => alternarFilaPuesto(cliente, puestoId)),
+    alternarAutoAcepta: (empleado, puestoId): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, (cliente) => alternarAutoFilaPuesto(cliente, puestoId)),
     listarCategorias: (empleado): Promise<readonly Categoria[]> =>
       enTransaccion(cadena, empleado, async (cliente) => {
         const id = await resolverLocalId(cliente, empleado)
@@ -1422,6 +1670,10 @@ export function almacenDeBase(cadena: string): AlmacenPanel {
           ? { ok: false, motivo: "no_existe" }
           : await moverFilaCategoria(cliente, id, categoriaId, direccion)
       }),
+    fijarPuestoCategoria: (empleado, categoriaId, puestoId): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, (cliente) =>
+        fijarPuestoDeCategoria(cliente, categoriaId, puestoId),
+      ),
     listarPlatos: (empleado, categoriaId): Promise<readonly Plato[]> =>
       enTransaccion(cadena, empleado, async (cliente) => {
         const id = await resolverLocalId(cliente, empleado)
@@ -1495,6 +1747,12 @@ export function almacenNoConfigurado(): AlmacenPanel {
     leerMesa: async (): Promise<Mesa | null> => null,
     moverMesa: async (): Promise<ResultadoMovimiento> => ({ ok: false, motivo: "no_existe" }),
     acomodarMesasSinPosicion: async (): Promise<void> => undefined,
+    listarPuestos: async (): Promise<readonly Puesto[]> => [],
+    crearPuesto: async (): Promise<Resultado<Puesto>> => ({ ok: false, motivo: "no_existe" }),
+    renombrarPuesto: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
+    moverPuesto: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
+    alternarPuesto: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
+    alternarAutoAcepta: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
     listarCategorias: async (): Promise<readonly Categoria[]> => [],
     leerCategoria: async (): Promise<Categoria | null> => null,
     crearCategoria: async (): Promise<Resultado<Categoria>> => ({
@@ -1504,6 +1762,7 @@ export function almacenNoConfigurado(): AlmacenPanel {
     alternarCategoria: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
     renombrarCategoria: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
     moverCategoria: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
+    fijarPuestoCategoria: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
     listarPlatos: async (): Promise<readonly Plato[]> => [],
     leerPlato: async (): Promise<Plato | null> => null,
     crearPlato: async (): Promise<Resultado<Plato>> => ({ ok: false, motivo: "no_existe" }),

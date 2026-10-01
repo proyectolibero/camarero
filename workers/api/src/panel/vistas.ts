@@ -7,22 +7,16 @@
  */
 import {
   type EstadoDeComanda,
+  esPantallaTodos,
   estadosPermitidos,
-  etiquetaDeEstacion,
+  PANTALLA_TODOS,
   type PuestoDePantalla,
   transicionPermitida,
 } from "@camarero/domain"
 import type { Empleado } from "../base.ts"
 import { type HtmlSeguro, html, htmlCrudo } from "../ui/html.ts"
 import { generarQrSvg } from "../ui/qr.ts"
-import {
-  ALERGENOS,
-  ESTACIONES,
-  etiquetaDe,
-  type Opcion,
-  SIN_CATEGORIA,
-  TAGS,
-} from "./carta-catalogo.ts"
+import { ALERGENOS, type Opcion, SIN_CATEGORIA, TAGS } from "./carta-catalogo.ts"
 import type {
   Categoria,
   ComandaDePuesto,
@@ -30,6 +24,7 @@ import type {
   EstadoDeMesa,
   Mesa,
   Plato,
+  Puesto,
   ResumenDeMesa,
   SolicitudPendiente,
   Zona,
@@ -62,6 +57,10 @@ const PANTALLAS: Readonly<Record<Superficie, readonly PantallaDelCuadro[]>> = {
       href: "/admin/sala",
     },
     { titulo: "Solicitudes de emparejamiento", href: "/admin/parejas" },
+    {
+      titulo: "Puestos de preparación (parrilla, plancha, postre, barra)",
+      href: "/admin/puestos",
+    },
     { titulo: "Alta del local (asistente)" },
     { titulo: "Carta (categorías, platos, precios, fotos, orden)", href: "/admin/carta" },
     { titulo: "Personal (invitar, roles, PIN)" },
@@ -689,7 +688,7 @@ function comandaDeSala(comanda: ComandaDePuesto, mesaId: string): HtmlSeguro {
   const anulable = transicionPermitida(comanda.estado, "anulada")
   return html`<li class="pedido-cocina pedido-cocina-${comanda.estado}">
 <div class="pedido-cabecera">
-<span class="pedido-destino">${etiquetaDeEstacion(comanda.destino)}</span>
+<span class="pedido-destino">${comanda.destino}</span>
 <span class="pedido-estado pedido-estado-${comanda.estado}">${ETIQUETA_ESTADO_COMANDA[comanda.estado]}</span>
 <span class="pedido-tiempo">hace ${etiquetaDeTiempo(comanda.creadaHaceSegundos)}</span>
 </div>
@@ -814,7 +813,7 @@ export type BorradorPlato = {
   readonly descripcion: string
   readonly precio: string
   readonly categoria: string
-  readonly estacion: string
+  readonly puesto: string
   readonly disponible: boolean
   readonly activo: boolean
   readonly desde: string
@@ -824,10 +823,10 @@ export type BorradorPlato = {
   readonly allergens: readonly string[]
 }
 
-/** Con qué se abre el formulario de alta: categoría y estación ya elegidas. */
+/** Con qué se abre el formulario de alta: categoría y puesto ya elegidos. */
 export type InicialesPlato = {
   readonly categoria: string | null
-  readonly estacion: string | null
+  readonly puestoId: string | null
   readonly bebida: boolean
 }
 
@@ -851,7 +850,8 @@ function categoriaDeBebidas(categorias: readonly Categoria[]): Categoria | null 
 function urlAtajoBebida(categorias: readonly Categoria[]): string {
   const bebidas = categoriaDeBebidas(categorias)
   const sufijo = bebidas === null ? "" : `&categoria=${encodeURIComponent(bebidas.id)}`
-  return `/admin/carta/plato?estacion=bar&bebida=1${sufijo}`
+  // El puesto lo hereda de la categoria de bebidas: el dueno lo pone una vez (ADR-0034).
+  return `/admin/carta/plato?bebida=1${sufijo}`
 }
 
 const FORMATO_CLP = new Intl.NumberFormat("es-CL", { maximumFractionDigits: 0 })
@@ -910,7 +910,19 @@ function formularioNuevaCategoria(): HtmlSeguro {
 </form>`
 }
 
-function filaDeCategoria(categoria: Categoria, puedeGestionar: boolean): HtmlSeguro {
+/** Nombre del puesto de una lista; si ya no esta, dice que no tiene. Nunca inventa. */
+function nombreDePuesto(puestos: readonly Puesto[], puestoId: string | null): string {
+  if (puestoId === null) {
+    return "Sin puesto"
+  }
+  return puestos.find((puesto) => puesto.id === puestoId)?.nombre ?? "Puesto retirado"
+}
+
+function filaDeCategoria(
+  categoria: Categoria,
+  puestos: readonly Puesto[],
+  puedeGestionar: boolean,
+): HtmlSeguro {
   const estado = categoria.activa ? "Activa" : "Oculta"
   const gestion = puedeGestionar
     ? html`${botonesDeOrden(`/admin/carta/categoria/${categoria.id}/mover`)}
@@ -921,22 +933,28 @@ ${formularioAlternarCategoria(categoria)}`
 <div class="carta-linea">
 <a class="carta-nombre" href="/admin/carta/${categoria.id}">${categoria.nombre}</a>
 <span class="carta-estado">${estado}</span>
+<span class="carta-estado">${nombreDePuesto(puestos, categoria.puestoId)}</span>
 <span class="crece"></span>
 ${gestion}
 </div>
 </li>`
 }
 
-function listaDeCategorias(categorias: readonly Categoria[], puedeGestionar: boolean): HtmlSeguro {
+function listaDeCategorias(
+  categorias: readonly Categoria[],
+  puestos: readonly Puesto[],
+  puedeGestionar: boolean,
+): HtmlSeguro {
   if (categorias.length === 0) {
     return html`<p>Todavía no hay categorías. Crea la primera arriba.</p>`
   }
-  return html`<ul class="carta-lista">${categorias.map((categoria) => filaDeCategoria(categoria, puedeGestionar))}</ul>`
+  return html`<ul class="carta-lista">${categorias.map((categoria) => filaDeCategoria(categoria, puestos, puedeGestionar))}</ul>`
 }
 
 export function vistaCarta(
   empleado: Empleado,
   categorias: readonly Categoria[],
+  puestos: readonly Puesto[],
   puedeGestionar: boolean,
   estado: EstadoPantalla & { readonly creada?: boolean },
 ): HtmlSeguro {
@@ -958,7 +976,8 @@ ${puedeGestionar ? formularioNuevaCategoria() : html`<p>Puedes consultar la cart
 </section>
 <section class="tarjeta">
 <h2>Categorías</h2>
-${listaDeCategorias(categorias, puedeGestionar)}
+<p>Cada categoría trae un puesto de preparación. Todas sus fichas lo heredan; un plato puede anularlo. Así una carta de cien bebidas se reparte poniendo el puesto una sola vez.</p>
+${listaDeCategorias(categorias, puestos, puedeGestionar)}
 <p><a href="/admin/carta/sin-categoria">Ver los platos sin categoría</a></p>
 </section>
 ${enlaceVolverAlPanel()}
@@ -988,8 +1007,17 @@ function formularioAlternarPlato(plato: Plato): HtmlSeguro {
 </form>`
 }
 
-function filaDePlato(plato: Plato, puedeGestionar: boolean): HtmlSeguro {
-  const detalles = plato.estacion === null ? "" : ` · ${etiquetaDe(ESTACIONES, plato.estacion)}`
+function filaDePlato(
+  plato: Plato,
+  puestos: readonly Puesto[],
+  heredado: string | null,
+  puedeGestionar: boolean,
+): HtmlSeguro {
+  // Se ensena de donde le llega el puesto: el suyo o el heredado de la categoria.
+  const detalles =
+    plato.puestoId === null
+      ? ` · hereda ${nombreDePuesto(puestos, heredado)}`
+      : ` · ${nombreDePuesto(puestos, plato.puestoId)}`
   const gestion = puedeGestionar
     ? html`<div class="plato-gestion">
 <a class="boton-mini" href="/admin/carta/plato/${plato.id}">Editar</a>
@@ -1018,20 +1046,45 @@ ${gestion}
 </li>`
 }
 
-function listaDePlatos(platos: readonly Plato[], puedeGestionar: boolean): HtmlSeguro {
+function listaDePlatos(
+  platos: readonly Plato[],
+  puestos: readonly Puesto[],
+  heredado: string | null,
+  puedeGestionar: boolean,
+): HtmlSeguro {
   if (platos.length === 0) {
     return html`<p>Todavía no hay platos ni bebidas en esta categoría.</p>`
   }
-  return html`<ul class="carta-lista">${platos.map((plato) => filaDePlato(plato, puedeGestionar))}</ul>`
+  return html`<ul class="carta-lista">${platos.map((plato) => filaDePlato(plato, puestos, heredado, puedeGestionar))}</ul>`
+}
+
+/** Formulario que fija el puesto por defecto de la categoría: se pone una vez y se hereda. */
+function formularioPuestoDeCategoria(categoria: Categoria, puestos: readonly Puesto[]): HtmlSeguro {
+  return html`<form class="puesto-categoria" method="post" action="/admin/carta/categoria/${categoria.id}/puesto">
+<label class="campo"><span>Puesto por defecto de la categoría</span>
+<select name="puesto">
+<option value=""${categoria.puestoId === null ? htmlCrudo(" selected") : html``}>Sin puesto (usa el del local)</option>
+${puestos.map(
+  (puesto) =>
+    html`<option value="${puesto.id}"${puesto.id === categoria.puestoId ? htmlCrudo(" selected") : html``}>${puesto.nombre}${puesto.autoAcepta ? " (nace aceptado)" : ""}</option>`,
+)}
+</select></label>
+<button class="boton" type="submit">Guardar puesto</button>
+</form>`
 }
 
 export function vistaCategoria(
   empleado: Empleado,
   categoria: Categoria,
   platos: readonly Plato[],
+  puestos: readonly Puesto[],
   puedeGestionar: boolean,
   estado: EstadoPantalla,
 ): HtmlSeguro {
+  const avisoPuesto =
+    puedeGestionar && puestos.length === 0
+      ? html`<p class="aviso aviso-aviso" role="status">Todavía no tienes puestos. <a href="/admin/puestos">Crea el primero</a> para repartir la carta.</p>`
+      : html``
   const contenido = html`${cabecera("admin", empleado)}
 <main class="contenedor">
 ${avisosDeEstado(estado)}
@@ -1046,22 +1099,21 @@ ${
 </p>
 </section>
 <section class="tarjeta">
+<h2>Puesto de la categoría</h2>
+${avisoPuesto}
+${
+  puedeGestionar
+    ? formularioPuestoDeCategoria(categoria, puestos)
+    : html`<p>Puesto por defecto: ${nombreDePuesto(puestos, categoria.puestoId)}.</p>`
+}
+<p class="ayuda">Las fichas sin puesto propio usan este. Un plato puede anularlo en su ficha.</p>
+</section>
+<section class="tarjeta">
 <h2>Platos y bebidas</h2>
-${listaDePlatos(platos, puedeGestionar)}
+${listaDePlatos(platos, puestos, categoria.puestoId, puedeGestionar)}
 </section>
 </main>`
   return pagina(categoria.nombre, contenido)
-}
-
-function campoSeleccion(
-  etiqueta: string,
-  nombre: string,
-  actual: string | null,
-  opciones: readonly Opcion[],
-  vacio: string,
-): HtmlSeguro {
-  return html`<label class="campo"><span>${etiqueta}</span>
-<select name="${nombre}">${opcionesDeCatalogo(opciones, actual, vacio)}</select></label>`
 }
 
 function campoCategoria(categorias: readonly Categoria[], actual: string | null): HtmlSeguro {
@@ -1077,8 +1129,25 @@ function categoriaDeBorrador(valor: string): string | null {
   return valor === "" || valor === SIN_CATEGORIA ? null : valor
 }
 
-function estacionDeBorrador(valor: string): string | null {
-  return valor === "" ? null : valor
+/** Campo del formulario que deja anular el puesto de la categoría; vacío significa heredar. */
+function campoPuesto(
+  puestos: readonly Puesto[],
+  actual: string | null,
+  heredado: string | null,
+): HtmlSeguro {
+  const etiquetaHeredar =
+    heredado === null
+      ? "Heredar de la categoría (sin puesto, usa el del local)"
+      : `Heredar de la categoría (${heredado})`
+  return html`<label class="campo"><span>Puesto de preparación</span>
+<select name="puesto">
+<option value=""${actual === null ? htmlCrudo(" selected") : html``}>${etiquetaHeredar}</option>
+${puestos.map(
+  (puesto) =>
+    html`<option value="${puesto.id}"${puesto.id === actual ? htmlCrudo(" selected") : html``}>${puesto.nombre}${puesto.autoAcepta ? " (nace aceptado)" : ""}${puesto.activo ? "" : " (desactivado)"}</option>`,
+)}
+</select>
+<span class="ayuda">El plato hereda el puesto de su categoría si no le pones uno propio. Un plato sin puesto por ningún lado va al puesto por defecto del local.</span></label>`
 }
 
 /** El campo de foto del alta: opcional, y se valida antes de crear nada (mensaje en el formulario). */
@@ -1099,6 +1168,7 @@ function formularioPlato(
   plato: Plato | null,
   borrador: BorradorPlato | null,
   categorias: readonly Categoria[],
+  puestos: readonly Puesto[],
   iniciales: InicialesPlato,
 ): HtmlSeguro {
   const esNuevo = plato === null
@@ -1109,10 +1179,16 @@ function formularioPlato(
     borrador !== null
       ? categoriaDeBorrador(borrador.categoria)
       : (plato?.categoriaId ?? iniciales.categoria)
-  const estacion =
+  const puesto =
     borrador !== null
-      ? estacionDeBorrador(borrador.estacion)
-      : (plato?.estacion ?? iniciales.estacion)
+      ? borrador.puesto === ""
+        ? null
+        : borrador.puesto
+      : (plato?.puestoId ?? iniciales.puestoId)
+  const puestoDeLaCategoria =
+    categoria === null
+      ? null
+      : (categorias.find((ficha) => ficha.id === categoria)?.puestoId ?? null)
   const disponible = borrador?.disponible ?? plato?.disponible ?? true
   const activo = borrador?.activo ?? plato?.activo ?? true
   const desde = borrador?.desde ?? plato?.desde ?? ""
@@ -1138,7 +1214,7 @@ ${ocultoBebida}
 <span class="ayuda">Número entero de pesos, sin decimales ni puntos. Por ejemplo: 4500.</span></label>
 ${avisoBebidas}
 ${campoCategoria(categorias, categoria)}
-${campoSeleccion("Estación de preparación", "estacion", estacion, ESTACIONES, "Sin estación")}
+${campoPuesto(puestos, puesto, nombreDePuesto(puestos, puestoDeLaCategoria))}
 <fieldset class="grupo">
 <legend>Disponibilidad</legend>
 <label class="casilla"><input type="checkbox" name="disponible" value="1"${disponible ? htmlCrudo(" checked") : html``}><span>Disponible ahora</span></label>
@@ -1198,6 +1274,7 @@ export function vistaPlato(
   empleado: Empleado,
   plato: Plato | null,
   categorias: readonly Categoria[],
+  puestos: readonly Puesto[],
   iniciales: InicialesPlato,
   estado: EstadoPantalla,
   borrador: BorradorPlato | null = null,
@@ -1212,12 +1289,92 @@ export function vistaPlato(
 ${avisosDeEstado(estado)}
 <section class="tarjeta">
 <h1>${titulo}</h1>
-${formularioPlato(plato, borrador, categorias, iniciales)}
+${formularioPlato(plato, borrador, categorias, puestos, iniciales)}
 </section>
 ${plato === null ? html`` : seccionFoto(plato)}
 <p><a class="boton boton-secundario" href="${destinoDeVuelta}">${rotuloDeVuelta}</a></p>
 </main>`
   return pagina(titulo, contenido)
+}
+
+// ---------------------------------------------------------------------------
+// Los puestos del local: los nombra el dueno (ADR-0034)
+// ---------------------------------------------------------------------------
+
+function formularioRenombrarPuesto(puesto: Puesto): HtmlSeguro {
+  return html`<form class="renombrar" method="post" action="/admin/puestos/${puesto.id}/renombrar">
+<input type="text" name="nombre" value="${puesto.nombre}" maxlength="120" required aria-label="Nuevo nombre del puesto">
+<button class="boton-mini" type="submit">Renombrar</button>
+</form>`
+}
+
+function filaDePuesto(puesto: Puesto, puedeGestionar: boolean): HtmlSeguro {
+  const gestion = puedeGestionar
+    ? html`${botonesDeOrden(`/admin/puestos/${puesto.id}/mover`)}
+${formularioRenombrarPuesto(puesto)}
+<form method="post" action="/admin/puestos/${puesto.id}/auto">
+<button class="boton-mini" type="submit">${puesto.autoAcepta ? "Pedir aprobación" : "Nacer aceptado"}</button>
+</form>
+${
+  puesto.porDefecto
+    ? html`<span class="ayuda">Es el puesto por defecto: no se puede desactivar.</span>`
+    : html`<form method="post" action="/admin/puestos/${puesto.id}/alternar">
+<button class="boton-mini" type="submit">${puesto.activo ? "Desactivar" : "Activar"}</button>
+</form>`
+}`
+    : html``
+  return html`<li class="carta-categoria${puesto.activo ? "" : " carta-oculta"}">
+<div class="carta-linea">
+<span class="carta-nombre">${puesto.nombre}</span>
+${
+  puesto.porDefecto
+    ? html`<span class="insignia insignia-ok">Por defecto</span>`
+    : html`<span class="carta-estado">${puesto.activo ? "Activo" : "Desactivado"}</span>`
+}
+<span class="carta-estado">${puesto.autoAcepta ? "Nace aceptado" : "Espera aprobación"}</span>
+<span class="crece"></span>
+${gestion}
+</div>
+</li>`
+}
+
+function formularioNuevoPuesto(): HtmlSeguro {
+  return html`<form method="post" action="/admin/puestos">
+<label class="campo"><span>Nombre del puesto</span>
+<input type="text" name="nombre" maxlength="120" placeholder="Parrilla" required></label>
+<label class="casilla"><input type="checkbox" name="auto_acepta" value="1"><span>Nace aceptado, sin aprobación humana</span></label>
+<span class="ayuda">Marca esta casilla para una barra o unas bebidas: la comanda entra aceptada. Los puestos de cocina la dejan sin marcar y esperan aprobación.</span>
+<button class="boton" type="submit">Crear puesto</button>
+</form>`
+}
+
+export function vistaPuestos(
+  empleado: Empleado,
+  puestos: readonly Puesto[],
+  puedeGestionar: boolean,
+  estado: EstadoPantalla & { readonly creado?: boolean },
+): HtmlSeguro {
+  const exito = estado.creado === true ? "Puesto creado." : estado.exito
+  const lista =
+    puestos.length === 0
+      ? html`<p>Todavía no hay puestos. Crea el primero arriba.</p>`
+      : html`<ul class="carta-lista">${puestos.map((puesto) => filaDePuesto(puesto, puedeGestionar))}</ul>`
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${avisosDeEstado({ ...estado, exito })}
+<section class="tarjeta">
+<h1>Puestos de preparación</h1>
+<p>Los puestos los nombras tú, como habla tu gente. Cada pantalla de trabajo muestra uno, y el reparto de la carta va del puesto de la categoría al del plato.</p>
+${puedeGestionar ? formularioNuevoPuesto() : html`<p>Puedes consultarlos, pero solo el dueño o el encargado pueden cambiarlos.</p>`}
+</section>
+<section class="tarjeta">
+<h2>Puestos del local</h2>
+${lista}
+</section>
+<p><a class="boton boton-secundario" href="/admin/pedidos">Ver las pantallas de trabajo</a></p>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina("Puestos", contenido)
 }
 
 // ---------------------------------------------------------------------------
@@ -1314,29 +1471,32 @@ const DESTINOS_DE_ACCION: readonly EstadoDeComanda[] = [
   "anulada",
 ]
 
-const PUESTOS: readonly { readonly puesto: PuestoDePantalla; readonly etiqueta: string }[] = [
-  { puesto: "cocina", etiqueta: "Cocina" },
-  { puesto: "barra", etiqueta: "Barra" },
-  { puesto: "todo", etiqueta: "Todo" },
-]
-
-const TITULO_DE_PUESTO: Readonly<Record<PuestoDePantalla, string>> = {
-  cocina: "Pedidos de cocina",
-  barra: "Pedidos de barra",
-  todo: "Todos los pedidos",
+function nombreDePantalla(puesto: PuestoDePantalla, puestos: readonly Puesto[]): string {
+  if (esPantallaTodos(puesto)) {
+    return "Todos los pedidos"
+  }
+  return puestos.find((ficha) => ficha.id === puesto)?.nombre ?? "Pedidos"
 }
 
-const AYUDA_DE_PUESTO: Readonly<Record<PuestoDePantalla, string>> = {
-  cocina: "Solo lo que se prepara en cocina: frío, caliente, postre y lo que no tiene estación.",
-  barra: "Solo lo que se prepara en la barra: bar y bebidas. Las bebidas nacen aceptadas.",
-  todo: "Todos los puestos juntos, para un local con una sola pantalla.",
+function ayudaDePantalla(puesto: PuestoDePantalla, puestos: readonly Puesto[]): string {
+  if (esPantallaTodos(puesto)) {
+    return "Todos los puestos juntos, para un local con una sola pantalla."
+  }
+  return `Solo lo que se prepara en ${nombreDePantalla(puesto, puestos)}.`
 }
 
-function navegacionDePuestos(actual: PuestoDePantalla): HtmlSeguro {
-  return html`<nav class="puestos">${PUESTOS.map((opcion) =>
-    opcion.puesto === actual
-      ? html`<span class="puesto-actual" aria-current="page">${opcion.etiqueta}</span>`
-      : html`<a class="puesto-enlace" href="/admin/pedidos/${opcion.puesto}">${opcion.etiqueta}</a>`,
+/** Navegación entre la pantalla de cada puesto del local y la que los muestra todos juntos. */
+function navegacionDePuestos(actual: PuestoDePantalla, puestos: readonly Puesto[]): HtmlSeguro {
+  const opciones = [
+    { id: PANTALLA_TODOS, nombre: "Todo" },
+    ...puestos
+      .filter((puesto) => puesto.activo)
+      .map((puesto) => ({ id: puesto.id, nombre: puesto.nombre })),
+  ]
+  return html`<nav class="puestos">${opciones.map((opcion) =>
+    opcion.id === actual
+      ? html`<span class="puesto-actual" aria-current="page">${opcion.nombre}</span>`
+      : html`<a class="puesto-enlace" href="/admin/pedidos/${opcion.id}">${opcion.nombre}</a>`,
   )}</nav>`
 }
 
@@ -1366,7 +1526,7 @@ function comandaDePuesto(comanda: ComandaDePuesto, puesto: PuestoDePantalla): Ht
   return html`<li class="pedido-cocina pedido-cocina-${comanda.estado}${nueva ? " pedido-cocina-nueva" : ""}">
 <div class="pedido-cabecera">
 <span class="pedido-mesa">${comanda.mesa}</span>
-<span class="pedido-destino">${etiquetaDeEstacion(comanda.destino)}</span>
+<span class="pedido-destino">${comanda.destino}</span>
 <span class="pedido-estado pedido-estado-${comanda.estado}">${ETIQUETA_ESTADO_COMANDA[comanda.estado]}</span>
 <span class="pedido-tiempo">hace ${etiquetaDeTiempo(comanda.creadaHaceSegundos)}</span>
 </div>
@@ -1382,9 +1542,11 @@ export function vistaCocina(
   empleado: Empleado,
   comandas: readonly ComandaDePuesto[],
   puesto: PuestoDePantalla,
+  puestos: readonly Puesto[],
   estado: EstadoPantalla,
   solicitudes: readonly EmparejamientoPendiente[] = [],
 ): HtmlSeguro {
+  const titulo = nombreDePantalla(puesto, puestos)
   const lista =
     comandas.length === 0
       ? html`<p>No hay pedidos abiertos ahora mismo.</p>`
@@ -1394,12 +1556,12 @@ export function vistaCocina(
 ${avisosDeEstado(estado)}
 ${avisoDeEmparejamientos(solicitudes, `/admin/pedidos/${puesto}`)}
 <section class="tarjeta">
-<h1>${TITULO_DE_PUESTO[puesto]}</h1>
-${navegacionDePuestos(puesto)}
-<p>${AYUDA_DE_PUESTO[puesto]} Esta pantalla se actualiza sola cada 15 segundos y las comandas nuevas aparecen marcadas.</p>
+<h1>${titulo}</h1>
+${navegacionDePuestos(puesto, puestos)}
+<p>${ayudaDePantalla(puesto, puestos)} Esta pantalla se actualiza sola cada 15 segundos y las comandas nuevas aparecen marcadas.</p>
 ${lista}
 </section>
 ${enlaceVolverAlPanel()}
 </main>`
-  return pagina(TITULO_DE_PUESTO[puesto], contenido, 15)
+  return pagina(titulo, contenido, 15)
 }

@@ -1,10 +1,11 @@
 /**
- * El reparto de la comanda por puesto, contra la base real.
+ * El reparto de la comanda por puesto del local, contra la base real (TASK-F1-09).
  *
- * Una cesta con un plato y una bebida produce DOS comandas, una por destino, con claves de
- * idempotencia derivadas. La de barra nace aceptada y con sus importes cerrados; la de cocina
- * espera aprobacion humana. Se comprueban tambien la idempotencia con dos destinos, que la
- * linea tiene que pertenecer a su destino y el aislamiento entre locales.
+ * Los puestos son datos del local. El puesto real de un plato es el suyo, si lo trae; el de su
+ * categoria, si no; y el por defecto del local como ultimo recurso. Se comprueban: el reparto
+ * al enviar por el puesto REAL, que la categoria manda y el plato anula, el auto-aceptado como
+ * PROPIEDAD del puesto (y su contraste), el plato sin destino, que el disparador sigue
+ * mordiendo y el aislamiento entre locales.
  *
  * Se conectan como `camarero_app` (nunca el propietario: LL-004). Cada prueba corre en una
  * transaccion que se revierte.
@@ -23,9 +24,13 @@ const MESA_A1 = "e0000000-0000-0000-0000-000000000001"
 const MESA_B1 = "e0000000-0000-0000-0000-000000000002"
 const SES_ACTIVA = "f0000000-0000-0000-0000-000000000001"
 const SES_B = "f0000000-0000-0000-0000-000000000004"
-const PLATO = "04000000-0000-0000-0000-000000000001" // "Lomo", 3000 CLP, caliente
-const BEBIDA = "04000000-0000-0000-0000-000000000002" // "Agua", 2000 CLP, bebidas
-const SIN_ESTACION = "04000000-0000-0000-0000-000000000003" // "Pan", 1000 CLP, sin estacion
+const CAT_BEBIDAS = "05000000-0000-0000-0000-000000000001"
+const CAT_PRINCIPALES = "05000000-0000-0000-0000-000000000002"
+const CAT_SINDESTINO = "05000000-0000-0000-0000-000000000003"
+const ITEM_AGUA = "04000000-0000-0000-0000-000000000001" // categoria con Barra (auto)
+const ITEM_PASTEL = "04000000-0000-0000-0000-000000000002" // hereda Caliente (no auto)
+const ITEM_LOMO = "04000000-0000-0000-0000-000000000003" // anula a Frio
+const ITEM_PAN = "04000000-0000-0000-0000-000000000004" // sin categoria ni puesto -> defecto
 const STAFF_A = "b0000000-0000-0000-0000-000000000001"
 const STAFF_B = "b0000000-0000-0000-0000-000000000002"
 
@@ -38,10 +43,12 @@ type Contexto = {
 
 const COMENSAL_A: Contexto = { sessionId: SES_ACTIVA }
 const CAMARERO_A: Contexto = { orgId: ORG1, staffId: STAFF_A, role: "server" }
+const DUENO_A: Contexto = { orgId: ORG1, staffId: STAFF_A, role: "org_owner" }
 const CAMARERO_B: Contexto = { orgId: ORG2, staffId: STAFF_B, role: "server" }
 
 let entorno: EntornoDePruebas | undefined
 let app: ClientePostgres | undefined
+const PUESTOS_A = { cocina: "", frio: "", caliente: "", barra: "" }
 
 function clienteApp(): ClientePostgres {
   if (app === undefined) {
@@ -77,53 +84,62 @@ async function enUnaTransaccion<T>(
   }
 }
 
+async function puestosDe(
+  cliente: ClientePostgres,
+  local: string,
+  nombres: string[],
+): Promise<string> {
+  const resultado = await cliente.query<{ id: string }>(
+    `select id from public.kitchen_stations
+      where location_id = $1 and name = any($2::text[]) order by sort_order`,
+    [local, nombres],
+  )
+  return resultado.rows[0]?.id ?? ""
+}
+
 /**
- * Crea una comanda por destino, como el borde: clave derivada `${clave}.${destino}`, una linea
- * por plato y, si el destino es automatico, el UPDATE que la deja aceptada y cierra importes.
+ * Crea una comanda por puesto, como el borde: el nombre del puesto congelado, su identificador
+ * y una linea por plato. La clave de idempotencia se deriva del puesto.
  */
-async function enviarPorDestino(
+async function enviarAPuesto(
   cliente: ClientePostgres,
   clave: string,
   sesionId: string,
-  destino: string,
+  puestoNombre: string,
+  puestoId: string,
   item: string,
   qty: number,
-  automatico: boolean,
 ): Promise<string> {
-  const claveDestino = `${clave}.${destino}`
+  const clavePuesto = `${clave}.${puestoNombre}`
   await cliente.query(
     `insert into public.orders
-       (org_id, location_id, session_id, source, prep_station, idempotency_key)
-     values ($1, $2, $3, 'table', $4, $5)`,
-    [ORG1, LOC_A, sesionId, destino, claveDestino],
+       (org_id, location_id, session_id, source, prep_station, prep_station_id, idempotency_key)
+     values ($1, $2, $3, 'table', $4, $5::uuid, $6)`,
+    [ORG1, LOC_A, sesionId, puestoNombre, puestoId, clavePuesto],
   )
   const orden = await cliente.query<{ id: string }>(
     "select id from public.orders where idempotency_key = $1",
-    [claveDestino],
+    [clavePuesto],
   )
   const id = orden.rows[0]?.id
   if (id === undefined) {
-    throw new Error(`No se creo la comanda ${claveDestino}`)
+    throw new Error(`No se creo la comanda ${clavePuesto}`)
   }
   await cliente.query(
     "insert into public.order_items (order_id, menu_item_id, qty) values ($1, $2, $3)",
     [id, item, qty],
   )
-  if (automatico) {
-    await cliente.query("update public.orders set status = 'aceptada' where id = $1", [id])
-  }
   return id
 }
 
 async function leerOrden(
   cliente: ClientePostgres,
   id: string,
-): Promise<{ status: string; subtotal_clp: number; total_clp: number } | undefined> {
-  const resultado = await cliente.query<{
-    status: string
-    subtotal_clp: number
-    total_clp: number
-  }>("select status, subtotal_clp, total_clp from public.orders where id = $1", [id])
+): Promise<{ status: string; subtotal_clp: number } | undefined> {
+  const resultado = await cliente.query<{ status: string; subtotal_clp: number }>(
+    "select status, subtotal_clp from public.orders where id = $1",
+    [id],
+  )
   return resultado.rows[0]
 }
 
@@ -152,15 +168,47 @@ async function sembrar(admin: ParametrosConexion): Promise<void> {
         ('${STAFF_A}', '${ORG1}', '${LOC_A}', 'serverA@camarero.test', 'server', 'Camarero A'),
         ('${STAFF_B}', '${ORG2}', '${LOC_B}', 'serverB@camarero.test', 'server', 'Camarero B');
 
-      insert into public.menu_items (id, location_id, name_i18n, price_clp, prep_station, active, available) values
-        ('${PLATO}', '${LOC_A}', '{"es":"Lomo"}', 3000, 'caliente', true, true),
-        ('${BEBIDA}', '${LOC_A}', '{"es":"Agua"}', 2000, 'bebidas', true, true),
-        ('${SIN_ESTACION}', '${LOC_A}', '{"es":"Pan"}', 1000, null, true, true);
-
       insert into public.table_sessions (id, org_id, location_id, table_id, code, state) values
         ('${SES_ACTIVA}', '${ORG1}', '${LOC_A}', '${MESA_A1}', 'MESA-A-ACTIVA', 'active'),
         ('${SES_B}', '${ORG2}', '${LOC_B}', '${MESA_B1}', 'MESA-B-ACTIVA', 'active');
     `)
+    // La categoria trae el puesto; el plato puede anularlo. Los puestos ya existen: los creo
+    // el disparador de `locations` al insertar el local.
+    await cliente.query(
+      `insert into public.menu_categories (id, location_id, name_i18n, prep_station_id)
+       select $1, $2, '{"es":"Bebidas"}'::jsonb, id
+         from public.kitchen_stations where location_id = $2 and name = 'Barra'`,
+      [CAT_BEBIDAS, LOC_A],
+    )
+    await cliente.query(
+      `insert into public.menu_categories (id, location_id, name_i18n, prep_station_id)
+       select $1, $2, '{"es":"Principales"}'::jsonb, id
+         from public.kitchen_stations where location_id = $2 and name = 'Caliente'`,
+      [CAT_PRINCIPALES, LOC_A],
+    )
+    await cliente.query(
+      `insert into public.menu_categories (id, location_id, name_i18n, prep_station_id)
+       values ($1, $2, '{"es":"Sin puesto"}'::jsonb, null)`,
+      [CAT_SINDESTINO, LOC_A],
+    )
+    await cliente.query(
+      `insert into public.menu_items (id, location_id, category_id, name_i18n, price_clp)
+       values ($1, $2, $3, '{"es":"Agua"}', 2000),
+              ($4, $2, $5, '{"es":"Pastel"}', 3000),
+              ($6, $2, $7, '{"es":"Pan"}', 1000)`,
+      [ITEM_AGUA, LOC_A, CAT_BEBIDAS, ITEM_PASTEL, CAT_PRINCIPALES, ITEM_PAN, CAT_SINDESTINO],
+    )
+    // El lomo anula el Caliente de su categoria y va a Frio.
+    await cliente.query(
+      `insert into public.menu_items (id, location_id, category_id, name_i18n, price_clp, prep_station_id)
+       select $1, $2, $3, '{"es":"Lomo"}'::jsonb, 9000, id
+         from public.kitchen_stations where location_id = $2 and name = 'Frío'`,
+      [ITEM_LOMO, LOC_A, CAT_PRINCIPALES],
+    )
+    PUESTOS_A.cocina = await puestosDe(cliente, LOC_A, ["Cocina"])
+    PUESTOS_A.frio = await puestosDe(cliente, LOC_A, ["Frío"])
+    PUESTOS_A.caliente = await puestosDe(cliente, LOC_A, ["Caliente"])
+    PUESTOS_A.barra = await puestosDe(cliente, LOC_A, ["Barra"])
   } finally {
     await cerrar(cliente)
   }
@@ -177,137 +225,76 @@ afterAll(async () => {
   entorno?.detener()
 })
 
-describe("Una cesta con un plato y una bebida", () => {
-  it("debe producir dos comandas: la de cocina espera y la de barra nace aceptada", async () => {
+describe("El puesto real de un plato", () => {
+  it("debe heredar el de la categoria cuando el plato no trae", async () => {
+    const puesto = await enUnaTransaccion(async (cliente, como) => {
+      await como(COMENSAL_A)
+      const resultado = await cliente.query<{ id: string }>(
+        "select public.camarero_estacion_de_plato($1) as id",
+        [ITEM_AGUA],
+      )
+      return resultado.rows[0]?.id
+    })
+    expect(puesto).toBe(PUESTOS_A.barra)
+  })
+
+  it("debe preferir el del plato cuando lo trae (anula la categoria)", async () => {
+    const puesto = await enUnaTransaccion(async (cliente, como) => {
+      await como(COMENSAL_A)
+      const resultado = await cliente.query<{ id: string }>(
+        "select public.camarero_estacion_de_plato($1) as id",
+        [ITEM_LOMO],
+      )
+      return resultado.rows[0]?.id
+    })
+    expect(puesto).toBe(PUESTOS_A.frio)
+  })
+
+  it("debe caer al puesto por defecto del local cuando no le llega ninguno", async () => {
+    const puesto = await enUnaTransaccion(async (cliente, como) => {
+      await como(COMENSAL_A)
+      const resultado = await cliente.query<{ id: string }>(
+        "select public.camarero_estacion_de_plato($1) as id",
+        [ITEM_PAN],
+      )
+      return resultado.rows[0]?.id
+    })
+    expect(puesto).toBe(PUESTOS_A.cocina)
+  })
+})
+
+describe("El auto-aceptado es una propiedad del puesto", () => {
+  it("debe nacer aceptada la comanda de un puesto auto-aceptado y cerrar sus importes", async () => {
     const resultado = await enUnaTransaccion(async (cliente, como) => {
       await como(COMENSAL_A)
-      const cocina = await enviarPorDestino(
+      const id = await enviarAPuesto(
         cliente,
-        "envio-1",
+        "auto-si",
         SES_ACTIVA,
-        "caliente",
-        PLATO,
-        1,
-        false,
-      )
-      const barra = await enviarPorDestino(
-        cliente,
-        "envio-1",
-        SES_ACTIVA,
-        "bebidas",
-        BEBIDA,
+        "Barra",
+        PUESTOS_A.barra,
+        ITEM_AGUA,
         2,
-        true,
       )
-      const comandas = await contar(cliente, "from public.orders where session_id = $1", [
-        SES_ACTIVA,
-      ])
-      return {
-        cocina: await leerOrden(cliente, cocina),
-        barra: await leerOrden(cliente, barra),
-        comandas,
-      }
+      await cliente.query("update public.orders set status = 'aceptada' where id = $1", [id])
+      return await leerOrden(cliente, id)
     })
-
-    expect(resultado.comandas).toBe(2)
-    expect(resultado.cocina?.status).toBe("pendiente")
-    expect(resultado.cocina?.subtotal_clp).toBe(0)
-    expect(resultado.barra?.status).toBe("aceptada")
+    expect(resultado?.status).toBe("aceptada")
     // 2000 x 2 = 4000: los importes se cerraron al nacer aceptada.
-    expect(resultado.barra?.subtotal_clp).toBe(4000)
-    expect(resultado.barra?.total_clp).toBe(4000)
+    expect(resultado?.subtotal_clp).toBe(4000)
   })
 
-  it("debe mandar a cocina un plato sin estacion", async () => {
-    const resultado = await enUnaTransaccion(async (cliente, como) => {
-      await como(COMENSAL_A)
-      const id = await enviarPorDestino(
-        cliente,
-        "envio-sin",
-        SES_ACTIVA,
-        "cocina",
-        SIN_ESTACION,
-        1,
-        false,
-      )
-      const destino = await cliente.query<{ prep_station: string }>(
-        "select prep_station from public.orders where id = $1",
-        [id],
-      )
-      return destino.rows[0]?.prep_station
-    })
-    expect(resultado).toBe("cocina")
-  })
-})
-
-describe("Reparto entre las pantallas de puesto", () => {
-  it("la cocina ve el plato y no la bebida; la barra ve la bebida", async () => {
-    const resultado = await enUnaTransaccion(async (cliente, como) => {
-      await como(COMENSAL_A)
-      await enviarPorDestino(cliente, "envio-filtro", SES_ACTIVA, "caliente", PLATO, 1, false)
-      await enviarPorDestino(cliente, "envio-filtro", SES_ACTIVA, "bebidas", BEBIDA, 1, true)
-      await como(CAMARERO_A)
-      const filtro =
-        "from public.orders o where o.status <> 'cerrada' and o.prep_station = any($1::text[])"
-      return {
-        cocina: await contar(cliente, filtro, [["frio", "caliente", "postre", "cocina"]]),
-        barra: await contar(cliente, filtro, [["bar", "bebidas"]]),
-      }
-    })
-    expect(resultado.cocina).toBe(1)
-    expect(resultado.barra).toBe(1)
-  })
-})
-
-describe("Idempotencia con dos destinos", () => {
-  it("no debe crear comandas hermanas nuevas al reenviar la misma clave", async () => {
-    const resultado = await enUnaTransaccion(async (cliente, como) => {
-      await como(COMENSAL_A)
-      await enviarPorDestino(cliente, "envio-2", SES_ACTIVA, "caliente", PLATO, 1, false)
-      await enviarPorDestino(cliente, "envio-2", SES_ACTIVA, "bebidas", BEBIDA, 1, true)
-      await cliente.query("savepoint segundo")
-      let fallo = false
-      try {
-        await enviarPorDestino(cliente, "envio-2", SES_ACTIVA, "caliente", PLATO, 1, false)
-      } catch {
-        fallo = true
-        await cliente.query("rollback to savepoint segundo")
-      }
-      return {
-        fallo,
-        comandas: await contar(cliente, "from public.orders where session_id = $1", [SES_ACTIVA]),
-      }
-    })
-    expect(resultado.fallo).toBe(true)
-    expect(resultado.comandas).toBe(2)
-  })
-})
-
-describe("El destino es una copia fiable", () => {
-  it("no debe dejar una linea de cocina en una comanda de barra", async () => {
-    const fallo = await enUnaTransaccion(async (cliente, como) => {
-      await como(COMENSAL_A)
-      try {
-        await enviarPorDestino(cliente, "envio-mal", SES_ACTIVA, "bar", PLATO, 1, true)
-        return false
-      } catch {
-        return true
-      }
-    })
-    expect(fallo).toBe(true)
-  })
-
-  it("no debe dejar al comensal aceptar una comanda de cocina", async () => {
+  it("no debe dejar al comensal aceptar la comanda de un puesto que espera aprobacion", async () => {
     const afectadas = await enUnaTransaccion(async (cliente, como) => {
       await como(COMENSAL_A)
-      const id = await enviarPorDestino(
+      const id = await enviarAPuesto(
         cliente,
-        "envio-kitchen",
+        "auto-no",
         SES_ACTIVA,
-        "caliente",
-        PLATO,
+        "Caliente",
+        PUESTOS_A.caliente,
+        ITEM_PASTEL,
         1,
-        false,
       )
       const resultado = await cliente.query(
         "update public.orders set status = 'aceptada' where id = $1",
@@ -317,20 +304,68 @@ describe("El destino es una copia fiable", () => {
     })
     expect(afectadas).toBe(0)
   })
+
+  it("debe cambiar el comportamiento solo cambiando la propiedad del puesto", async () => {
+    const resultado = await enUnaTransaccion(async (cliente, como) => {
+      await como(DUENO_A)
+      // El dueno marca Caliente como auto-aceptado: ya no queda en el codigo.
+      await cliente.query("update public.kitchen_stations set auto_accept = true where id = $1", [
+        PUESTOS_A.caliente,
+      ])
+      await como(COMENSAL_A)
+      const id = await enviarAPuesto(
+        cliente,
+        "auto-cambio",
+        SES_ACTIVA,
+        "Caliente",
+        PUESTOS_A.caliente,
+        ITEM_PASTEL,
+        1,
+      )
+      await cliente.query("update public.orders set status = 'aceptada' where id = $1", [id])
+      return await leerOrden(cliente, id)
+    })
+    expect(resultado?.status).toBe("aceptada")
+  })
 })
 
-describe("Aislamiento por destino", () => {
-  it("no debe ver las comandas un empleado de otro local", async () => {
+describe("El disparador sigue mordiendo", () => {
+  it("no debe dejar una linea cuyo puesto real no es el de la comanda", async () => {
+    const fallo = await enUnaTransaccion(async (cliente, como) => {
+      await como(COMENSAL_A)
+      try {
+        // El pan resuelve al puesto por defecto (Cocina), pero la comanda dice Barra.
+        await enviarAPuesto(cliente, "mal", SES_ACTIVA, "Barra", PUESTOS_A.barra, ITEM_PAN, 1)
+        return false
+      } catch {
+        return true
+      }
+    })
+    expect(fallo).toBe(true)
+  })
+
+  it("debe aceptar la linea cuando el puesto real coincide", async () => {
+    const estado = await enUnaTransaccion(async (cliente, como) => {
+      await como(COMENSAL_A)
+      await enviarAPuesto(cliente, "bien", SES_ACTIVA, "Frío", PUESTOS_A.frio, ITEM_LOMO, 1)
+      return await contar(cliente, "from public.orders where idempotency_key = $1", ["bien.Frío"])
+    })
+    expect(estado).toBe(1)
+  })
+})
+
+describe("Aislamiento entre locales", () => {
+  it("no debe ver las comandas ni el otro local", async () => {
     const visto = await enUnaTransaccion(async (cliente, como) => {
       await como(COMENSAL_A)
-      const id = await enviarPorDestino(
+      const id = await enviarAPuesto(
         cliente,
-        "envio-aislado",
+        "aislado",
         SES_ACTIVA,
-        "bebidas",
-        BEBIDA,
+        "Barra",
+        PUESTOS_A.barra,
+        ITEM_AGUA,
         1,
-        true,
       )
       await como(CAMARERO_B)
       const localB = await contar(cliente, "from public.orders where id = $1", [id])

@@ -1,72 +1,67 @@
 /**
- * Puestos de preparacion y pantallas del KDS (ADR-0033, LL-025).
+ * Puestos de preparacion del local (ADR-0033, ADR-0034, LL-025).
  *
- * Cada plato de la carta trae su estacion (`menu_items.prep_station`, con los valores del
- * `check` de 0004: frio, caliente, bar, postre, bebidas). Una comanda nace con SU destino,
- * que es una copia de esa estacion; si el plato no tiene estacion, va al destino generico
- * `cocina`, que exige aprobacion humana como los demas puestos de cocina.
- *
- * Las pantallas agrupan destinos: `cocina` ve los de cocina, `barra` los de barra y `todo`
- * los ve todos. Los destinos `bar` y `bebidas` no necesitan que nadie los apruebe: nacen
- * aceptados, y su proteccion es que el local puede anular (ADR-0033).
+ * Los puestos son DATOS del local: el dueno los nombra (Parrilla, Plancha, Postre, Barra) y
+ * cada uno decide si nace aceptado (`auto_accept`) o si espera aprobacion humana. Este modulo
+ * ya no enumera valores fijos: solo da el vocabulario comun entre el borde, el panel y las
+ * pantallas. Quien resuelve el puesto real de un plato es la base
+ * (`camarero_estacion_de_plato`): plato -> categoria -> puesto por defecto del local.
  */
 
-/** Destinos genericos de un plato sin estacion. `cocina` NO es un valor de menu_items. */
-export const DESTINO_SIN_ESTACION = "cocina"
+/** La pantalla que junta todos los puestos de un local, para un local de una sola pantalla. */
+export const PANTALLA_TODOS = "todo"
 
-/** Destinos que se preparan en la cocina y esperan aprobacion humana. */
-export const DESTINOS_DE_COCINA = ["frio", "caliente", "postre", DESTINO_SIN_ESTACION] as const
+/**
+ * Una pantalla de trabajo es el identificador de un puesto del local o la pantalla `todo`.
+ * El tipo es `string` porque el identificador es un UUID que solo conoce la base; la pantalla
+ * nunca lo inventa, lo lee de los puestos del local.
+ */
+export type PuestoDePantalla = string
 
-/** Destinos que se preparan en la barra y nacen aceptados: una bebida es automatica. */
-export const DESTINOS_DE_BARRA = ["bar", "bebidas"] as const
+/** Reconoce la pantalla que muestra todo junto. */
+export function esPantallaTodos(valor: string): boolean {
+  return valor === PANTALLA_TODOS
+}
 
-/** Las tres pantallas de puesto que puede abrir un dispositivo. */
-export const PUESTOS_DE_PANTALLA = ["cocina", "barra", "todo"] as const
+/** Un puesto del local tal como lo nombra el dueno. */
+export type PuestoDelLocal = {
+  readonly id: string
+  readonly nombre: string
+  readonly orden: number
+  readonly activo: boolean
+  readonly autoAcepta: boolean
+  readonly porDefecto: boolean
+}
 
-export type PuestoDePantalla = (typeof PUESTOS_DE_PANTALLA)[number]
-
-/** Reconoce la pantalla de un puesto a partir de un texto de la ruta. */
-export function esPuestoDePantalla(valor: string): valor is PuestoDePantalla {
-  return (PUESTOS_DE_PANTALLA as readonly string[]).includes(valor)
+/** Un plato con el puesto que la base le resuelve (el suyo, el de su categoria o el del local). */
+export type PlatoConPuesto = {
+  readonly puestoId: string | null
+  readonly autoAcepta: boolean
 }
 
 /**
- * Destino de una comanda a partir de la estacion del plato. Un plato sin estacion va al
- * destino generico de cocina: un plato sin clasificar necesita que alguien lo acepte.
+ * Puesto real de un plato: el propio, si lo trae; el de su categoria, si no; y el puesto por
+ * defecto del local como ultimo recurso. Es la MISMA regla que aplica la base; aqui sin base,
+ * para poder probarla como logica pura.
  */
-export function destinoDeEstacion(estacion: string | null): string {
-  return estacion === null || estacion === "" ? DESTINO_SIN_ESTACION : estacion
-}
-
-/** Verdadero para los destinos que no necesitan aprobacion: la barra y las bebidas. */
-export function esEstacionAutomatica(destino: string | null): boolean {
-  return destino !== null && (DESTINOS_DE_BARRA as readonly string[]).includes(destino)
+export function puestoDePlato(
+  plato: { readonly puestoId: string | null },
+  categoria: { readonly puestoId: string | null },
+  porDefecto: { readonly id: string } | null,
+): string | null {
+  return plato.puestoId ?? categoria.puestoId ?? porDefecto?.id ?? null
 }
 
 /**
- * Destinos que ve una pantalla. `todo` no filtra: devuelve null para decir "todos". La lista
- * se lee de las constantes de arriba, que son los valores reales del `check` de la carta.
+ * Etiqueta de un puesto en una lista, para no inventar un nombre si el puesto ya no esta:
+ * cae al identificador crudo, que es la verdad que la comanda congelo.
  */
-export function destinosDelPuesto(puesto: PuestoDePantalla): readonly string[] | null {
-  if (puesto === "cocina") {
-    return DESTINOS_DE_COCINA
+export function nombreDePuesto(
+  puestos: readonly PuestoDelLocal[],
+  puestoId: string | null,
+): string | null {
+  if (puestoId === null) {
+    return null
   }
-  if (puesto === "barra") {
-    return DESTINOS_DE_BARRA
-  }
-  return null
-}
-
-const ETIQUETAS: Readonly<Record<string, string>> = {
-  frio: "Frío",
-  caliente: "Caliente",
-  bar: "Barra",
-  postre: "Postre",
-  bebidas: "Bebidas",
-  [DESTINO_SIN_ESTACION]: "Cocina",
-}
-
-/** Nombre legible de un destino para las pantallas. Nunca se inventa: cae al valor crudo. */
-export function etiquetaDeEstacion(destino: string): string {
-  return ETIQUETAS[destino] ?? destino
+  return puestos.find((puesto) => puesto.id === puestoId)?.nombre ?? null
 }

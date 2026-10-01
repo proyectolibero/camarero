@@ -30,6 +30,7 @@ import type {
   ComandaDePuesto,
   Mesa,
   Plato,
+  Puesto,
   ResumenDeMesa,
   SolicitudPendiente,
   Zona,
@@ -43,6 +44,7 @@ import {
   vistaMesas,
   vistaParejas,
   vistaPlato,
+  vistaPuestos,
   vistaSala,
 } from "../src/panel/vistas.ts"
 import { ESTILOS } from "../src/ui/estilos.ts"
@@ -130,9 +132,46 @@ const MESA_ELEGIDA = "t3"
 // ---------------------------------------------------------------------------
 
 const CATEGORIAS: readonly Categoria[] = [
-  { id: "c1", nombre: "Entrantes", orden: 0, activa: true, disponible: true },
-  { id: "c2", nombre: "Principales", orden: 1, activa: true, disponible: true },
-  { id: "c3", nombre: "Bebidas", orden: 2, activa: true, disponible: true },
+  { id: "c1", nombre: "Entrantes", orden: 0, activa: true, disponible: true, puestoId: "pu-frio" },
+  {
+    id: "c2",
+    nombre: "Principales",
+    orden: 1,
+    activa: true,
+    disponible: true,
+    puestoId: "pu-parrilla",
+  },
+  { id: "c3", nombre: "Bebidas", orden: 2, activa: true, disponible: true, puestoId: "pu-barra" },
+]
+
+/** Los puestos que nombra el dueno, con uno por defecto y la barra naciendo aceptada. */
+const PUESTOS: readonly Puesto[] = [
+  {
+    id: "pu-cocina",
+    nombre: "Cocina",
+    orden: 0,
+    activo: true,
+    autoAcepta: false,
+    porDefecto: true,
+  },
+  { id: "pu-frio", nombre: "Frío", orden: 1, activo: true, autoAcepta: false, porDefecto: false },
+  {
+    id: "pu-parrilla",
+    nombre: "Parrilla",
+    orden: 2,
+    activo: true,
+    autoAcepta: false,
+    porDefecto: false,
+  },
+  {
+    id: "pu-postre",
+    nombre: "Postre",
+    orden: 3,
+    activo: true,
+    autoAcepta: false,
+    porDefecto: false,
+  },
+  { id: "pu-barra", nombre: "Barra", orden: 4, activo: true, autoAcepta: true, porDefecto: false },
 ]
 
 const FOTO_CEVICHE = "foto-ceviche.png"
@@ -146,7 +185,7 @@ function plato(parcial: Partial<Plato> & { readonly id: string; readonly nombre:
     fotoClave: null,
     allergens: [],
     tags: [],
-    estacion: null,
+    puestoId: null,
     disponible: true,
     desde: null,
     hasta: null,
@@ -164,7 +203,6 @@ const PLATOS: readonly Plato[] = [
     precioClp: 8900,
     fotoClave: FOTO_CEVICHE,
     allergens: ["pescado", "sulfitos"],
-    estacion: "frio",
     categoriaId: "c1",
   }),
   plato({
@@ -172,7 +210,6 @@ const PLATOS: readonly Plato[] = [
     nombre: "Empanadas de queso",
     precioClp: 5000,
     disponible: false,
-    estacion: "caliente",
     allergens: ["gluten", "leche"],
     tags: ["vegetariano"],
     categoriaId: "c1",
@@ -182,7 +219,6 @@ const PLATOS: readonly Plato[] = [
     nombre: "Tabla de quesos del sur",
     precioClp: 12500,
     activo: false,
-    estacion: "frio",
     allergens: ["leche"],
     tags: ["vegetariano"],
     categoriaId: "c1",
@@ -194,21 +230,18 @@ const PLATOS: readonly Plato[] = [
     precioClp: 15900,
     fotoClave: FOTO_LOMO,
     allergens: ["huevo"],
-    estacion: "caliente",
     categoriaId: "c2",
   }),
   plato({
     id: "p5",
     nombre: "Pastel de choclo",
     precioClp: 11900,
-    estacion: "caliente",
     categoriaId: "c2",
   }),
   plato({
     id: "p6",
     nombre: "Cazuela de ave con un nombre larguísimo para ver cómo se comporta la ficha",
     precioClp: 10900,
-    estacion: "caliente",
     categoriaId: "c2",
   }),
   plato({
@@ -216,7 +249,7 @@ const PLATOS: readonly Plato[] = [
     nombre: "Pisco sour",
     descripcion: "Pisco, limón, azúcar y clara de huevo.",
     precioClp: 5900,
-    estacion: "bar",
+    puestoId: "pu-barra",
     allergens: ["huevo", "sulfitos"],
     categoriaId: "c3",
   }),
@@ -224,7 +257,6 @@ const PLATOS: readonly Plato[] = [
     id: "p8",
     nombre: "Copa de vino de la casa",
     precioClp: 4500,
-    estacion: "bebidas",
     allergens: ["sulfitos"],
     categoriaId: "c3",
   }),
@@ -232,7 +264,6 @@ const PLATOS: readonly Plato[] = [
     id: "p9",
     nombre: "Agua mineral",
     precioClp: 2500,
-    estacion: "bebidas",
     categoriaId: "c3",
   }),
 ]
@@ -355,9 +386,11 @@ escribir(
 )
 
 // `carta.html`: el indice de categorias seguido de cada categoria con sus fichas.
-const indice = renderizar(vistaCarta(DUENO, CATEGORIAS, true, { creada: true }))
+const indice = renderizar(vistaCarta(DUENO, CATEGORIAS, PUESTOS, true, { creada: true }))
 const secciones = CATEGORIAS.map((categoria) =>
-  cuerpoPrincipal(renderizar(vistaCategoria(DUENO, categoria, platosDe(categoria.id), true, {}))),
+  cuerpoPrincipal(
+    renderizar(vistaCategoria(DUENO, categoria, platosDe(categoria.id), PUESTOS, true, {})),
+  ),
 )
 const cartaCompleta = conFotosRelativas(
   conHojaDeEstilosRelativa(
@@ -380,7 +413,8 @@ escribir(
           DUENO,
           ceviche,
           CATEGORIAS,
-          { categoria: null, estacion: null, bebida: false },
+          PUESTOS,
+          { categoria: null, puestoId: null, bebida: false },
           {},
         ),
       ),
@@ -393,9 +427,22 @@ escribir(
   "alta.html",
   conHojaDeEstilosRelativa(
     renderizar(
-      vistaPlato(DUENO, null, CATEGORIAS, { categoria: "c1", estacion: null, bebida: false }, {}),
+      vistaPlato(
+        DUENO,
+        null,
+        CATEGORIAS,
+        PUESTOS,
+        { categoria: "c1", puestoId: null, bebida: false },
+        {},
+      ),
     ),
   ),
+)
+
+// `puestos.html`: la pantalla donde el dueno nombra, ordena, activa y auto-acepta sus puestos.
+escribir(
+  "puestos.html",
+  conHojaDeEstilosRelativa(renderizar(vistaPuestos(DUENO, PUESTOS, true, { creado: true }))),
 )
 
 // ---------------------------------------------------------------------------
@@ -418,7 +465,9 @@ const CARTA_COMENSAL: CartaDelComensal = {
           descripcion: "Corvina, limón de pica, cebolla morada y cilantro.",
           precioClp: 8900,
           fotoClave: FOTO_CEVICHE,
-          estacion: "frio",
+          puestoId: "pu-frio",
+          puestoNombre: "Frío",
+          autoAcepta: false,
         },
         {
           id: "p2",
@@ -426,7 +475,9 @@ const CARTA_COMENSAL: CartaDelComensal = {
           descripcion: "Tres unidades, masa de hojaldre.",
           precioClp: 5000,
           fotoClave: null,
-          estacion: "caliente",
+          puestoId: "pu-parrilla",
+          puestoNombre: "Parrilla",
+          autoAcepta: false,
         },
       ],
     },
@@ -440,7 +491,9 @@ const CARTA_COMENSAL: CartaDelComensal = {
           descripcion: "Con papas fritas, huevo y cebolla caramelizada.",
           precioClp: 15900,
           fotoClave: FOTO_LOMO,
-          estacion: "caliente",
+          puestoId: "pu-parrilla",
+          puestoNombre: "Parrilla",
+          autoAcepta: false,
         },
       ],
     },
@@ -487,7 +540,9 @@ const LINEAS_CESTA: readonly LineaResuelta[] = [
     cantidad: 2,
     precioClp: 8900,
     totalClp: 17800,
-    estacion: "frio",
+    puestoId: "pu-frio",
+    puestoNombre: "Frío",
+    autoAcepta: false,
   },
   {
     platoId: "p2",
@@ -495,7 +550,9 @@ const LINEAS_CESTA: readonly LineaResuelta[] = [
     cantidad: 1,
     precioClp: 5000,
     totalClp: 5000,
-    estacion: "caliente",
+    puestoId: "pu-parrilla",
+    puestoNombre: "Parrilla",
+    autoAcepta: false,
   },
   {
     platoId: "p4",
@@ -503,7 +560,9 @@ const LINEAS_CESTA: readonly LineaResuelta[] = [
     cantidad: 1,
     precioClp: 15900,
     totalClp: 15900,
-    estacion: "caliente",
+    puestoId: "pu-parrilla",
+    puestoNombre: "Parrilla",
+    autoAcepta: false,
   },
 ]
 const TOTAL_CESTA = LINEAS_CESTA.reduce((suma, linea) => suma + linea.totalClp, 0)
@@ -527,7 +586,8 @@ const COMANDAS: readonly ComandaDePuesto[] = [
   {
     id: "o1",
     mesa: "Mesa 4",
-    destino: "frio",
+    puestoId: "pu-frio",
+    destino: "Frío",
     estado: "pendiente",
     creadaHaceSegundos: 6,
     lineas: [{ nombre: "Ceviche clásico", cantidad: 2 }],
@@ -535,7 +595,8 @@ const COMANDAS: readonly ComandaDePuesto[] = [
   {
     id: "o2",
     mesa: "Barra 2",
-    destino: "caliente",
+    puestoId: "pu-parrilla",
+    destino: "Parrilla",
     estado: "aceptada",
     creadaHaceSegundos: 95,
     lineas: [{ nombre: "Lomo a lo pobre", cantidad: 1 }],
@@ -543,7 +604,8 @@ const COMANDAS: readonly ComandaDePuesto[] = [
   {
     id: "o3",
     mesa: "Terraza junto a la ventana grande",
-    destino: "postre",
+    puestoId: "pu-postre",
+    destino: "Postre",
     estado: "preparando",
     creadaHaceSegundos: 240,
     lineas: [{ nombre: "Pastel de choclo", cantidad: 2 }],
@@ -551,7 +613,8 @@ const COMANDAS: readonly ComandaDePuesto[] = [
   {
     id: "o4",
     mesa: "Sala 1",
-    destino: "bar",
+    puestoId: "pu-barra",
+    destino: "Barra",
     estado: "aceptada",
     creadaHaceSegundos: 35,
     lineas: [{ nombre: "Pisco sour", cantidad: 2 }],
@@ -559,7 +622,8 @@ const COMANDAS: readonly ComandaDePuesto[] = [
   {
     id: "o5",
     mesa: "Sala 4",
-    destino: "bebidas",
+    puestoId: "pu-barra",
+    destino: "Barra",
     estado: "aceptada",
     creadaHaceSegundos: 9,
     lineas: [{ nombre: "Agua mineral", cantidad: 3 }],
@@ -567,21 +631,25 @@ const COMANDAS: readonly ComandaDePuesto[] = [
 ]
 
 const COMANDAS_DE_COCINA = COMANDAS.filter((comanda) =>
-  ["frio", "caliente", "postre", "cocina"].includes(comanda.destino),
+  ["pu-frio", "pu-parrilla", "pu-postre", "pu-cocina"].includes(comanda.puestoId ?? ""),
 )
-const COMANDAS_DE_BARRA = COMANDAS.filter((comanda) => ["bar", "bebidas"].includes(comanda.destino))
+const COMANDAS_DE_BARRA = COMANDAS.filter((comanda) => comanda.puestoId === "pu-barra")
 
 escribir(
   "cocina.html",
-  conHojaDeEstilosRelativa(renderizar(vistaCocina(DUENO, COMANDAS_DE_COCINA, "cocina", {}))),
+  conHojaDeEstilosRelativa(
+    renderizar(vistaCocina(DUENO, COMANDAS_DE_COCINA, "pu-frio", PUESTOS, {})),
+  ),
 )
 escribir(
   "barra.html",
-  conHojaDeEstilosRelativa(renderizar(vistaCocina(DUENO, COMANDAS_DE_BARRA, "barra", {}))),
+  conHojaDeEstilosRelativa(
+    renderizar(vistaCocina(DUENO, COMANDAS_DE_BARRA, "pu-barra", PUESTOS, {})),
+  ),
 )
 escribir(
   "todo.html",
-  conHojaDeEstilosRelativa(renderizar(vistaCocina(DUENO, COMANDAS, "todo", {}))),
+  conHojaDeEstilosRelativa(renderizar(vistaCocina(DUENO, COMANDAS, "todo", PUESTOS, {}))),
 )
 
 // ---------------------------------------------------------------------------
@@ -657,7 +725,8 @@ const COMANDAS_DE_LA_MESA: readonly ComandaDePuesto[] = [
   {
     id: "o1",
     mesa: "Sala 2",
-    destino: "frio",
+    puestoId: "pu-frio",
+    destino: "Frío",
     estado: "pendiente",
     creadaHaceSegundos: 12,
     lineas: [
@@ -668,7 +737,8 @@ const COMANDAS_DE_LA_MESA: readonly ComandaDePuesto[] = [
   {
     id: "o4",
     mesa: "Sala 2",
-    destino: "bar",
+    puestoId: "pu-barra",
+    destino: "Barra",
     estado: "preparando",
     creadaHaceSegundos: 65,
     lineas: [{ nombre: "Pisco sour", cantidad: 2 }],

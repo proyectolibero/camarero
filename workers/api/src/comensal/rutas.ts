@@ -103,7 +103,9 @@ function preciosDeCarta(carta: CartaDelComensal): Map<string, PlatoResoluble> {
       indice.set(plato.id, {
         nombre: plato.nombre,
         precioClp: plato.precioClp,
-        estacion: plato.estacion,
+        puestoId: plato.puestoId,
+        puestoNombre: plato.puestoNombre,
+        autoAcepta: plato.autoAcepta,
       })
     }
   }
@@ -231,12 +233,14 @@ async function enviar(
   const campos = await leerCampos(peticion)
   const clave = (campos["clave"] ?? "").trim()
   const { lineas } = resolverCesta(leerCesta(cookieCesta), preciosDeCarta(lectura.carta))
-  // Solo viaja identificador, cantidad y la estacion de la carta: el destino y el precio los
-  // fija la base, nunca la cookie (D-051).
+  // Solo viaja identificador, cantidad y el puesto que la carta resolvio: el precio lo fija
+  // la base, nunca la cookie (D-051).
   const enviables: readonly LineaDeEnvio[] = lineas.map((linea) => ({
     platoId: linea.platoId,
     cantidad: linea.cantidad,
-    estacion: linea.estacion,
+    puestoId: linea.puestoId,
+    puestoNombre: linea.puestoNombre,
+    autoAcepta: linea.autoAcepta,
   }))
   const resultado = await almacen.enviar(codigo, lectura.sesionId, clave, enviables)
   if (resultado.tipo === "ok") {

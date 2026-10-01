@@ -9,7 +9,7 @@
  * local y de los platos son datos del establecimiento, no de una persona, pero un nombre con
  * etiquetas no puede convertirse en ejecucion en el navegador del comensal.
  */
-import { etiquetaDeEstacion } from "@camarero/domain"
+
 import { type HtmlSeguro, html } from "../ui/html.ts"
 import type { LineaResuelta } from "./cesta.ts"
 import type {
@@ -272,7 +272,7 @@ export function vistaPedidosComensal(
           (pedido) =>
             html`<section class="tarjeta pedido-comensal">
 <h2>${insigniaDeEstado(pedido.estado)}</h2>
-<p class="pedido-destino">Destino: <strong>${etiquetaDeEstacion(pedido.destino)}</strong></p>
+<p class="pedido-destino">Destino: <strong>${pedido.destino}</strong></p>
 <ul class="pedido-lineas">${pedido.lineas.map(
               (linea) =>
                 html`<li><span>${linea.cantidad}× ${linea.nombre}</span><span>${precio(linea.totalClp)}</span></li>`,
