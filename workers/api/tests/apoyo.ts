@@ -132,6 +132,8 @@ export function almacenFalso(parciales: Partial<AlmacenPanel> = {}): AlmacenPane
     rechazarPareja: async () => ({ ok: true, valor: undefined }),
     listarComandas: async () => [],
     cambiarEstadoComanda: async () => ({ ok: false, motivo: "no_existe" }),
+    listarSala: async () => [],
+    listarComandasDeMesa: async () => [],
     ...parciales,
   }
 }

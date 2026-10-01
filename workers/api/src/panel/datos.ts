@@ -164,6 +164,24 @@ export type ComandaDePuesto = {
   readonly lineas: readonly LineaDeComanda[]
 }
 
+/**
+ * Estado de una mesa en la sala, de un vistazo (D-053). Se calcula a partir de senales que
+ * devuelve esta capa; la logica pura vive en `estado-mesa.ts`.
+ */
+export type EstadoDeMesa = "libre" | "esperando_aprobacion" | "comandas_pendientes" | "todo_servido"
+
+/**
+ * Lo que la sala necesita de cada mesa: su ficha, si tiene una sesion aprobada, la solicitud
+ * de emparejamiento viva (si la hay) y cuantas comandas siguen sin servirse. NUNCA lleva
+ * importes: la sala es una pantalla de servicio, no de caja.
+ */
+export type ResumenDeMesa = {
+  readonly mesa: Mesa
+  readonly sesionActiva: boolean
+  readonly solicitudId: string | null
+  readonly comandasSinServir: number
+}
+
 /** Por que no se pudo cambiar el estado de una comanda. */
 export type MotivoDeCambioComanda = "sin_permiso" | "no_existe" | "transicion_invalida"
 
@@ -247,6 +265,11 @@ export type AlmacenPanel = {
     comandaId: string,
     destino: EstadoDeComanda,
   ) => Promise<ResultadoCambioComanda>
+  readonly listarSala: (empleado: Empleado) => Promise<readonly ResumenDeMesa[]>
+  readonly listarComandasDeMesa: (
+    empleado: Empleado,
+    mesaId: string,
+  ) => Promise<readonly ComandaDePuesto[]>
 }
 
 type FilaLocal = {
@@ -1095,6 +1118,51 @@ function aEstado(valor: string): EstadoDeComanda {
 }
 
 /**
+ * Carga las lineas de varias comandas en una sola consulta y las agrupa por comanda. Las
+ * lineas NUNCA traen precio: `LineaDeComanda` no tiene ese campo y el select no lo lee.
+ */
+async function lineasDeComandas(
+  cliente: Client,
+  ids: readonly string[],
+): Promise<ReadonlyMap<string, readonly LineaDeComanda[]>> {
+  if (ids.length === 0) {
+    return new Map()
+  }
+  const items = await cliente.query<FilaComandaItem>(
+    `select order_id, name_snapshot, qty
+       from public.order_items
+      where order_id = any($1::uuid[])
+      order by created_at, id`,
+    [ids],
+  )
+  const porComanda = new Map<string, LineaDeComanda[]>()
+  for (const item of items.rows) {
+    const lista = porComanda.get(item.order_id) ?? []
+    lista.push({ nombre: item.name_snapshot, cantidad: item.qty })
+    porComanda.set(item.order_id, lista)
+  }
+  return porComanda
+}
+
+function aComandaDePuesto(
+  fila: FilaComanda,
+  lineas: ReadonlyMap<string, readonly LineaDeComanda[]>,
+): ComandaDePuesto {
+  return {
+    id: fila.id,
+    mesa: fila.mesa,
+    destino: fila.prep_station,
+    estado: aEstado(fila.status),
+    creadaHaceSegundos: fila.creada,
+    lineas: lineas.get(fila.id) ?? [],
+  }
+}
+
+const COLUMNAS_COMANDA = `o.id, o.status, o.prep_station,
+  extract(epoch from (now() - o.created_at))::int as creada,
+  coalesce(t.label, s.code, 'Mesa') as mesa`
+
+/**
  * Las comandas abiertas que ve una pantalla de puesto (la RLS ya acota al alcance del
  * empleado). `todo` no filtra; cocina y barra reciben solo los destinos de su puesto. Nunca
  * se leen importes: quien prepara no cobra.
@@ -1105,9 +1173,7 @@ async function listarFilaComandas(
 ): Promise<readonly ComandaDePuesto[]> {
   const destinos = destinosDelPuesto(puesto)
   const comandas = await cliente.query<FilaComanda>(
-    `select o.id, o.status, o.prep_station,
-            extract(epoch from (now() - o.created_at))::int as creada,
-            coalesce(t.label, s.code, 'Mesa') as mesa
+    `select ${COLUMNAS_COMANDA}
        from public.orders o
        left join public.table_sessions s on s.id = o.session_id
        left join public.tables t on t.id = s.table_id
@@ -1116,32 +1182,82 @@ async function listarFilaComandas(
       order by o.created_at, o.id`,
     [destinos],
   )
-  if (comandas.rows.length === 0) {
-    return []
-  }
-  const items = await cliente.query<FilaComandaItem>(
-    `select order_id, name_snapshot, qty
-       from public.order_items
-      where order_id = any($1::uuid[])
-      order by created_at, id`,
-    [comandas.rows.map((fila) => fila.id)],
+  const lineas = await lineasDeComandas(
+    cliente,
+    comandas.rows.map((fila) => fila.id),
   )
-  const porComanda = new Map<string, LineaDeComanda[]>()
-  for (const item of items.rows) {
-    const lista = porComanda.get(item.order_id) ?? []
-    lista.push({ nombre: item.name_snapshot, cantidad: item.qty })
-    porComanda.set(item.order_id, lista)
-  }
-  return comandas.rows.map(
-    (fila): ComandaDePuesto => ({
-      id: fila.id,
-      mesa: fila.mesa,
-      destino: fila.prep_station,
-      estado: aEstado(fila.status),
-      creadaHaceSegundos: fila.creada,
-      lineas: porComanda.get(fila.id) ?? [],
-    }),
+  return comandas.rows.map((fila) => aComandaDePuesto(fila, lineas))
+}
+
+/**
+ * Las comandas de la sesion abierta de una mesa, todas juntas (cocina y barra), para el
+ * detalle de la sala. Sin precios: la sala no es la caja. Si la mesa no tiene sesion abierta,
+ * no hay comandas que mostrar.
+ */
+async function listarFilaComandasDeMesa(
+  cliente: Client,
+  mesaId: string,
+): Promise<readonly ComandaDePuesto[]> {
+  const comandas = await cliente.query<FilaComanda>(
+    `select ${COLUMNAS_COMANDA}
+       from public.orders o
+       join public.table_sessions s on s.id = o.session_id
+       left join public.tables t on t.id = s.table_id
+      where s.table_id = $1
+        and s.state not in ('closed', 'voided')
+      order by o.created_at, o.id`,
+    [mesaId],
   )
+  const lineas = await lineasDeComandas(
+    cliente,
+    comandas.rows.map((fila) => fila.id),
+  )
+  return comandas.rows.map((fila) => aComandaDePuesto(fila, lineas))
+}
+
+type FilaResumen = FilaMesa & {
+  readonly sesion_activa: boolean
+  readonly solicitud_id: string | null
+  readonly comandas_sin_servir: number
+}
+
+/**
+ * Todas las mesas del local con las senales que la sala necesita para su estado: si tienen
+ * una sesion aprobada, la solicitud de emparejamiento viva (si la hay) y cuantas comandas
+ * siguen sin servirse. NUNCA se leen importes ni totales.
+ */
+async function listarFilaSala(cliente: Client, localId: string): Promise<readonly ResumenDeMesa[]> {
+  const resultado = await cliente.query<FilaResumen>(
+    `select ${COLUMNAS_MESA},
+       exists (
+         select 1 from public.table_sessions s
+          where s.table_id = t.id and s.state = 'active'
+       ) as sesion_activa,
+       (
+         select pr.id from public.pairing_requests pr
+          where pr.table_id = t.id and pr.state = 'pending'
+            and public.solicitud_vigente(pr.session_id)
+          order by pr.created_at, pr.id
+          limit 1
+       ) as solicitud_id,
+       (
+         select count(*)::int from public.orders o
+           join public.table_sessions s on s.id = o.session_id
+          where s.table_id = t.id and s.state = 'active'
+            and o.status not in ('servida', 'cerrada', 'anulada')
+       ) as comandas_sin_servir
+     from public.tables t
+     left join public.zones z on z.id = t.zone_id
+     where t.location_id = $1
+     order by z.name nulls last, t.label`,
+    [localId],
+  )
+  return resultado.rows.map((fila) => ({
+    mesa: aMesa(fila),
+    sesionActiva: fila.sesion_activa,
+    solicitudId: fila.solicitud_id,
+    comandasSinServir: fila.comandas_sin_servir,
+  }))
 }
 
 /**
@@ -1356,6 +1472,13 @@ export function almacenDeBase(cadena: string): AlmacenPanel {
       enTransaccion(cadena, empleado, (cliente) =>
         cambiarFilaEstadoComanda(cliente, comandaId, destino),
       ),
+    listarSala: (empleado): Promise<readonly ResumenDeMesa[]> =>
+      enTransaccion(cadena, empleado, async (cliente) => {
+        const id = await resolverLocalId(cliente, empleado)
+        return id === null ? [] : await listarFilaSala(cliente, id)
+      }),
+    listarComandasDeMesa: (empleado, mesaId): Promise<readonly ComandaDePuesto[]> =>
+      enTransaccion(cadena, empleado, (cliente) => listarFilaComandasDeMesa(cliente, mesaId)),
   }
 }
 
@@ -1400,6 +1523,8 @@ export function almacenNoConfigurado(): AlmacenPanel {
       ok: false,
       motivo: "no_existe",
     }),
+    listarSala: async (): Promise<readonly ResumenDeMesa[]> => [],
+    listarComandasDeMesa: async (): Promise<readonly ComandaDePuesto[]> => [],
   }
 }
 

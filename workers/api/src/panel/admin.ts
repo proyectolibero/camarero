@@ -600,18 +600,27 @@ async function mostrarParejas(
   )
 }
 
-async function motivoDeRechazo(peticion: Request): Promise<string> {
-  const campos = await leerCampos(peticion)
-  const motivo = (campos["motivo"] ?? "").trim()
-  return motivo === "" ? "No especificado" : motivo
-}
-
 /** Cada causa tiene su mensaje: un cero sin explicar es un cero invisible (LL-024). */
 const MENSAJE_DE_DECISION: Readonly<Record<MotivoDeDecision, string>> = {
   sin_permiso: "No tienes permiso para decidir esa solicitud.",
   otro_local: "Esa solicitud no es de tu local o ya no existe.",
   ya_decidida: "Esa solicitud ya se había decidido. Vuelve a mirar la lista.",
   caducada: "Esa solicitud ha caducado: el comensal puede volver a pedirla.",
+}
+
+/**
+ * Pantallas a las que una decision puede volver. Se aprueba desde la sala y desde los puestos,
+ * no solo desde el panel de solicitudes (D-053); la lista blanca evita un redirect abierto.
+ */
+const RETORNOS_DE_DECISION: ReadonlySet<string> = new Set([
+  "/admin/sala",
+  "/admin/pedidos/cocina",
+  "/admin/pedidos/barra",
+  "/admin/pedidos/todo",
+])
+
+function destinoDeVuelta(valor: string): string {
+  return RETORNOS_DE_DECISION.has(valor) ? valor : "/admin/parejas"
 }
 
 async function decidirPareja(
@@ -624,10 +633,14 @@ async function decidirPareja(
   if (empleado === null) {
     return respuestaHtml(renderizar(vistaEntrada("admin")), 401)
   }
+  // El cuerpo se lee UNA sola vez: motivo y pantalla de vuelta viajan en el mismo formulario.
+  const campos = await leerCampos(peticion)
+  const motivo = (campos["motivo"] ?? "").trim() || "No especificado"
+  const vuelta = destinoDeVuelta((campos["volver"] ?? "").trim())
   const resultado =
     decision === "aprobar"
       ? await almacen.aprobarPareja(empleado, solicitudId)
-      : await almacen.rechazarPareja(empleado, solicitudId, await motivoDeRechazo(peticion))
+      : await almacen.rechazarPareja(empleado, solicitudId, motivo)
   if (!resultado.ok) {
     const solicitudes = await almacen.listarParejasPendientes(empleado)
     return respuestaHtml(
@@ -637,9 +650,8 @@ async function decidirPareja(
       409,
     )
   }
-  return responderRedireccion(
-    decision === "aprobar" ? "/admin/parejas?aprobada=1" : "/admin/parejas?rechazada=1",
-  )
+  const marca = decision === "aprobar" ? "aprobada" : "rechazada"
+  return responderRedireccion(`${vuelta}?${marca}=1`)
 }
 
 async function despachar(

@@ -14,6 +14,7 @@ import { manejarAdmin } from "./admin.ts"
 import { manejarCarta } from "./carta.ts"
 import { manejarCocina } from "./cocina.ts"
 import type { Dependencias } from "./proveedor.ts"
+import { manejarSala } from "./sala.ts"
 import { cookieDeBorrado, cookieDeSesion } from "./sesion.ts"
 import { type EntornoDePanel, resolverEmpleadoDeSesion } from "./sesion-panel.ts"
 import { type Superficie, vistaCuadro, vistaEntrada, vistaPermisoDenegado } from "./vistas.ts"
@@ -142,6 +143,11 @@ export async function manejarPanel(
   const respuestaCarta = await manejarCarta(peticion, entorno, ahora, dependencias)
   if (respuestaCarta !== null) {
     return respuestaCarta
+  }
+
+  const respuestaSala = await manejarSala(peticion, entorno, ahora, dependencias)
+  if (respuestaSala !== null) {
+    return respuestaSala
   }
 
   const respuestaCocina = await manejarCocina(peticion, entorno, ahora, dependencias)

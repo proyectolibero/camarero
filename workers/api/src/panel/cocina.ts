@@ -75,8 +75,15 @@ async function renderCocina(
   estado: EstadoPantalla,
 ): Promise<Response> {
   const comandas = await almacen.listarComandas(empleado, puesto)
+  // Ningun puesto debe recibir pedidos de un comensal sin aprobar: la pantalla de trabajo
+  // ensena los emparejamientos pendientes y deja aprobarlos sin salir de aqui (D-053).
+  const solicitudes = await almacen.listarParejasPendientes(empleado)
+  const avisos = solicitudes.map((solicitud) => ({
+    solicitudId: solicitud.id,
+    mesa: solicitud.mesa,
+  }))
   return respuestaHtml(
-    renderizar(vistaCocina(empleado, comandas, puesto, estado)),
+    renderizar(vistaCocina(empleado, comandas, puesto, estado, avisos)),
     estado.estadoError ?? 200,
   )
 }
@@ -87,13 +94,13 @@ async function mostrarCocina(
   almacen: AlmacenPanel,
   puesto: PuestoDePantalla,
 ): Promise<Response> {
-  const cambiado = url.searchParams.get("cambiado") === "1"
-  return await renderCocina(
-    empleado,
-    almacen,
-    puesto,
-    cambiado ? { exito: "Comanda actualizada." } : {},
-  )
+  const exito =
+    url.searchParams.get("cambiado") === "1"
+      ? "Comanda actualizada."
+      : url.searchParams.get("aprobada") === "1"
+        ? "Emparejamiento aprobado."
+        : undefined
+  return await renderCocina(empleado, almacen, puesto, exito === undefined ? {} : { exito })
 }
 
 async function cambiarEstado(

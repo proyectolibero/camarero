@@ -30,6 +30,7 @@ import type {
   ComandaDePuesto,
   Mesa,
   Plato,
+  ResumenDeMesa,
   SolicitudPendiente,
   Zona,
 } from "../src/panel/datos.ts"
@@ -37,10 +38,12 @@ import {
   vistaCarta,
   vistaCategoria,
   vistaCocina,
+  vistaDetalleMesa,
   vistaEntrada,
   vistaMesas,
   vistaParejas,
   vistaPlato,
+  vistaSala,
 } from "../src/panel/vistas.ts"
 import { ESTILOS } from "../src/ui/estilos.ts"
 import { renderizar } from "../src/ui/html.ts"
@@ -608,6 +611,76 @@ escribir(
   "comensal-pedidos.html",
   conHojaDeEstilosRelativa(
     renderizar(vistaPedidosComensal("Barra Uno", "Mesa 4", "ABCDEFGH", PEDIDOS_DEL_COMENSAL)),
+  ),
+)
+
+// ---------------------------------------------------------------------------
+// La sala: las mesas en los cuatro estados, y el detalle de una con sus comandas
+// ---------------------------------------------------------------------------
+
+function mesaDeSala(id: string): Mesa {
+  const encontrada = MESAS.find((candidata) => candidata.id === id)
+  if (encontrada === undefined) {
+    throw new Error(`Falta la mesa ${id} de la previsualizacion`)
+  }
+  return encontrada
+}
+
+function resumenDeSala(
+  id: string,
+  sesionActiva: boolean,
+  solicitudId: string | null,
+  comandasSinServir: number,
+): ResumenDeMesa {
+  return { mesa: mesaDeSala(id), sesionActiva, solicitudId, comandasSinServir }
+}
+
+// Los cuatro estados, repartidos por las tres zonas, para que se vean a la vez.
+const RESUMENES_SALA: readonly ResumenDeMesa[] = [
+  resumenDeSala("s1", false, "pr-s1", 0), // esperando aprobacion
+  resumenDeSala("s2", true, null, 2), // con comandas pendientes
+  resumenDeSala("s3", true, null, 0), // todo servido
+  resumenDeSala("s4", false, null, 0), // libre
+  resumenDeSala("s5", false, null, 0), // libre
+  resumenDeSala("b1", true, null, 1), // con comandas pendientes
+  resumenDeSala("b2", false, null, 0), // libre
+  resumenDeSala("b3", true, null, 0), // todo servido
+  resumenDeSala("t1", false, null, 0), // libre
+  resumenDeSala("t2", false, "pr-t2", 0), // esperando aprobacion
+  resumenDeSala("t3", true, null, 3), // con comandas pendientes
+  resumenDeSala("t4", false, null, 0), // desactivada (t4 nace inactiva)
+]
+
+escribir("sala.html", conHojaDeEstilosRelativa(renderizar(vistaSala(DUENO, RESUMENES_SALA, {}))))
+
+const COMANDAS_DE_LA_MESA: readonly ComandaDePuesto[] = [
+  {
+    id: "o1",
+    mesa: "Sala 2",
+    destino: "frio",
+    estado: "pendiente",
+    creadaHaceSegundos: 12,
+    lineas: [
+      { nombre: "Ceviche clásico", cantidad: 2 },
+      { nombre: "Empanadas de queso", cantidad: 1 },
+    ],
+  },
+  {
+    id: "o4",
+    mesa: "Sala 2",
+    destino: "bar",
+    estado: "preparando",
+    creadaHaceSegundos: 65,
+    lineas: [{ nombre: "Pisco sour", cantidad: 2 }],
+  },
+]
+
+escribir(
+  "sala-mesa.html",
+  conHojaDeEstilosRelativa(
+    renderizar(
+      vistaDetalleMesa(DUENO, resumenDeSala("s2", true, null, 2), COMANDAS_DE_LA_MESA, {}),
+    ),
   ),
 )
 

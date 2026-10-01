@@ -9,7 +9,8 @@
  */
 import type { HtmlSeguro } from "../ui/html.ts"
 import { html, htmlCrudo } from "../ui/html.ts"
-import type { Mesa } from "./datos.ts"
+import type { EstadoDeMesa, Mesa } from "./datos.ts"
+import { ETIQUETA_ESTADO_MESA, GLIFO_ESTADO_MESA } from "./estado-mesa.ts"
 import { dimensionesDeMapa } from "./mapa.ts"
 
 const ANCHO_CELDA = 64
@@ -90,12 +91,46 @@ function lineasDeEtiqueta(
 export type OpcionesDeMapa = {
   readonly urlDeMesa?: (mesa: Mesa) => string
   readonly mesaElegidaId?: string | null
+  /** Si se pasa, cada mesa activa se pinta con su estado de sala (color, forma y glifo). */
+  readonly estadoDeMesa?: (mesa: Mesa) => EstadoDeMesa | null
+}
+
+/** Clases y texto de una ficha segun su estado de sala; sin estado, el aspecto de siempre. */
+function aspectoDeFicha(
+  mesa: Mesa,
+  sufijo: string,
+  estadoSala: EstadoDeMesa | null,
+): {
+  readonly clase: string
+  readonly claseTexto: string
+  readonly relleno: HtmlSeguro
+  readonly titulo: string
+  readonly glifo: string
+} {
+  if (estadoSala !== null) {
+    return {
+      clase: `mapa-mesa mapa-mesa-sala mapa-mesa-estado-${estadoSala}`,
+      claseTexto: `mapa-etiqueta mapa-etiqueta-sala mapa-etiqueta-estado-${estadoSala}`,
+      relleno: html``,
+      titulo: `${mesa.etiqueta} (${ETIQUETA_ESTADO_MESA[estadoSala]})`,
+      glifo: GLIFO_ESTADO_MESA[estadoSala],
+    }
+  }
+  const activa = mesa.activa
+  return {
+    clase: activa ? "mapa-mesa mapa-mesa-activa" : "mapa-mesa mapa-mesa-inactiva",
+    claseTexto: activa ? "mapa-etiqueta" : "mapa-etiqueta mapa-etiqueta-inactiva",
+    relleno: activa ? html`` : html` fill="url(#rayado-${sufijo})"`,
+    titulo: `${mesa.etiqueta} (${activa ? "activa" : "desactivada"})`,
+    glifo: "",
+  }
 }
 
 /**
  * Dibuja una ficha. Si hay `urlDeMesa`, la envuelve en un enlace `<a>`: elegir no es mutar,
  * asi que puede ser un GET y se ve en la direccion. La mesa elegida lleva un contorno grueso
- * para que el mapa diga por si solo cual se va a mover, sin coordenadas en jerga.
+ * para que el mapa diga por si solo cual se va a mover, sin coordenadas en jerga. Cuando hay
+ * `estadoDeMesa`, la ficha se pinta con su estado (relleno, borde y un glifo de forma).
  */
 function fichaDeMesa(mesa: Mesa, sufijo: string, opciones: OpcionesDeMapa): HtmlSeguro {
   if (mesa.posFila === null || mesa.posColumna === null) {
@@ -105,14 +140,16 @@ function fichaDeMesa(mesa: Mesa, sufijo: string, opciones: OpcionesDeMapa): Html
   const y = mesa.posFila * ALTO_CELDA + SEPARACION
   const ancho = ANCHO_CELDA - SEPARACION * 2
   const alto = ALTO_CELDA - SEPARACION * 2
-  const clase = mesa.activa ? "mapa-mesa mapa-mesa-activa" : "mapa-mesa mapa-mesa-inactiva"
-  const claseTexto = mesa.activa ? "mapa-etiqueta" : "mapa-etiqueta mapa-etiqueta-inactiva"
-  const relleno = mesa.activa ? html`` : html` fill="url(#rayado-${sufijo})"`
-  const estado = mesa.activa ? "activa" : "desactivada"
+  const estadoSala = mesa.activa ? (opciones.estadoDeMesa?.(mesa) ?? null) : null
+  const aspecto = aspectoDeFicha(mesa, sufijo, estadoSala)
   const elegida = opciones.mesaElegidaId === mesa.id
   const claseFicha = elegida ? "mapa-ficha mapa-ficha-elegida" : "mapa-ficha"
   const lineas = lineasDeEtiqueta(mesa.etiqueta, x + ancho / 2, y + alto / 2)
-  const ficha = html`<g class="${claseFicha}"><title>${mesa.etiqueta} (${estado})</title><rect class="${clase}" x="${x}" y="${y}" width="${ancho}" height="${alto}" rx="6"${relleno}></rect><text class="${claseTexto}" text-anchor="middle">${lineas}</text></g>`
+  const glifo =
+    aspecto.glifo === ""
+      ? html``
+      : html`<text class="mapa-glifo mapa-glifo-${estadoSala}" x="${x + ancho - 4}" y="${y + 14}" text-anchor="end">${aspecto.glifo}</text>`
+  const ficha = html`<g class="${claseFicha}"><title>${aspecto.titulo}</title><rect class="${aspecto.clase}" x="${x}" y="${y}" width="${ancho}" height="${alto}" rx="6"${aspecto.relleno}></rect><text class="${aspecto.claseTexto}" text-anchor="middle">${lineas}</text>${glifo}</g>`
   const url = opciones.urlDeMesa?.(mesa)
   if (url === undefined) {
     return ficha

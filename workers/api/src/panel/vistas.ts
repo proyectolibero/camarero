@@ -10,6 +10,7 @@ import {
   estadosPermitidos,
   etiquetaDeEstacion,
   type PuestoDePantalla,
+  transicionPermitida,
 } from "@camarero/domain"
 import type { Empleado } from "../base.ts"
 import { type HtmlSeguro, html, htmlCrudo } from "../ui/html.ts"
@@ -26,11 +27,20 @@ import type {
   Categoria,
   ComandaDePuesto,
   DatosLocal,
+  EstadoDeMesa,
   Mesa,
   Plato,
+  ResumenDeMesa,
   SolicitudPendiente,
   Zona,
 } from "./datos.ts"
+import {
+  DESCRIPCION_ESTADO_MESA,
+  ESTADOS_DE_MESA,
+  ETIQUETA_ESTADO_MESA,
+  estadoDeMesa,
+  GLIFO_ESTADO_MESA,
+} from "./estado-mesa.ts"
 import { svgDeZona } from "./mapa-svg.ts"
 import { nombreDeRol } from "./roles.ts"
 
@@ -47,6 +57,10 @@ const PANTALLAS: Readonly<Record<Superficie, readonly PantallaDelCuadro[]>> = {
     { titulo: "El local (nombre, zona horaria, estado y modo de servicio)", href: "/admin/local" },
     { titulo: "Zonas", href: "/admin/zonas" },
     { titulo: "Mesas y QR para imprimir", href: "/admin/mesas" },
+    {
+      titulo: "La sala: todas las mesas, sus comandas y sus estados",
+      href: "/admin/sala",
+    },
     { titulo: "Solicitudes de emparejamiento", href: "/admin/parejas" },
     { titulo: "Alta del local (asistente)" },
     { titulo: "Carta (categorías, platos, precios, fotos, orden)", href: "/admin/carta" },
@@ -514,6 +528,222 @@ ${listaDeMesas(mesas, puedeGestionar, mesaElegida)}
 ${enlaceVolverAlPanel()}
 </main>`
   return pagina("Mesas", contenido)
+}
+
+// ---------------------------------------------------------------------------
+// La sala: todas las mesas, sus comandas y sus estados (D-053)
+// ---------------------------------------------------------------------------
+
+/** Un emparejamiento pendiente tal como lo ensena un aviso de trabajo: su id y su mesa. */
+export type EmparejamientoPendiente = {
+  readonly solicitudId: string
+  readonly mesa: string
+}
+
+/**
+ * El aviso que las pantallas de trabajo (sala y puestos) ensenan cuando hay emparejamientos
+ * esperando. Dice CUANTOS son (un cero que no se ve es un cero invisible) y da un camino
+ * directo para aprobar. `volver` es la pantalla a la que se vuelve tras aprobar.
+ */
+function avisoDeEmparejamientos(
+  solicitudes: readonly EmparejamientoPendiente[],
+  volver: string,
+): HtmlSeguro {
+  if (solicitudes.length === 0) {
+    return html``
+  }
+  const cuantos = solicitudes.length
+  const frase =
+    cuantos === 1
+      ? "Hay 1 comensal esperando aprobación."
+      : `Hay ${cuantos} comensales esperando aprobación.`
+  return html`<section class="tarjeta aviso-emparejamientos">
+<h2>Emparejamientos esperando aprobación (${cuantos})</h2>
+<p role="alert">${frase} Hasta que alguien los apruebe, no pueden pedir.</p>
+<ul class="parejas">${solicitudes.map(
+    (solicitud) =>
+      html`<li class="pareja">
+<span class="pareja-mesa">${solicitud.mesa}</span>
+<span class="crece"></span>
+<form method="post" action="/admin/parejas/${solicitud.solicitudId}/aprobar">
+<input type="hidden" name="volver" value="${volver}">
+<button class="boton" type="submit">Aprobar</button>
+</form>
+</li>`,
+  )}</ul>
+<p class="ayuda">Para rechazar una solicitud, abre <a href="/admin/parejas">Solicitudes de emparejamiento</a>.</p>
+</section>`
+}
+
+function glifoDeEstado(estado: EstadoDeMesa): HtmlSeguro {
+  const glifo = GLIFO_ESTADO_MESA[estado]
+  return glifo === "" ? html`` : html`<span class="sala-glifo" aria-hidden="true">${glifo}</span>`
+}
+
+/** Distintivo de estado: glifo (forma) + palabra (texto) + color. Nunca solo color. */
+function distintivoDeEstado(estado: EstadoDeMesa): HtmlSeguro {
+  return html`<span class="sala-estado sala-estado-${estado}">${glifoDeEstado(estado)}${ETIQUETA_ESTADO_MESA[estado]}</span>`
+}
+
+function leyendaDeEstados(): HtmlSeguro {
+  return html`<ul class="sala-leyenda">${ESTADOS_DE_MESA.map(
+    (estado) =>
+      html`<li>
+<span class="sala-muestra sala-muestra-${estado}" aria-hidden="true">${GLIFO_ESTADO_MESA[estado]}</span>
+<span class="sala-leyenda-texto"><strong>${ETIQUETA_ESTADO_MESA[estado]}</strong> — ${DESCRIPCION_ESTADO_MESA[estado]}</span>
+</li>`,
+  )}</ul>`
+}
+
+type GrupoDeResumenes = {
+  readonly zona: string
+  readonly resumenes: readonly ResumenDeMesa[]
+}
+
+function agruparResumenesPorZona(resumenes: readonly ResumenDeMesa[]): readonly GrupoDeResumenes[] {
+  const porZona = new Map<string, ResumenDeMesa[]>()
+  for (const resumen of resumenes) {
+    const zona = resumen.mesa.zonaNombre ?? "Sin zona"
+    const lista = porZona.get(zona)
+    if (lista === undefined) {
+      porZona.set(zona, [resumen])
+    } else {
+      lista.push(resumen)
+    }
+  }
+  return [...porZona.entries()].map(([zona, lista]) => ({ zona, resumenes: lista }))
+}
+
+function urlDeMesaDeSala(mesa: Mesa): string {
+  return `/admin/sala/${encodeURIComponent(mesa.id)}`
+}
+
+function listaDeSala(resumenes: readonly ResumenDeMesa[]): HtmlSeguro {
+  return html`<ul class="plano">${resumenes.map((resumen) => {
+    // Una mesa desactivada no esta en servicio: se dice, en vez de llamarla "libre".
+    const distintivo = resumen.mesa.activa
+      ? distintivoDeEstado(estadoDeMesa(resumen))
+      : html`<span class="sala-estado sala-estado-desactivada">Desactivada</span>`
+    const cuenta =
+      resumen.comandasSinServir === 0
+        ? ""
+        : `${resumen.comandasSinServir} ${resumen.comandasSinServir === 1 ? "comanda sin servir" : "comandas sin servir"}`
+    return html`<li>
+<a class="mesa-enlace" href="${urlDeMesaDeSala(resumen.mesa)}">${resumen.mesa.etiqueta}</a>
+${distintivo}
+<span class="crece"></span>
+<span class="mesa-datos">${cuenta}</span>
+</li>`
+  })}</ul>`
+}
+
+export function vistaSala(
+  empleado: Empleado,
+  resumenes: readonly ResumenDeMesa[],
+  estado: EstadoPantalla & { readonly aprobada?: boolean },
+): HtmlSeguro {
+  const exito = estado.exito ?? (estado.aprobada === true ? "Emparejamiento aprobado." : undefined)
+  const pendientes: readonly EmparejamientoPendiente[] = resumenes
+    .filter(
+      (resumen): resumen is ResumenDeMesa & { readonly solicitudId: string } =>
+        resumen.solicitudId !== null,
+    )
+    .map((resumen) => ({ solicitudId: resumen.solicitudId, mesa: resumen.mesa.etiqueta }))
+  const estados = new Map(resumenes.map((resumen) => [resumen.mesa.id, estadoDeMesa(resumen)]))
+  const grupos = agruparResumenesPorZona(resumenes)
+  const cuerpoTablas =
+    grupos.length === 0
+      ? html`<section class="tarjeta"><p>Todavía no hay mesas en tu local.</p></section>`
+      : grupos.map(
+          (grupo, indice) => html`<section class="tarjeta">
+<h2>${grupo.zona}</h2>
+${svgDeZona(
+  grupo.zona,
+  grupo.resumenes.map((resumen) => resumen.mesa),
+  indice,
+  {
+    urlDeMesa: urlDeMesaDeSala,
+    estadoDeMesa: (mesa) => estados.get(mesa.id) ?? null,
+  },
+)}
+${listaDeSala(grupo.resumenes)}
+</section>`,
+        )
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${avisosDeEstado({ ...estado, exito })}
+<section class="tarjeta">
+<h1>La sala</h1>
+<p>Todas las mesas del local, sin filtrar por puesto, con sus comandas y su estado. Esta pantalla se actualiza sola y no muestra importes: es de servicio, no de caja.</p>
+${leyendaDeEstados()}
+</section>
+${avisoDeEmparejamientos(pendientes, "/admin/sala")}
+${cuerpoTablas}
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina("La sala", contenido, 20)
+}
+
+/** Una comanda vista desde la sala: su puesto, su estado y sus lineas. Sin precios. */
+function comandaDeSala(comanda: ComandaDePuesto, mesaId: string): HtmlSeguro {
+  const anulable = transicionPermitida(comanda.estado, "anulada")
+  return html`<li class="pedido-cocina pedido-cocina-${comanda.estado}">
+<div class="pedido-cabecera">
+<span class="pedido-destino">${etiquetaDeEstacion(comanda.destino)}</span>
+<span class="pedido-estado pedido-estado-${comanda.estado}">${ETIQUETA_ESTADO_COMANDA[comanda.estado]}</span>
+<span class="pedido-tiempo">hace ${etiquetaDeTiempo(comanda.creadaHaceSegundos)}</span>
+</div>
+<ul class="pedido-lineas">${comanda.lineas.map(
+    (linea) => html`<li><span>${linea.cantidad}× ${linea.nombre}</span></li>`,
+  )}</ul>
+${
+  anulable
+    ? html`<div class="pedido-acciones">
+<form method="post" action="/admin/sala/${encodeURIComponent(mesaId)}/comandas/${encodeURIComponent(comanda.id)}/anular">
+<button class="boton-mini boton-anular" type="submit">Anular</button>
+</form>
+</div>`
+    : html``
+}
+</li>`
+}
+
+export function vistaDetalleMesa(
+  empleado: Empleado,
+  resumen: ResumenDeMesa,
+  comandas: readonly ComandaDePuesto[],
+  estado: EstadoPantalla & { readonly anulada?: boolean },
+): HtmlSeguro {
+  const exito = estado.exito ?? (estado.anulada === true ? "Comanda anulada." : undefined)
+  const estadoMesa = estadoDeMesa(resumen)
+  const aviso =
+    resumen.solicitudId === null
+      ? html``
+      : avisoDeEmparejamientos(
+          [{ solicitudId: resumen.solicitudId, mesa: resumen.mesa.etiqueta }],
+          urlDeMesaDeSala(resumen.mesa),
+        )
+  const lista =
+    comandas.length === 0
+      ? html`<p>No hay comandas abiertas en esta mesa.</p>`
+      : html`<ul class="pedidos-cocina">${comandas.map((comanda) => comandaDeSala(comanda, resumen.mesa.id))}</ul>`
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${avisosDeEstado({ ...estado, exito })}
+<section class="tarjeta">
+<p><a class="boton boton-secundario" href="/admin/sala">Volver a la sala</a></p>
+<h1>${resumen.mesa.etiqueta}</h1>
+<p>${resumen.mesa.zonaNombre ?? "Sin zona"} · ${resumen.mesa.capacidad} plazas · código ${resumen.mesa.codigo}</p>
+${distintivoDeEstado(estadoMesa)}
+</section>
+${aviso}
+<section class="tarjeta">
+<h2>Comandas</h2>
+${lista}
+</section>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina(`Mesa · ${resumen.mesa.etiqueta}`, contenido, 20)
 }
 
 /** Pantalla sencilla para un aviso claro que no encaja en las tarjetas de gestion. */
@@ -1153,6 +1383,7 @@ export function vistaCocina(
   comandas: readonly ComandaDePuesto[],
   puesto: PuestoDePantalla,
   estado: EstadoPantalla,
+  solicitudes: readonly EmparejamientoPendiente[] = [],
 ): HtmlSeguro {
   const lista =
     comandas.length === 0
@@ -1161,6 +1392,7 @@ export function vistaCocina(
   const contenido = html`${cabecera("admin", empleado)}
 <main class="contenedor">
 ${avisosDeEstado(estado)}
+${avisoDeEmparejamientos(solicitudes, `/admin/pedidos/${puesto}`)}
 <section class="tarjeta">
 <h1>${TITULO_DE_PUESTO[puesto]}</h1>
 ${navegacionDePuestos(puesto)}

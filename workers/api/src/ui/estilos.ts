@@ -32,6 +32,18 @@ export const ESTILOS = `:root {
   --mapa-inactiva-raya: #9aa0a6;
   --mapa-inactiva-borde: #6b7076;
   --mapa-inactiva-tinta: #1b1b1f;
+
+  /* Paleta de la sala (D-053): los cuatro estados reutilizan los colores del mapa y de los
+     avisos. Se distinguen tambien por forma (glifo y borde discontinuo), no solo por color.
+     El contraste del texto se comprueba en tests/contraste-mapa.test.ts, no a ojo. */
+  --sala-libre-fondo: #e7e9eb;
+  --sala-libre-tinta: #1b1b1f;
+  --sala-espera-fondo: #fff7e0;
+  --sala-espera-tinta: #1b1b1f;
+  --sala-pendiente-fondo: #1f6b4a;
+  --sala-pendiente-tinta: #ffffff;
+  --sala-servido-fondo: #e8f5ec;
+  --sala-servido-tinta: #14532d;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -57,6 +69,15 @@ export const ESTILOS = `:root {
     --mapa-inactiva-raya: #5a5a63;
     --mapa-inactiva-borde: #8a8a93;
     --mapa-inactiva-tinta: #ececf1;
+
+    --sala-libre-fondo: #2a2a31;
+    --sala-libre-tinta: #ececf1;
+    --sala-espera-fondo: #3a2f10;
+    --sala-espera-tinta: #ececf1;
+    --sala-pendiente-fondo: #4fae7e;
+    --sala-pendiente-tinta: #0f1b14;
+    --sala-servido-fondo: #17301f;
+    --sala-servido-tinta: #b6e6c6;
   }
 }
 
@@ -1317,5 +1338,189 @@ p {
 .boton-anular {
   color: var(--error);
   border-color: currentColor;
+}
+
+/* ---------------------------------------------------------------------------
+   La sala (D-053). Cada mesa lleva su estado por relleno, borde y un glifo de forma:
+   se distingue aunque no se distinga el color. El contraste del texto lo mide el test.
+   --------------------------------------------------------------------------- */
+
+.mapa-mesa-sala {
+  stroke-width: 2;
+}
+
+.mapa-mesa-estado-libre {
+  fill: var(--sala-libre-fondo);
+  stroke: var(--sala-libre-tinta);
+}
+
+/* El borde discontinuo dice "aqui falta una decision" sin depender del color. */
+.mapa-mesa-estado-esperando_aprobacion {
+  fill: var(--sala-espera-fondo);
+  stroke: var(--sala-espera-tinta);
+  stroke-dasharray: 5 3;
+}
+
+.mapa-mesa-estado-comandas_pendientes {
+  fill: var(--sala-pendiente-fondo);
+  stroke: var(--sala-pendiente-tinta);
+}
+
+.mapa-mesa-estado-todo_servido {
+  fill: var(--sala-servido-fondo);
+  stroke: var(--sala-servido-tinta);
+}
+
+.mapa-etiqueta-estado-libre {
+  fill: var(--sala-libre-tinta);
+}
+
+.mapa-etiqueta-estado-esperando_aprobacion {
+  fill: var(--sala-espera-tinta);
+}
+
+.mapa-etiqueta-estado-comandas_pendientes {
+  fill: var(--sala-pendiente-tinta);
+}
+
+.mapa-etiqueta-estado-todo_servido {
+  fill: var(--sala-servido-tinta);
+}
+
+/* Glifos de forma: ?, ! y marca. La mesa libre no lleva glifo. */
+.mapa-glifo {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.mapa-glifo-esperando_aprobacion {
+  fill: var(--sala-espera-tinta);
+}
+
+.mapa-glifo-comandas_pendientes {
+  fill: var(--sala-pendiente-tinta);
+}
+
+.mapa-glifo-todo_servido {
+  fill: var(--sala-servido-tinta);
+}
+
+.sala-leyenda {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.sala-leyenda li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.sala-muestra {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  flex: 0 0 auto;
+  border-radius: 0.35rem;
+  border: 2px solid;
+  font-weight: 700;
+}
+
+.sala-muestra-libre {
+  background: var(--sala-libre-fondo);
+  border-color: var(--sala-libre-tinta);
+  color: var(--sala-libre-tinta);
+}
+
+.sala-muestra-esperando_aprobacion {
+  background: var(--sala-espera-fondo);
+  border-color: var(--sala-espera-tinta);
+  color: var(--sala-espera-tinta);
+  border-style: dashed;
+}
+
+.sala-muestra-comandas_pendientes {
+  background: var(--sala-pendiente-fondo);
+  border-color: var(--sala-pendiente-tinta);
+  color: var(--sala-pendiente-tinta);
+}
+
+.sala-muestra-todo_servido {
+  background: var(--sala-servido-fondo);
+  border-color: var(--sala-servido-tinta);
+  color: var(--sala-servido-tinta);
+}
+
+.sala-leyenda-texto {
+  color: var(--tinta);
+  font-size: 0.9rem;
+}
+
+.sala-estado {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.sala-estado-libre {
+  background: var(--sala-libre-fondo);
+  color: var(--sala-libre-tinta);
+}
+
+.sala-estado-esperando_aprobacion {
+  background: var(--sala-espera-fondo);
+  color: var(--sala-espera-tinta);
+  border-style: dashed;
+}
+
+.sala-estado-comandas_pendientes {
+  background: var(--sala-pendiente-fondo);
+  color: var(--sala-pendiente-tinta);
+}
+
+.sala-estado-todo_servido {
+  background: var(--sala-servido-fondo);
+  color: var(--sala-servido-tinta);
+}
+
+/* La mesa fuera de servicio reutiliza el gris rayado del mapa: no es un estado de sala. */
+.sala-estado-desactivada {
+  background: var(--mapa-inactiva-fondo);
+  color: var(--mapa-inactiva-tinta);
+}
+
+.sala-glifo {
+  font-weight: 700;
+}
+
+.mesa-enlace {
+  color: var(--acento);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.mesa-enlace:hover {
+  text-decoration: underline;
+}
+
+/* El aviso de emparejamientos usa el ambar de los avisos, ya presente en la piel. */
+.aviso-emparejamientos {
+  border-color: #e0b13a;
+}
+
+@media (prefers-color-scheme: dark) {
+  .aviso-emparejamientos {
+    border-color: #b98a20;
+  }
 }
 `

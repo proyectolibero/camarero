@@ -137,3 +137,29 @@ describe("Mapa: contraste con los numeros, no a ojo", () => {
     expect(contrasteVisible("#55555e", "#ffffff", 0.6)).toBeLessThan(MINIMO_TEXTO)
   })
 })
+
+describe("Sala: contraste de los cuatro estados (D-053)", () => {
+  // Cada estado tiene su pareja tinta/fondo; se mide el texto real que sirve la hoja.
+  const ESTADOS: ReadonlyArray<{ readonly estado: string; readonly prefijo: string }> = [
+    { estado: "libre", prefijo: "sala-libre" },
+    { estado: "esperando_aprobacion", prefijo: "sala-espera" },
+    { estado: "comandas_pendientes", prefijo: "sala-pendiente" },
+    { estado: "todo_servido", prefijo: "sala-servido" },
+  ]
+
+  for (const { estado, prefijo } of ESTADOS) {
+    for (const oscuro of [false, true]) {
+      const tema = oscuro ? "oscuro" : "claro"
+      it(`debe superar ${MINIMO_TEXTO}:1 el texto del estado ${estado} en el tema ${tema}`, () => {
+        const tinta = valorDeMapa(`--${prefijo}-tinta`, oscuro)
+        const fondo = valorDeMapa(`--${prefijo}-fondo`, oscuro)
+        expect(contraste(tinta, fondo)).toBeGreaterThanOrEqual(MINIMO_TEXTO)
+      })
+    }
+  }
+
+  it("debe saber fallar cuando un estado se queda por debajo del minimo", () => {
+    // Blanco sobre el verde palido de "todo servido" seria ilegible: el mismo calculo lo caza.
+    expect(contraste("#ffffff", "#e8f5ec")).toBeLessThan(MINIMO_TEXTO)
+  })
+})
