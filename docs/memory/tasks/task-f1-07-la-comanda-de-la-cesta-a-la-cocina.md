@@ -2,7 +2,7 @@
 id: TASK-F1-07
 type: task
 title: "La comanda: de la cesta a la cocina"
-status: doing
+status: review
 date: 2026-10-01
 phase: F1
 tags:
@@ -38,7 +38,7 @@ doc: contracts/contract-estados-comanda-estados-de-la-comanda.md
 tests:
   suite: pnpm -r run test
   passed: true
-  evidence: '2026-10-01 · pnpm -r run test · workers/api 263 (antes 239, +24), packages/db 100 (antes 94, +6), packages/domain 8 (nuevo), 0 fallan. pnpm typecheck 0; pnpm biome ci . exit 0. En vivo tras Despliegue: GET /t/CJ88JYEK -> 200 text/html con action="/t/CJ88JYEK/cesta" y el boton por plato; GET /admin/pedidos sin sesion -> 200 con la entrada y sin ninguna comanda. CI 36807323735 y Despliegue 36807402928 en verde. NO se cierra: la prueba con el dedo es del humano.'
+  evidence: "2026-10-01 · pnpm -r run test · workers/api 269 (antes 263, +6), packages/db 107 (antes 100, +7), packages/domain 17 (antes 8, +9), tools/mcp-memory 95, 0 fallan. pnpm typecheck 0; pnpm biome ci . exit 0. CI 36813149499 y Despliegue 36813224109 en verde; Instalar esquema 36813341323 en verde con 0020 aplicada (historial 20 migraciones, aislamiento 0 filas, 104 politicas). En vivo sin sesion: /admin/pedidos, /admin/pedidos/cocina, /barra y /todo -> 200 (pagina de entrada); /admin/ruta-inexistente-xyz -> 404. NO se cierra: la prueba con el dedo es del humano."
 ---
 
 ## Descripcion
@@ -62,3 +62,5 @@ Rebanada 4 de la Fase 1: la comanda. El comensal, ya emparejado y aprobado, elig
 ## Notas
 
 - **2026-10-01** — Commit ef14413. Cesta en cookie camarero_cesta (solo id:cantidad, nunca precios); envio POST /t/<codigo>/cesta/enviar con idempotency_key unica; cocina GET /admin/pedidos con refresco meta 15 s. Matriz de estados en packages/domain/order-state.ts con 100% de cobertura. Prueba literal pedida en cada caso (idempotencia dos envios -> una comanda; sin aprobacion falla; precio manipulado ignorado; aislamiento). Previsualizacion cesta.html y cocina.html mirada; se corrigio una colision CSS (.pedido-total) que dibujaba una raya en la cabecera de la comanda.
+
+- **2026-10-01** — 2026-10-01 — Rework tras LL-025/ADR-0033. Commit a685a75. Migracion 0020 (orders.prep_station, alta automatica de barra/bebidas, comando por destino con clave derivada). Pantallas por puesto (/admin/pedidos/cocina|barra|todo), sin precios. D-052. Verificacion: domain 17, workers/api 269, packages/db 107, 0 fallan; typecheck 0; biome ci 0; CI 36813149499 y Despliegue 36813224109 en verde; "Instalar esquema" 36813341323 verde (0020 aplicada: historial 20, aislamiento 0). En vivo sin sesion las rutas nuevas devuelven 200. NO se cierra: la prueba con el dedo es del humano.
