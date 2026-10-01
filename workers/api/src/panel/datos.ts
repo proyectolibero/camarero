@@ -123,6 +123,14 @@ export type ResultadoMovimiento =
   | { readonly ok: true }
   | { readonly ok: false; readonly motivo: MotivoDeMovimiento }
 
+/** Solicitud de emparejamiento pendiente, tal como la ve el personal para decidir. */
+export type SolicitudPendiente = {
+  readonly id: string
+  readonly mesa: string
+  readonly pedidaHaceSegundos: number
+  readonly restanteSegundos: number
+}
+
 /** Lo que el panel necesita de la base. Se inyecta para poder probar sin tocar Postgres. */
 export type AlmacenPanel = {
   readonly leerLocal: (empleado: Empleado) => Promise<DatosLocal | null>
@@ -182,6 +190,14 @@ export type AlmacenPanel = {
     platoId: string,
     clave: string | null,
   ) => Promise<Resultado<string | null>>
+  readonly contarParejasPendientes: (empleado: Empleado) => Promise<number>
+  readonly listarParejasPendientes: (empleado: Empleado) => Promise<readonly SolicitudPendiente[]>
+  readonly aprobarPareja: (empleado: Empleado, solicitudId: string) => Promise<Resultado>
+  readonly rechazarPareja: (
+    empleado: Empleado,
+    solicitudId: string,
+    motivo: string,
+  ) => Promise<Resultado>
 }
 
 type FilaLocal = {
@@ -942,6 +958,63 @@ async function fijarFilaFoto(
   return { ok: true, valor: fila.photo_r2_key }
 }
 
+type FilaPareja = {
+  readonly id: string
+  readonly mesa: string
+  readonly pedida: number
+  readonly restante: number
+}
+
+/** Solicitudes pendientes y vigentes del local. La RLS ya acota al local del empleado. */
+async function listarFilaParejas(cliente: Client): Promise<FilaPareja[]> {
+  const resultado = await cliente.query<FilaPareja>(
+    `select pr.id, t.label as mesa,
+            extract(epoch from (now() - pr.created_at))::int as pedida,
+            extract(epoch from (s.pairing_expires_at - now()))::int as restante
+       from public.pairing_requests pr
+       join public.table_sessions s on s.id = pr.session_id
+       join public.tables t on t.id = pr.table_id
+      where pr.state = 'pending'
+        and (s.pairing_expires_at is null or s.pairing_expires_at > now())
+      order by pr.created_at, pr.id`,
+  )
+  return resultado.rows
+}
+
+/** Decide una solicitud y, al aprobar, activa la sesion: es lo que abre la barrera de la comanda. */
+async function decidirPareja(
+  cliente: Client,
+  solicitudId: string,
+  decision: "approved" | "rejected",
+  motivo: string | null,
+): Promise<Resultado> {
+  try {
+    const actualizada = await cliente.query<{ session_id: string }>(
+      `update public.pairing_requests
+          set state = $2, decided_by = public.staff_actual(), decided_at = now(), reason = $3
+        where id = $1 and state = 'pending'
+        returning session_id`,
+      [solicitudId, decision, motivo],
+    )
+    const fila = actualizada.rows[0]
+    if (fila === undefined) {
+      return { ok: false, motivo: "no_existe" }
+    }
+    if (decision === "approved") {
+      await cliente.query("update public.table_sessions set state = 'active' where id = $1", [
+        fila.session_id,
+      ])
+    }
+    return { ok: true, valor: undefined }
+  } catch (error) {
+    const motivoError = motivoDeErrorDeEscritura(error)
+    if (motivoError === null) {
+      throw error
+    }
+    return { ok: false, motivo: motivoError }
+  }
+}
+
 export function almacenDeBase(cadena: string): AlmacenPanel {
   return {
     leerLocal: (empleado): Promise<DatosLocal | null> =>
@@ -1090,6 +1163,25 @@ export function almacenDeBase(cadena: string): AlmacenPanel {
       enTransaccion(cadena, empleado, (cliente) => moverFilaPlato(cliente, platoId, direccion)),
     fijarFoto: (empleado, platoId, clave): Promise<Resultado<string | null>> =>
       enTransaccion(cadena, empleado, (cliente) => fijarFilaFoto(cliente, platoId, clave)),
+    contarParejasPendientes: (empleado): Promise<number> =>
+      enTransaccion(cadena, empleado, async (cliente) => (await listarFilaParejas(cliente)).length),
+    listarParejasPendientes: (empleado): Promise<readonly SolicitudPendiente[]> =>
+      enTransaccion(cadena, empleado, async (cliente) =>
+        (await listarFilaParejas(cliente)).map((fila) => ({
+          id: fila.id,
+          mesa: fila.mesa,
+          pedidaHaceSegundos: fila.pedida,
+          restanteSegundos: fila.restante,
+        })),
+      ),
+    aprobarPareja: (empleado, solicitudId): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, (cliente) =>
+        decidirPareja(cliente, solicitudId, "approved", null),
+      ),
+    rechazarPareja: (empleado, solicitudId, motivo): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, (cliente) =>
+        decidirPareja(cliente, solicitudId, "rejected", motivo),
+      ),
   }
 }
 
@@ -1125,6 +1217,10 @@ export function almacenNoConfigurado(): AlmacenPanel {
       ok: false,
       motivo: "no_existe",
     }),
+    contarParejasPendientes: async (): Promise<number> => 0,
+    listarParejasPendientes: async (): Promise<readonly SolicitudPendiente[]> => [],
+    aprobarPareja: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
+    rechazarPareja: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
   }
 }
 

@@ -42,6 +42,7 @@ import {
   vistaEntrada,
   vistaLocal,
   vistaMesas,
+  vistaParejas,
   vistaQrMesa,
   vistaQrTodas,
   vistaSinLocal,
@@ -522,10 +523,16 @@ type RutaAdmin =
   | { readonly tipo: "local" }
   | { readonly tipo: "zonas" }
   | { readonly tipo: "mesas" }
+  | { readonly tipo: "parejas" }
   | { readonly tipo: "alternar"; readonly mesaId: string }
   | { readonly tipo: "mover"; readonly mesaId: string }
   | { readonly tipo: "qr_todas" }
   | { readonly tipo: "qr_mesa"; readonly mesaId: string }
+  | {
+      readonly tipo: "pareja_accion"
+      readonly solicitudId: string
+      readonly decision: "aprobar" | "rechazar"
+    }
 
 function reconocerRuta(segmentos: readonly string[]): RutaAdmin | null {
   if (segmentos[0] !== "admin") {
@@ -533,7 +540,12 @@ function reconocerRuta(segmentos: readonly string[]): RutaAdmin | null {
   }
   if (segmentos.length === 2) {
     const seccion = segmentos[1]
-    if (seccion === "local" || seccion === "zonas" || seccion === "mesas") {
+    if (
+      seccion === "local" ||
+      seccion === "zonas" ||
+      seccion === "mesas" ||
+      seccion === "parejas"
+    ) {
       return { tipo: seccion }
     }
     return null
@@ -542,7 +554,13 @@ function reconocerRuta(segmentos: readonly string[]): RutaAdmin | null {
     return { tipo: "qr_todas" }
   }
   const [, seccion, tercero, cuarto] = segmentos
-  if (segmentos.length !== 4 || seccion !== "mesas" || tercero === undefined) {
+  if (segmentos.length !== 4 || tercero === undefined) {
+    return null
+  }
+  if (seccion === "parejas" && (cuarto === "aprobar" || cuarto === "rechazar")) {
+    return { tipo: "pareja_accion", solicitudId: tercero, decision: cuarto }
+  }
+  if (seccion !== "mesas") {
     return null
   }
   if (cuarto === "qr") {
@@ -555,6 +573,63 @@ function reconocerRuta(segmentos: readonly string[]): RutaAdmin | null {
     return { tipo: "mover", mesaId: tercero }
   }
   return null
+}
+
+// ---------------------------------------------------------------------------
+// Solicitudes de emparejamiento
+// ---------------------------------------------------------------------------
+
+async function mostrarParejas(
+  url: URL,
+  empleado: Empleado | null,
+  almacen: AlmacenPanel,
+): Promise<Response> {
+  if (empleado === null) {
+    return respuestaHtml(renderizar(vistaEntrada("admin")), 200)
+  }
+  const solicitudes = await almacen.listarParejasPendientes(empleado)
+  return respuestaHtml(
+    renderizar(
+      vistaParejas(empleado, solicitudes, {
+        aprobada: url.searchParams.get("aprobada") === "1",
+        rechazada: url.searchParams.get("rechazada") === "1",
+      }),
+    ),
+    200,
+  )
+}
+
+async function motivoDeRechazo(peticion: Request): Promise<string> {
+  const campos = await leerCampos(peticion)
+  const motivo = (campos["motivo"] ?? "").trim()
+  return motivo === "" ? "No especificado" : motivo
+}
+
+async function decidirPareja(
+  peticion: Request,
+  empleado: Empleado | null,
+  solicitudId: string,
+  decision: "aprobar" | "rechazar",
+  almacen: AlmacenPanel,
+): Promise<Response> {
+  if (empleado === null) {
+    return respuestaHtml(renderizar(vistaEntrada("admin")), 401)
+  }
+  const resultado =
+    decision === "aprobar"
+      ? await almacen.aprobarPareja(empleado, solicitudId)
+      : await almacen.rechazarPareja(empleado, solicitudId, await motivoDeRechazo(peticion))
+  if (!resultado.ok) {
+    const mensaje =
+      resultado.motivo === "sin_permiso"
+        ? "No tienes permiso para decidir esa solicitud."
+        : "Esa solicitud ya no está pendiente: puede haber caducado o ser de otro local."
+    const solicitudes = await almacen.listarParejasPendientes(empleado)
+    return respuestaHtml(renderizar(vistaParejas(empleado, solicitudes, { error: mensaje })), 409)
+  }
+  return responderRedireccion(
+    decision === "aprobar" ? "/admin/parejas?aprobada=1" : "/admin/parejas?rechazada=1",
+  )
 }
 
 async function despachar(
@@ -584,6 +659,14 @@ async function despachar(
       return await rutaQrTodas(peticion, empleado, entorno, almacen)
     case "qr_mesa":
       return await rutaQrMesa(peticion, empleado, entorno, ruta.mesaId, almacen)
+    case "parejas":
+      return peticion.method === "GET"
+        ? await mostrarParejas(url, empleado, almacen)
+        : responderMetodoNoPermitido("GET")
+    case "pareja_accion":
+      return peticion.method === "POST"
+        ? await decidirPareja(peticion, empleado, ruta.solicitudId, ruta.decision, almacen)
+        : responderMetodoNoPermitido("POST")
   }
 }
 

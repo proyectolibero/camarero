@@ -894,4 +894,183 @@ p {
   width: 6rem;
   height: 6rem;
 }
+
+/* ---------------------------------------------------------------------------
+   La pantalla del comensal. Se lee en un movil bajo la mesa: foto, nombre y precio
+   grande, y un boton claro para pedir el emparejamiento.
+   --------------------------------------------------------------------------- */
+
+.comensal-cabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.85rem 1.25rem;
+  background: var(--papel);
+  border-bottom: 1px solid var(--borde);
+}
+
+.comensal-cabecera .marca {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.comensal-local {
+  color: var(--tinta-suave);
+}
+
+.comensal-mesa {
+  font-size: 1.7rem;
+  margin-bottom: 0.75rem;
+}
+
+.comensal-carta-titulo {
+  margin-top: 2rem;
+}
+
+.emparejamiento {
+  border: 1px solid var(--borde);
+  border-radius: 0.75rem;
+  padding: 1rem 1.1rem;
+  margin: 0 0 1.25rem;
+  background: var(--papel);
+}
+
+.emparejamiento p:last-child {
+  margin-bottom: 0;
+}
+
+.emparejamiento-espera {
+  background: #fff7e0;
+  border-color: #e0b13a;
+}
+
+.emparejamiento-ok {
+  background: var(--exito-fondo);
+  border-color: currentColor;
+  color: var(--exito);
+}
+
+.emparejamiento-error {
+  background: var(--error-fondo);
+  border-color: currentColor;
+  color: var(--error);
+}
+
+.boton-grande {
+  width: 100%;
+  padding: 0.9rem 1rem;
+  font-size: 1.05rem;
+  margin-top: 0.5rem;
+}
+
+.comensal-categoria {
+  margin-bottom: 1.5rem;
+}
+
+.comensal-platos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.comensal-plato {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  background: var(--papel);
+  border: 1px solid var(--borde);
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+}
+
+.comensal-foto {
+  width: 5rem;
+  height: 5rem;
+  object-fit: cover;
+  border-radius: 0.5rem;
+  border: 1px solid var(--borde);
+  flex: 0 0 auto;
+}
+
+.comensal-plato-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.comensal-plato-nombre {
+  font-weight: 600;
+}
+
+.comensal-plato-desc {
+  color: var(--tinta-suave);
+  font-size: 0.9rem;
+}
+
+.comensal-plato-precio {
+  font-weight: 600;
+  color: var(--acento);
+}
+
+@media (prefers-color-scheme: dark) {
+  .emparejamiento-espera {
+    background: #3a2f10;
+    border-color: #b98a20;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Solicitudes de emparejamiento pendientes en el panel.
+   --------------------------------------------------------------------------- */
+
+.parejas {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--borde);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.pareja {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.7rem 0.9rem;
+  border-top: 1px solid var(--borde);
+}
+
+.pareja:first-child {
+  border-top: 0;
+}
+
+.pareja-mesa {
+  font-weight: 600;
+}
+
+.pareja-tiempo {
+  color: var(--tinta-suave);
+  font-size: 0.85rem;
+}
+
+.pareja-rechazo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.pareja-rechazo input {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--borde);
+  border-radius: 0.4rem;
+  background: var(--fondo);
+  color: var(--tinta);
+  font: inherit;
+}
 `

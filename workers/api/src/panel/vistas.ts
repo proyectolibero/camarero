@@ -16,7 +16,7 @@ import {
   SIN_CATEGORIA,
   TAGS,
 } from "./carta-catalogo.ts"
-import type { Categoria, DatosLocal, Mesa, Plato, Zona } from "./datos.ts"
+import type { Categoria, DatosLocal, Mesa, Plato, SolicitudPendiente, Zona } from "./datos.ts"
 import { svgDeZona } from "./mapa-svg.ts"
 import { nombreDeRol } from "./roles.ts"
 
@@ -33,6 +33,7 @@ const PANTALLAS: Readonly<Record<Superficie, readonly PantallaDelCuadro[]>> = {
     { titulo: "El local (nombre, zona horaria, estado y modo de servicio)", href: "/admin/local" },
     { titulo: "Zonas", href: "/admin/zonas" },
     { titulo: "Mesas y QR para imprimir", href: "/admin/mesas" },
+    { titulo: "Solicitudes de emparejamiento", href: "/admin/parejas" },
     { titulo: "Alta del local (asistente)" },
     { titulo: "Carta (categorías, platos, precios, fotos, orden)", href: "/admin/carta" },
     { titulo: "Personal (invitar, roles, PIN)" },
@@ -85,12 +86,20 @@ function cabecera(superficie: Superficie, empleado: Empleado): HtmlSeguro {
 </header>`
 }
 
-function listaDePantallas(superficie: Superficie): readonly HtmlSeguro[] {
-  return PANTALLAS[superficie].map((pantalla) =>
-    pantalla.href === undefined
-      ? html`<li><span>${pantalla.titulo}</span><span class="pronto">por construir</span></li>`
-      : html`<li><a href="${pantalla.href}">${pantalla.titulo}</a></li>`,
-  )
+function listaDePantallas(
+  superficie: Superficie,
+  pendientes: number | null,
+): readonly HtmlSeguro[] {
+  return PANTALLAS[superficie].map((pantalla) => {
+    if (pantalla.href === undefined) {
+      return html`<li><span>${pantalla.titulo}</span><span class="pronto">por construir</span></li>`
+    }
+    const cuenta =
+      pantalla.href === "/admin/parejas" && pendientes !== null && pendientes > 0
+        ? ` (${pendientes})`
+        : ""
+    return html`<li><a href="${pantalla.href}">${pantalla.titulo}${cuenta}</a></li>`
+  })
 }
 
 function nombreDeLocal(empleado: Empleado): string {
@@ -122,7 +131,11 @@ export function vistaEntrada(superficie: Superficie, error?: string): HtmlSeguro
   return pagina("Entrar", contenido)
 }
 
-export function vistaCuadro(superficie: Superficie, empleado: Empleado): HtmlSeguro {
+export function vistaCuadro(
+  superficie: Superficie,
+  empleado: Empleado,
+  pendientes: number | null = null,
+): HtmlSeguro {
   const contenido = html`${cabecera(superficie, empleado)}
 <main class="contenedor">
 <section class="tarjeta">
@@ -134,7 +147,7 @@ export function vistaCuadro(superficie: Superficie, empleado: Empleado): HtmlSeg
 </dl>
 </section>
 <h2>Pantallas</h2>
-<ul class="pantallas">${listaDePantallas(superficie)}</ul>
+<ul class="pantallas">${listaDePantallas(superficie, pendientes)}</ul>
 </main>`
   return pagina("Panel", contenido)
 }
@@ -952,4 +965,60 @@ ${plato === null ? html`` : seccionFoto(plato)}
 <p><a class="boton boton-secundario" href="${destinoDeVuelta}">${rotuloDeVuelta}</a></p>
 </main>`
   return pagina(titulo, contenido)
+}
+
+// ---------------------------------------------------------------------------
+// Solicitudes de emparejamiento pendientes
+// ---------------------------------------------------------------------------
+
+function etiquetaDeTiempo(segundos: number): string {
+  const total = Math.max(0, Math.round(segundos))
+  if (total < 60) {
+    return `${total} s`
+  }
+  return `${Math.round(total / 60)} min`
+}
+
+function filaDeSolicitud(solicitud: SolicitudPendiente): HtmlSeguro {
+  return html`<li class="pareja">
+<span class="pareja-mesa">${solicitud.mesa}</span>
+<span class="pareja-tiempo">Pedida hace ${etiquetaDeTiempo(solicitud.pedidaHaceSegundos)} · quedan ${etiquetaDeTiempo(solicitud.restanteSegundos)}</span>
+<span class="crece"></span>
+<form method="post" action="/admin/parejas/${solicitud.id}/aprobar">
+<button class="boton" type="submit">Aprobar</button>
+</form>
+<form class="pareja-rechazo" method="post" action="/admin/parejas/${solicitud.id}/rechazar">
+<input type="text" name="motivo" maxlength="200" placeholder="Motivo del rechazo" aria-label="Motivo del rechazo" required>
+<button class="boton boton-secundario" type="submit">Rechazar</button>
+</form>
+</li>`
+}
+
+export function vistaParejas(
+  empleado: Empleado,
+  solicitudes: readonly SolicitudPendiente[],
+  estado: EstadoPantalla & { readonly aprobada?: boolean; readonly rechazada?: boolean },
+): HtmlSeguro {
+  const exito =
+    estado.exito ??
+    (estado.aprobada === true
+      ? "Solicitud aprobada."
+      : estado.rechazada === true
+        ? "Solicitud rechazada."
+        : undefined)
+  const lista =
+    solicitudes.length === 0
+      ? html`<p>No hay solicitudes pendientes ahora mismo.</p>`
+      : html`<ul class="parejas">${solicitudes.map(filaDeSolicitud)}</ul>`
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${avisosDeEstado({ ...estado, exito })}
+<section class="tarjeta">
+<h1>Solicitudes de emparejamiento</h1>
+<p>Un comensal ha escaneado el QR de una mesa. Apruébalo para que pueda pedir. Cada solicitud se caduca a los 90 segundos; si caduca, el comensal puede volver a pedirla.</p>
+${lista}
+</section>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina("Solicitudes de emparejamiento", contenido)
 }

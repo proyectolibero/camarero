@@ -15,13 +15,16 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { crc32, deflateSync } from "node:zlib"
 import type { Empleado } from "../src/base.ts"
+import type { CartaDelComensal } from "../src/comensal/datos.ts"
+import { vistaCartaComensal, vistaCodigoDesconocido } from "../src/comensal/vistas.ts"
 import { generarCodigoMesa } from "../src/panel/codigo-mesa.ts"
-import type { Categoria, Mesa, Plato, Zona } from "../src/panel/datos.ts"
+import type { Categoria, Mesa, Plato, SolicitudPendiente, Zona } from "../src/panel/datos.ts"
 import {
   vistaCarta,
   vistaCategoria,
   vistaEntrada,
   vistaMesas,
+  vistaParejas,
   vistaPlato,
 } from "../src/panel/vistas.ts"
 import { ESTILOS } from "../src/ui/estilos.ts"
@@ -376,5 +379,82 @@ escribir(
     ),
   ),
 )
+
+// ---------------------------------------------------------------------------
+// El comensal: la carta de su mesa con el boton de emparejarse
+// ---------------------------------------------------------------------------
+
+const CARTA_COMENSAL: CartaDelComensal = {
+  local: "Barra Uno",
+  mesa: "Mesa 4",
+  estado: "sin_pedir",
+  restanteSegundos: 90,
+  categorias: [
+    {
+      id: "c1",
+      nombre: "Entrantes",
+      platos: [
+        {
+          id: "p1",
+          nombre: "Ceviche clásico",
+          descripcion: "Corvina, limón de pica, cebolla morada y cilantro.",
+          precioClp: 8900,
+          fotoClave: FOTO_CEVICHE,
+          estacion: "frio",
+        },
+        {
+          id: "p2",
+          nombre: "Empanadas de queso",
+          descripcion: "Tres unidades, masa de hojaldre.",
+          precioClp: 5000,
+          fotoClave: null,
+          estacion: "caliente",
+        },
+      ],
+    },
+    {
+      id: "c2",
+      nombre: "Principales",
+      platos: [
+        {
+          id: "p4",
+          nombre: "Lomo a lo pobre",
+          descripcion: "Con papas fritas, huevo y cebolla caramelizada.",
+          precioClp: 15900,
+          fotoClave: FOTO_LOMO,
+          estacion: "caliente",
+        },
+      ],
+    },
+  ],
+}
+
+escribir(
+  "comensal.html",
+  conFotosRelativas(
+    conHojaDeEstilosRelativa(renderizar(vistaCartaComensal(CARTA_COMENSAL, "ABCDEFGH"))),
+  ),
+)
+escribir(
+  "comensal-desconocido.html",
+  conHojaDeEstilosRelativa(renderizar(vistaCodigoDesconocido())),
+)
+
+// ---------------------------------------------------------------------------
+// Las solicitudes de emparejamiento pendientes en el panel
+// ---------------------------------------------------------------------------
+
+const SOLICITUDES: readonly SolicitudPendiente[] = [
+  { id: "s1", mesa: "Mesa 4", pedidaHaceSegundos: 8, restanteSegundos: 82 },
+  { id: "s2", mesa: "Barra 2", pedidaHaceSegundos: 24, restanteSegundos: 66 },
+  {
+    id: "s3",
+    mesa: "Terraza junto a la ventana grande",
+    pedidaHaceSegundos: 47,
+    restanteSegundos: 43,
+  },
+]
+
+escribir("parejas.html", conHojaDeEstilosRelativa(renderizar(vistaParejas(DUENO, SOLICITUDES, {}))))
 
 process.stdout.write(`Previsualizacion escrita en ${SALIDA}\n`)

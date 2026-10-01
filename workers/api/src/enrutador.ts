@@ -16,6 +16,8 @@ import {
 } from "./auth/jwks.ts"
 import type { Reclamaciones } from "./auth/jwt.ts"
 import { type Empleado, resolverSesion } from "./base.ts"
+import { type AlmacenComensal, comensalDeEntorno } from "./comensal/datos.ts"
+import { manejarComensal } from "./comensal/rutas.ts"
 import {
   type AlmacenCartas,
   type CuboR2,
@@ -57,6 +59,7 @@ export type DependenciasParciales = {
   readonly resolverEmpleado?: ResolvedorDeEmpleado
   readonly almacen?: AlmacenPanel
   readonly cartas?: AlmacenCartas
+  readonly comensal?: AlmacenComensal
 }
 
 const VERSION_POR_DEFECTO = "desconocida"
@@ -85,6 +88,7 @@ function crearDependencias(entorno: Entorno, parciales: DependenciasParciales): 
       parciales.resolverEmpleado ?? ((sub) => resolverEmpleadoPorDefecto(entorno, sub)),
     almacen: parciales.almacen ?? almacenDeEntorno(entorno),
     cartas: parciales.cartas ?? cartasDeEntorno(entorno),
+    comensal: parciales.comensal ?? comensalDeEntorno(entorno),
   }
 }
 
@@ -156,6 +160,13 @@ export async function manejar(
   const respuestaCartas = await manejarCartasPublicas(peticion, url, completas.cartas)
   if (respuestaCartas !== null) {
     return respuestaCartas
+  }
+
+  // La pantalla del comensal: publica, sin sesion de personal. Va antes del panel y declarada
+  // en `run_worker_first`; si no, /t/<codigo> caeria en el index.html de la PWA.
+  const respuestaComensal = await manejarComensal(peticion, url, completas.comensal)
+  if (respuestaComensal !== null) {
+    return respuestaComensal
   }
 
   const respuestaPanel = await manejarPanel(peticion, entorno, ahora, completas)

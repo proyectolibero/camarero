@@ -7,6 +7,7 @@
  */
 import { aBytes, bytesABase64Url } from "../src/auth/base64.ts"
 import type { ClaveDeFirma } from "../src/auth/jwks.ts"
+import type { AlmacenComensal } from "../src/comensal/datos.ts"
 import type { AlmacenCartas } from "../src/panel/cartas.ts"
 import type { AlmacenPanel } from "../src/panel/datos.ts"
 
@@ -50,13 +51,21 @@ export async function crearFirmante(): Promise<Firmante> {
 export type OpcionesPeticion = {
   readonly method?: string
   readonly cookie?: string
+  readonly cookieMesa?: string
   readonly formulario?: Readonly<Record<string, string>>
 }
 
 export function peticion(ruta: string, opciones: OpcionesPeticion = {}): Request {
   const cabeceras = new Headers()
+  const cookies: string[] = []
   if (opciones.cookie !== undefined) {
-    cabeceras.set("cookie", `camarero_sesion=${opciones.cookie}`)
+    cookies.push(`camarero_sesion=${opciones.cookie}`)
+  }
+  if (opciones.cookieMesa !== undefined) {
+    cookies.push(`camarero_mesa=${opciones.cookieMesa}`)
+  }
+  if (cookies.length > 0) {
+    cabeceras.set("cookie", cookies.join("; "))
   }
   let cuerpo: string | undefined
   if (opciones.formulario !== undefined) {
@@ -68,6 +77,14 @@ export function peticion(ruta: string, opciones: OpcionesPeticion = {}): Request
     headers: cabeceras,
     body: cuerpo,
   })
+}
+
+/** Almacen de comensal falso: por defecto, todo codigo es desconocido. */
+export function comensalFalso(parciales: Partial<AlmacenComensal> = {}): AlmacenComensal {
+  const desconocido = async (): Promise<{ readonly tipo: "codigo_desconocido" }> => ({
+    tipo: "codigo_desconocido",
+  })
+  return { abrir: desconocido, pedir: desconocido, ...parciales }
 }
 
 /**
@@ -99,6 +116,10 @@ export function almacenFalso(parciales: Partial<AlmacenPanel> = {}): AlmacenPane
     alternarPlato: async () => ({ ok: true, valor: undefined }),
     moverPlato: async () => ({ ok: true, valor: undefined }),
     fijarFoto: async () => ({ ok: true, valor: null }),
+    contarParejasPendientes: async () => 0,
+    listarParejasPendientes: async () => [],
+    aprobarPareja: async () => ({ ok: true, valor: undefined }),
+    rechazarPareja: async () => ({ ok: true, valor: undefined }),
     ...parciales,
   }
 }

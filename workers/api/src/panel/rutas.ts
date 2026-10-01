@@ -99,7 +99,9 @@ async function mostrarPanel(
   if (!puedeEntrar(superficie, empleado)) {
     return respuestaHtml(renderizar(vistaPermisoDenegado(superficie, empleado)), 403)
   }
-  return respuestaHtml(renderizar(vistaCuadro(superficie, empleado)), 200)
+  const pendientes =
+    superficie === "admin" ? await dependencias.almacen.contarParejasPendientes(empleado) : null
+  return respuestaHtml(renderizar(vistaCuadro(superficie, empleado, pendientes)), 200)
 }
 
 /** Devuelve la respuesta del panel, o null si la ruta no es del panel. */

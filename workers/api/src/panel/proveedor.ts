@@ -8,6 +8,7 @@
  */
 import type { FuenteDeClaves } from "../auth/jwks.ts"
 import type { Empleado } from "../base.ts"
+import type { AlmacenComensal } from "../comensal/datos.ts"
 import type { AlmacenCartas } from "./cartas.ts"
 import type { AlmacenPanel } from "./datos.ts"
 
@@ -30,6 +31,7 @@ export type Dependencias = {
   readonly resolverEmpleado: ResolvedorDeEmpleado
   readonly almacen: AlmacenPanel
   readonly cartas: AlmacenCartas
+  readonly comensal: AlmacenComensal
 }
 
 type EntornoDeIdentidad = {
