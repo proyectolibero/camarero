@@ -128,6 +128,20 @@ ${carta.categorias.map(seccionDeCategoria)}
   return paginaComensal(carta.mesa, contenido, carta.estado === "esperando")
 }
 
+export function vistaLocalInactivo(): HtmlSeguro {
+  const contenido = html`<header class="comensal-cabecera">
+<span class="marca">Camarero</span>
+</header>
+<main class="contenedor">
+<section class="tarjeta">
+<h1>Este local todavía no está tomando pedidos</h1>
+<p>Tu enlace es correcto, pero el local no está abierto. Avísale al personal.</p>
+<p>Vuelve a escanear el QR de tu mesa cuando te atiendan.</p>
+</section>
+</main>`
+  return paginaComensal("Local sin abrir", contenido, false)
+}
+
 export function vistaCodigoDesconocido(): HtmlSeguro {
   const contenido = html`<header class="comensal-cabecera">
 <span class="marca">Camarero</span>

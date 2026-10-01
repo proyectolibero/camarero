@@ -40,6 +40,7 @@ export type CartaDelComensal = {
 export type LecturaComensal =
   | { readonly tipo: "ok"; readonly sesionId: string; readonly carta: CartaDelComensal }
   | { readonly tipo: "codigo_desconocido" }
+  | { readonly tipo: "local_inactivo" }
 
 /** Lo que el borde necesita para la pantalla del comensal. Se inyecta para probar sin base. */
 export type AlmacenComensal = {
@@ -121,13 +122,22 @@ async function sesionDeLaCookie(
   return fila
 }
 
+/**
+ * Solo un local en servicio abre mesas: `draft` (montaje) y `paused` (cerrado temporalmente)
+ * no lo hacen (ADR-0032). Es una decision del LOCAL, no del codigo: por eso se distingue de
+ * «codigo desconocido» y la pantalla no puede hablar de un QR invalido (LL-024).
+ */
+export function localEnServicio(status: string): boolean {
+  return status === "active"
+}
+
 /** El local tiene que estar en servicio: uno en montaje o en pausa no abre mesas (ADR-0032). */
 async function localActivo(cliente: Client, locationId: string): Promise<boolean> {
   const resultado = await cliente.query<{ status: string }>(
     "select status from public.locations where id = $1",
     [locationId],
   )
-  return resultado.rows[0]?.status === "active"
+  return localEnServicio(resultado.rows[0]?.status ?? "")
 }
 
 /**
@@ -338,7 +348,7 @@ async function enTransaccion(
       await fijar(cliente, [["app.session_id", ""]])
       if (!(await localActivo(cliente, mesa.location_id))) {
         await cliente.query("rollback")
-        return { tipo: "codigo_desconocido" } as const
+        return { tipo: "local_inactivo" } as const
       }
       sesion = await crearSesion(cliente, mesa, pedir)
     } else if (pedir && sesion.state !== "active") {

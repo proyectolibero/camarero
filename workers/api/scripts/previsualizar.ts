@@ -16,7 +16,11 @@ import { fileURLToPath } from "node:url"
 import { crc32, deflateSync } from "node:zlib"
 import type { Empleado } from "../src/base.ts"
 import type { CartaDelComensal } from "../src/comensal/datos.ts"
-import { vistaCartaComensal, vistaCodigoDesconocido } from "../src/comensal/vistas.ts"
+import {
+  vistaCartaComensal,
+  vistaCodigoDesconocido,
+  vistaLocalInactivo,
+} from "../src/comensal/vistas.ts"
 import { generarCodigoMesa } from "../src/panel/codigo-mesa.ts"
 import type { Categoria, Mesa, Plato, SolicitudPendiente, Zona } from "../src/panel/datos.ts"
 import {
@@ -439,6 +443,7 @@ escribir(
   "comensal-desconocido.html",
   conHojaDeEstilosRelativa(renderizar(vistaCodigoDesconocido())),
 )
+escribir("comensal-sin-abrir.html", conHojaDeEstilosRelativa(renderizar(vistaLocalInactivo())))
 
 // ---------------------------------------------------------------------------
 // Las solicitudes de emparejamiento pendientes en el panel

@@ -12,7 +12,7 @@ import { responderMetodoNoPermitido, responderNoEncontrado } from "../salud.ts"
 import { renderizar } from "../ui/html.ts"
 import { responderRedireccion, respuestaHtml } from "../ui/respuesta.ts"
 import type { AlmacenComensal, LecturaComensal } from "./datos.ts"
-import { vistaCartaComensal, vistaCodigoDesconocido } from "./vistas.ts"
+import { vistaCartaComensal, vistaCodigoDesconocido, vistaLocalInactivo } from "./vistas.ts"
 
 export const NOMBRE_COOKIE_MESA = "camarero_mesa"
 
@@ -35,6 +35,15 @@ function pantallaDesconocida(): Response {
   return respuestaHtml(renderizar(vistaCodigoDesconocido()), 404)
 }
 
+/**
+ * El codigo es correcto, pero el local no esta sirviendo. No es un 404: el recurso (la mesa)
+ * existe; es un 503, el servicio para ESE local no esta disponible temporalmente. Un 404 aqui
+ * volveria a disfrazar la causa, que es justo el defecto que se corrige.
+ */
+function pantallaLocalInactivo(): Response {
+  return respuestaHtml(renderizar(vistaLocalInactivo()), 503)
+}
+
 async function mostrarCarta(
   almacen: AlmacenComensal,
   codigo: string,
@@ -46,6 +55,9 @@ async function mostrarCarta(
   const lectura = await almacen.abrir(codigo, cookie)
   if (lectura.tipo === "codigo_desconocido") {
     return pantallaDesconocida()
+  }
+  if (lectura.tipo === "local_inactivo") {
+    return pantallaLocalInactivo()
   }
   return await respuestaConSesion(lectura, codigo)
 }
@@ -61,6 +73,9 @@ async function pedirEmparejamiento(
   const lectura = await almacen.pedir(codigo, cookie)
   if (lectura.tipo === "codigo_desconocido") {
     return pantallaDesconocida()
+  }
+  if (lectura.tipo === "local_inactivo") {
+    return pantallaLocalInactivo()
   }
   return responderRedireccion(`/t/${encodeURIComponent(codigo)}`, cookieDeMesa(lectura.sesionId))
 }

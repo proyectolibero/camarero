@@ -7,7 +7,12 @@
  * funciona SIN JavaScript.
  */
 import { describe, expect, it } from "vitest"
-import type { CartaDelComensal, LecturaComensal } from "../src/comensal/datos.ts"
+import {
+  type AlmacenComensal,
+  type CartaDelComensal,
+  type LecturaComensal,
+  localEnServicio,
+} from "../src/comensal/datos.ts"
 import { manejar } from "../src/enrutador.ts"
 import { AHORA, comensalFalso, ENTORNO, peticion } from "./apoyo.ts"
 
@@ -99,6 +104,70 @@ describe("Comensal: la carta de la mesa", () => {
       }),
     })
     expect(visto).toEqual({ codigo: "ABCDEFGH", sesionId: "sesion-cookie" })
+  })
+})
+
+/**
+ * El estado del local decide que se dibuja. La misma decision que toma la base (`localEnServicio`)
+ * alimenta el almacen falso: si alguien cambia que estados abren mesa, esta prueba lo refleja, y
+ * una prueba aparte fija esa decision estado a estado.
+ */
+function almacenDeEstadoLocal(estado: string): AlmacenComensal {
+  const sirve = (): boolean => localEnServicio(estado)
+  return comensalFalso({
+    abrir: async () => (sirve() ? ok(carta()) : { tipo: "local_inactivo" }),
+    pedir: async () => (sirve() ? ok(carta({ estado: "esperando" })) : { tipo: "local_inactivo" }),
+  })
+}
+
+const MENSAJE_LOCAL_INACTIVO = "Este local todavía no está tomando pedidos"
+
+describe("Comensal: solo un local active abre mesa", () => {
+  it("debe servir el local activo y no servirlo cuando esta en borrador ni en pausa", () => {
+    expect(localEnServicio("active")).toBe(true)
+    expect(localEnServicio("draft")).toBe(false)
+    expect(localEnServicio("paused")).toBe(false)
+  })
+})
+
+describe("Comensal: la pantalla segun el estado del local", () => {
+  const CASOS: ReadonlyArray<{ readonly estado: string; readonly abre: boolean }> = [
+    { estado: "draft", abre: false },
+    { estado: "paused", abre: false },
+    { estado: "active", abre: true },
+  ]
+
+  for (const { estado, abre } of CASOS) {
+    it(`debe abrir la carta o decirlo cuando el local esta en ${estado} (abre=${abre})`, async () => {
+      const respuesta = await manejar(peticion("/t/ABCDEFGH"), ENTORNO, AHORA, {
+        comensal: almacenDeEstadoLocal(estado),
+      })
+      const cuerpo = await respuesta.text()
+      if (abre) {
+        expect(respuesta.status).toBe(200)
+        expect(cuerpo).toContain("Ceviche clásico")
+        expect(cuerpo).not.toContain(MENSAJE_LOCAL_INACTIVO)
+      } else {
+        // No es un 404: la mesa existe; el local es el que no esta sirviendo.
+        expect(respuesta.status).toBe(503)
+        expect(cuerpo).toContain(MENSAJE_LOCAL_INACTIVO)
+        expect(cuerpo).toContain("Avísale al personal")
+        // La carta de un local que no ha abierto NO se enseña.
+        expect(cuerpo).not.toContain("Ceviche clásico")
+        expect(cuerpo).not.toContain("Barra Uno")
+      }
+    })
+  }
+
+  it("debe decir que el local no ha abierto tambien al pedir emparejarse", async () => {
+    const respuesta = await manejar(
+      peticion("/t/ABCDEFGH/pareja", { method: "POST" }),
+      ENTORNO,
+      AHORA,
+      { comensal: almacenDeEstadoLocal("draft") },
+    )
+    expect(respuesta.status).toBe(503)
+    expect(await respuesta.text()).toContain(MENSAJE_LOCAL_INACTIVO)
   })
 })
 
