@@ -109,6 +109,22 @@ describe("Comensal: la carta de la mesa", () => {
     })
     expect(visto).toEqual({ codigo: "ABCDEFGH", sesionId: "sesion-cookie" })
   })
+
+  it("no debe mostrar la carta con una sesión cerrada: el identificador deja de valer", async () => {
+    const respuesta = await manejar(
+      peticion("/t/ABCDEFGH", { cookieMesa: "sesion-cerrada" }),
+      ENTORNO,
+      AHORA,
+      { comensal: comensalFalso({ abrir: async () => ({ tipo: "sesion_cerrada" }) }) },
+    )
+    expect(respuesta.status).toBe(410)
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain("La cuenta de esta mesa se cerró")
+    expect(cuerpo).not.toContain("Ceviche clásico")
+    // La cookie se borra: la mesa se reabre con una sesión nueva, no con la vieja.
+    expect(respuesta.headers.get("set-cookie") ?? "").toContain("camarero_mesa=;")
+    expect(respuesta.headers.get("set-cookie") ?? "").toContain("Max-Age=0")
+  })
 })
 
 /**

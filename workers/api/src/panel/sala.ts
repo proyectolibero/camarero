@@ -88,6 +88,31 @@ async function anularComanda(
   return responderRedireccion(`/admin/sala/${encodeURIComponent(mesaId)}?anulada=1`)
 }
 
+/** Cada causa de fallo al cerrar tiene su mensaje: un fallo sin explicar es un fallo invisible. */
+const MENSAJE_DE_CIERRE: Readonly<Record<"no_existe" | "sin_permiso", string>> = {
+  no_existe: "Esa mesa ya no tiene una sesión abierta que cerrar.",
+  sin_permiso: "No tienes permiso para cerrar esa mesa.",
+}
+
+/**
+ * Cierra la sesion abierta de una mesa (PRG). Cerrar deja rastro en la base (quien y cuando);
+ * la mesa vuelve a estar libre y el servicio siguiente empieza limpio.
+ */
+async function cerrarMesa(
+  empleado: Empleado,
+  mesaId: string,
+  almacen: AlmacenPanel,
+): Promise<Response> {
+  const resultado = await almacen.cerrarSesion(empleado, mesaId)
+  if (!resultado.ok) {
+    const motivo = resultado.motivo === "sin_permiso" ? "sin_permiso" : "no_existe"
+    return await renderDetalle(empleado, mesaId, almacen, {
+      error: MENSAJE_DE_CIERRE[motivo],
+      estadoError: motivo === "sin_permiso" ? 403 : 404,
+    })
+  }
+  return responderRedireccion(`/admin/sala/${encodeURIComponent(mesaId)}?cerrada=1`)
+}
 /** Devuelve la respuesta de la sala, o null si la ruta no es la de la sala. */
 export async function manejarSala(
   peticion: Request,
@@ -118,9 +143,20 @@ export async function manejarSala(
     if (mesaId === undefined) {
       return responderNoEncontrado()
     }
-    return peticion.method === "GET"
-      ? await renderDetalle(empleado, mesaId, almacen, {})
-      : responderMetodoNoPermitido("GET")
+    if (peticion.method !== "GET") {
+      return responderMetodoNoPermitido("GET")
+    }
+    const estado = url.searchParams.get("cerrada") === "1" ? { exito: "Mesa cerrada." } : {}
+    return await renderDetalle(empleado, mesaId, almacen, estado)
+  }
+  if (segmentos.length === 4 && segmentos[3] === "cerrar") {
+    const mesaId = segmentos[2]
+    if (mesaId === undefined) {
+      return responderNoEncontrado()
+    }
+    return peticion.method === "POST"
+      ? await cerrarMesa(empleado, mesaId, almacen)
+      : responderMetodoNoPermitido("POST")
   }
   if (segmentos.length === 6 && segmentos[3] === "comandas" && segmentos[5] === "anular") {
     const mesaId = segmentos[2]

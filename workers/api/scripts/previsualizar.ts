@@ -659,7 +659,7 @@ escribir(
 const PEDIDOS_DEL_COMENSAL: readonly PedidoDelComensal[] = [
   {
     id: "o1",
-    destino: "frio",
+    destino: "Frío",
     estado: "pendiente",
     creadoHaceSegundos: 6,
     lineas: [{ nombre: "Ceviche clásico", cantidad: 2, totalClp: 17800 }],
@@ -667,7 +667,7 @@ const PEDIDOS_DEL_COMENSAL: readonly PedidoDelComensal[] = [
   },
   {
     id: "o4",
-    destino: "bar",
+    destino: "Barra",
     estado: "aceptada",
     creadoHaceSegundos: 35,
     lineas: [{ nombre: "Pisco sour", cantidad: 2, totalClp: 11800 }],

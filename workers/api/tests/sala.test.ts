@@ -453,3 +453,86 @@ describe("Aprobacion en las pantallas de puesto", () => {
     expect(cuerpo).toContain('href="/admin/sala"')
   })
 })
+
+describe("Sala: cerrar la mesa (TASK-F1-10)", () => {
+  it("debe ofrecer cerrar la mesa con un POST en la sala y en su detalle", async () => {
+    const sala = await (
+      await manejar(await conSesion("/admin/sala"), ENTORNO, AHORA, deps(DUENO, almacenDeSala()))
+    ).text()
+    expect(sala).toContain('action="/admin/sala/m3/cerrar"')
+    expect(sala).toContain('method="post"')
+    const detalle = await (
+      await manejar(await conSesion("/admin/sala/m3"), ENTORNO, AHORA, deps(DUENO, almacenDeSala()))
+    ).text()
+    expect(detalle).toContain("Cerrar mesa")
+  })
+
+  it("no debe ofrecer cerrar una mesa libre", async () => {
+    const cuerpo = await (
+      await manejar(await conSesion("/admin/sala"), ENTORNO, AHORA, deps(DUENO, almacenDeSala()))
+    ).text()
+    expect(cuerpo).not.toContain("/admin/sala/m1/cerrar")
+  })
+
+  it("debe cerrar la mesa y volver a su detalle con la marca", async () => {
+    let visto: string | null = null
+    const respuesta = await manejar(
+      await conSesion("/admin/sala/m3/cerrar", { method: "POST" }),
+      ENTORNO,
+      AHORA,
+      deps(
+        DUENO,
+        almacenFalso({
+          listarSala: async () => RESUMENES,
+          cerrarSesion: async (_empleado, mesaId) => {
+            visto = mesaId
+            return { ok: true, valor: undefined }
+          },
+        }),
+      ),
+    )
+    expect(visto).toBe("m3")
+    expect(respuesta.status).toBe(303)
+    expect(respuesta.headers.get("location")).toBe("/admin/sala/m3?cerrada=1")
+  })
+
+  it("debe decir «Mesa cerrada.» cuando se vuelve con la marca", async () => {
+    const cuerpo = await (
+      await manejar(
+        await conSesion("/admin/sala/m3?cerrada=1"),
+        ENTORNO,
+        AHORA,
+        deps(DUENO, almacenDeSala()),
+      )
+    ).text()
+    expect(cuerpo).toContain("Mesa cerrada.")
+  })
+
+  it("debe explicar una mesa que ya no tiene sesión abierta", async () => {
+    const respuesta = await manejar(
+      await conSesion("/admin/sala/m3/cerrar", { method: "POST" }),
+      ENTORNO,
+      AHORA,
+      deps(
+        DUENO,
+        almacenFalso({
+          listarSala: async () => RESUMENES,
+          cerrarSesion: async () => ({ ok: false, motivo: "no_existe" }),
+        }),
+      ),
+    )
+    expect(respuesta.status).toBe(404)
+    expect(await respuesta.text()).toContain("ya no tiene una sesión abierta")
+  })
+
+  it("no debe admitir GET en la accion de cerrar", async () => {
+    const respuesta = await manejar(
+      await conSesion("/admin/sala/m3/cerrar"),
+      ENTORNO,
+      AHORA,
+      deps(DUENO, almacenDeSala()),
+    )
+    expect(respuesta.status).toBe(405)
+    expect(respuesta.headers.get("allow")).toBe("POST")
+  })
+})

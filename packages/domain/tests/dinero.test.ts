@@ -2,7 +2,7 @@
  * El subtotal de la cesta: suma de precio por cantidad en CLP enteros (CONTRACT-dinero).
  */
 import { describe, expect, it } from "vitest"
-import { subtotalDeLineas } from "../src/dinero.ts"
+import { subtotalDeLineas, totalDeLineas } from "../src/dinero.ts"
 
 describe("Subtotal de lineas", () => {
   it("debe sumar precio por cantidad sin decimales", () => {
@@ -26,5 +26,16 @@ describe("Subtotal de lineas", () => {
         { precioClp: 1500, cantidad: 1 },
       ]),
     ).toBe(1500)
+  })
+})
+
+describe("Total de lineas ya calculado por la base", () => {
+  it("debe sumar los totales persistidos, incluidos los modificadores", () => {
+    // El total que ve el comensal es la suma de line_total_clp, no un segundo calculo.
+    expect(totalDeLineas([{ totalClp: 17800 }, { totalClp: 11800 }])).toBe(29600)
+  })
+
+  it("debe devolver cero sin lineas", () => {
+    expect(totalDeLineas([])).toBe(0)
   })
 })

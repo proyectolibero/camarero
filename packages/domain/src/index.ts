@@ -1,4 +1,9 @@
-export { type LineaDeImporte, subtotalDeLineas } from "./dinero.ts"
+export {
+  type LineaConTotal,
+  type LineaDeImporte,
+  subtotalDeLineas,
+  totalDeLineas,
+} from "./dinero.ts"
 export {
   esPantallaTodos,
   nombreDePuesto,

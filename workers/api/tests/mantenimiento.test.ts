@@ -9,15 +9,17 @@ import { manejarMantenimiento } from "../src/mantenimiento.ts"
 
 const ENTORNO = { BASE: { connectionString: "postgres://no-se-usa-en-las-pruebas" } }
 
-describe("Mantenimiento: caducar solicitudes", () => {
-  it("debe marcar las caducadas y registrarlo", async () => {
+describe("Mantenimiento: caducar solicitudes y cerrar sesiones", () => {
+  it("debe marcar las caducadas y cerrar las inactivas, registrando ambas", async () => {
     const registrar = vi.fn()
     const marcadas = await manejarMantenimiento(ENTORNO, {
       expirar: async () => 3,
+      cerrar: async () => 2,
       registrar,
     })
     expect(marcadas).toBe(3)
     expect(registrar).toHaveBeenCalledWith(expect.stringContaining("3 solicitudes"))
+    expect(registrar).toHaveBeenCalledWith(expect.stringContaining("2 sesiones cerradas"))
   })
 
   it("no debe tumbar el cron si el mantenimiento falla, y debe registrarlo", async () => {

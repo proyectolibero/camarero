@@ -10,6 +10,7 @@
  * `INSERT ... RETURNING` aplica tambien las politicas de SELECT, y en ese instante la sesion
  * aun no esta en el contexto. Se lee despues, ya con `app.session_id` fijado.
  */
+import { totalDeLineas } from "@camarero/domain"
 import { Client } from "pg"
 import type { LineaDeEnvio } from "./cesta.ts"
 
@@ -44,6 +45,7 @@ export type LecturaComensal =
   | { readonly tipo: "ok"; readonly sesionId: string; readonly carta: CartaDelComensal }
   | { readonly tipo: "codigo_desconocido" }
   | { readonly tipo: "local_inactivo" }
+  | { readonly tipo: "sesion_cerrada" }
 
 /**
  * Resultado del envio de la cesta. Cada causa se distingue para que la pantalla pueda decir
@@ -155,21 +157,45 @@ async function leerSesion(cliente: Client, id: string): Promise<FilaSesion | nul
   return resultado.rows[0] ?? null
 }
 
-/** La sesion de la cookie, si existe, es de esta mesa y no esta cerrada. */
+/** La sesion de la cookie, si existe y es de esta mesa. Distingue "no hay" de "esta cerrada". */
+type SesionLeida =
+  | { readonly tipo: "ok"; readonly sesion: FilaSesion }
+  | { readonly tipo: "ninguna" }
+  | { readonly tipo: "cerrada" }
+
+/**
+ * La sesion de la cookie, si existe y es de esta mesa. Una sesion cerrada NO vale: el
+ * identificador deja de ser la credencial del comensal. Se distingue de "no hay cookie" para
+ * poder decir la verdad en pantalla en lugar de abrir en silencio una sesion nueva.
+ */
 async function sesionDeLaCookie(
   cliente: Client,
   cookie: string | null,
   mesaId: string,
-): Promise<FilaSesion | null> {
+): Promise<SesionLeida> {
   if (cookie === null || !UUID.test(cookie)) {
-    return null
+    return { tipo: "ninguna" }
   }
   await fijar(cliente, [["app.session_id", cookie]])
   const fila = await leerSesion(cliente, cookie)
-  if (fila === null || fila.table_id !== mesaId || ESTADOS_CERRADOS.has(fila.state)) {
-    return null
+  if (fila === null || fila.table_id !== mesaId) {
+    return { tipo: "ninguna" }
   }
-  return fila
+  if (ESTADOS_CERRADOS.has(fila.state)) {
+    return { tipo: "cerrada" }
+  }
+  return { tipo: "ok", sesion: fila }
+}
+
+/**
+ * Marca actividad en la sesion. Es la señal real del cierre por inactividad: `last_seen` de
+ * `table_devices` existia en el esquema pero nadie lo escribia, porque el comensal no crea
+ * dispositivos (la sesion es un token al portador). Se toca en cada interaccion con la sesion.
+ */
+async function tocarActividad(cliente: Client, sesionId: string): Promise<void> {
+  await cliente.query("update public.table_sessions set last_activity_at = now() where id = $1", [
+    sesionId,
+  ])
 }
 
 /**
@@ -413,7 +439,14 @@ async function enTransaccion(
       ["app.table_id", mesa.id],
       ["app.location_id", mesa.location_id],
     ])
-    let sesion = await sesionDeLaCookie(cliente, cookie, mesa.id)
+    const leida = await sesionDeLaCookie(cliente, cookie, mesa.id)
+    if (leida.tipo === "cerrada") {
+      // El identificador de una sesion cerrada deja de valer: no se abre una nueva a sus
+      // espaldas ni se muestra la carta.
+      await cliente.query("rollback")
+      return { tipo: "sesion_cerrada" } as const
+    }
+    let sesion: FilaSesion | null = leida.tipo === "ok" ? leida.sesion : null
     if (sesion === null) {
       // Sin sesion previa solo se abre si el local esta en servicio. El contexto se limpia
       // antes de leer el local: la politica de contexto exige que aun no haya sesion.
@@ -426,6 +459,8 @@ async function enTransaccion(
     } else if (pedir && sesion.state !== "active") {
       await renovarVentana(cliente, sesion.id)
     }
+    // Toda interaccion con la sesion es actividad: alimenta el cierre por inactividad (4 h).
+    await tocarActividad(cliente, sesion.id)
     if (pedir) {
       await registrarSolicitud(cliente, mesa, sesion)
       // La ventana renovada tiene que verse en la carta: se relee la sesion ya actualizada.
@@ -490,11 +525,14 @@ async function comoComensal<T>(
       ["app.table_id", mesa.id],
       ["app.location_id", mesa.location_id],
     ])
-    const sesion = await sesionDeLaCookie(cliente, sesionId, mesa.id)
-    if (sesion === null) {
+    const leida = await sesionDeLaCookie(cliente, sesionId, mesa.id)
+    if (leida.tipo !== "ok") {
+      // Sin cookie util o con una sesion cerrada: el identificador no vale para pedir.
       await cliente.query("rollback")
       return { fallo: "sin_sesion" }
     }
+    const sesion = leida.sesion
+    await tocarActividad(cliente, sesion.id)
     const org = await cliente.query<{ org_id: string }>(
       "select org_id from public.table_sessions where id = $1",
       [sesion.id],
@@ -767,7 +805,7 @@ async function leerPedidos(
         estado: fila.status,
         creadoHaceSegundos: fila.creada,
         lineas,
-        totalClp: lineas.reduce((suma, linea) => suma + linea.totalClp, 0),
+        totalClp: totalDeLineas(lineas),
       }
     })
     return { ...cabecera, pedidos }

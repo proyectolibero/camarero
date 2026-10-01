@@ -10,9 +10,13 @@ import { beforeAll, describe, expect, it } from "vitest"
 import { aBytes, bytesABase64Url } from "../src/auth/base64.ts"
 import type { ClaveDeFirma } from "../src/auth/jwks.ts"
 import type { Empleado } from "../src/base.ts"
+import type { AlmacenComensal, CartaDelComensal, PedidoDelComensal } from "../src/comensal/datos.ts"
 import { type DependenciasParciales, manejar } from "../src/enrutador.ts"
+import { SIN_CATEGORIA } from "../src/panel/carta-catalogo.ts"
+import type { AlmacenPanel, Mesa } from "../src/panel/datos.ts"
 import type { Autenticador, ResolvedorDeEmpleado } from "../src/panel/proveedor.ts"
 import { ERROR_CREDENCIALES } from "../src/panel/rutas.ts"
+import { almacenFalso, comensalFalso } from "./apoyo.ts"
 
 const AHORA = new Date("2026-09-30T12:00:00.000Z")
 const KID = "clave-de-prueba"
@@ -88,13 +92,25 @@ const AUTENTICA: Autenticador = async () => ({ token: "pasaporte-falso", expiraE
 type OpcionesPeticion = {
   readonly method?: string
   readonly cookie?: string
+  readonly cookieMesa?: string
+  readonly cookieCesta?: string
   readonly formulario?: Readonly<Record<string, string>>
 }
 
 function peticion(ruta: string, opciones: OpcionesPeticion = {}): Request {
   const cabeceras = new Headers()
+  const cookies: string[] = []
   if (opciones.cookie !== undefined) {
-    cabeceras.set("cookie", `camarero_sesion=${opciones.cookie}`)
+    cookies.push(`camarero_sesion=${opciones.cookie}`)
+  }
+  if (opciones.cookieMesa !== undefined) {
+    cookies.push(`camarero_mesa=${opciones.cookieMesa}`)
+  }
+  if (opciones.cookieCesta !== undefined) {
+    cookies.push(`camarero_cesta=${opciones.cookieCesta}`)
+  }
+  if (cookies.length > 0) {
+    cabeceras.set("cookie", cookies.join("; "))
   }
   let cuerpo: string | undefined
   if (opciones.formulario !== undefined) {
@@ -111,6 +127,8 @@ function peticion(ruta: string, opciones: OpcionesPeticion = {}): Request {
 function deps(opciones: {
   readonly autenticar?: Autenticador
   readonly resolverEmpleado?: ResolvedorDeEmpleado
+  readonly almacen?: AlmacenPanel
+  readonly comensal?: AlmacenComensal
 }): DependenciasParciales {
   return {
     fuenteDeClaves: async () => [claveDeFirma],
@@ -121,6 +139,8 @@ function deps(opciones: {
       (async () => {
         throw new Error("la ficha no deberia resolverse en esta prueba")
       }),
+    almacen: opciones.almacen,
+    comensal: opciones.comensal,
   }
 }
 
@@ -325,41 +345,153 @@ describe("Panel: ortografía en español correcto", () => {
     expect(cuerpo).not.toContain("Contrasena")
   })
 
-  it("no debe dejar palabras sin tilde en el texto que ve el usuario", async () => {
+  it("no debe dejar palabras sin tilde en NINGUNA pantalla, incluida la del comensal", async () => {
     const token = await tokenPara("u1")
-    const paginas = [
-      await manejar(peticion("/admin"), ENTORNO, AHORA, deps({})),
-      await manejar(
-        peticion("/admin/entrar", {
-          method: "POST",
-          formulario: { correo: "nadie@prueba.test", contrasena: "mala" },
-        }),
-        ENTORNO,
-        AHORA,
-        deps({}),
-      ),
-      await manejar(
-        peticion("/admin", { cookie: token }),
-        ENTORNO,
-        AHORA,
-        deps({ resolverEmpleado: async () => DUENO }),
-      ),
-      await manejar(
-        peticion("/panel", { cookie: token }),
-        ENTORNO,
-        AHORA,
-        deps({ resolverEmpleado: async () => PLATAFORMA }),
-      ),
-      await manejar(
-        peticion("/admin", { cookie: token }),
-        ENTORNO,
-        AHORA,
-        deps({ resolverEmpleado: async () => PLATAFORMA }),
-      ),
+    const almacen = almacenFalso({
+      leerLocal: async () => ({
+        id: "l1",
+        orgId: "o1",
+        nombre: "Local de prueba",
+        slug: "local-de-prueba",
+        timezone: "America/Santiago",
+        currency: "CLP",
+        status: "active",
+        serviceMode: "dine_in",
+      }),
+      listarSala: async () => [resumenDeSala()],
+      listarComandasDeMesa: async () => [],
+    })
+    const rutasDelPanel = [
+      "/admin",
+      "/admin/local",
+      "/admin/zonas",
+      "/admin/mesas",
+      "/admin/mesas/qr",
+      "/admin/carta",
+      "/admin/carta/plato",
+      `/admin/carta/${SIN_CATEGORIA}`,
+      "/admin/puestos",
+      "/admin/sala",
+      "/admin/sala/m1",
+      "/admin/pedidos",
+      "/admin/pedidos/todo",
+      "/admin/parejas",
+      "/admin/sala/inexistente",
+      "/admin/carta/plato/inexistente",
     ]
-    for (const respuesta of paginas) {
-      expect(faltasDeOrtografia(textoVisible(await respuesta.text()))).toEqual([])
+    const paginas: string[] = []
+    for (const ruta of rutasDelPanel) {
+      const respuesta = await manejar(
+        peticion(ruta, { cookie: token }),
+        ENTORNO,
+        AHORA,
+        deps({ resolverEmpleado: async () => DUENO, almacen }),
+      )
+      paginas.push(textoVisible(await respuesta.text()))
     }
+    // La entrada y el error de credenciales, sin sesion.
+    paginas.push(
+      textoVisible(await (await manejar(peticion("/admin"), ENTORNO, AHORA, deps({}))).text()),
+    )
+    paginas.push(
+      textoVisible(
+        await (
+          await manejar(
+            peticion("/admin/entrar", {
+              method: "POST",
+              formulario: { correo: "nadie@prueba.test", contrasena: "mala" },
+            }),
+            ENTORNO,
+            AHORA,
+            deps({}),
+          )
+        ).text(),
+      ),
+    )
+    // El panel de plataforma.
+    paginas.push(
+      textoVisible(
+        await (
+          await manejar(
+            peticion("/panel", { cookie: token }),
+            ENTORNO,
+            AHORA,
+            deps({ resolverEmpleado: async () => PLATAFORMA }),
+          )
+        ).text(),
+      ),
+    )
+
+    // El comensal: carta, cesta, pedidos, código desconocido, local sin abrir y sesión cerrada.
+    const conCarta = deps({ comensal: comensalFalso({ abrir: async () => lecturaDeCarta() }) })
+    paginas.push(
+      textoVisible(await (await manejar(peticion("/t/ABCDEFGH"), ENTORNO, AHORA, conCarta)).text()),
+    )
+    paginas.push(
+      textoVisible(
+        await (
+          await manejar(
+            peticion("/t/ABCDEFGH/cesta", { cookieCesta: `${PLATO_ID}:2` }),
+            ENTORNO,
+            AHORA,
+            conCarta,
+          )
+        ).text(),
+      ),
+    )
+    paginas.push(
+      textoVisible(
+        await (
+          await manejar(
+            peticion("/t/ABCDEFGH/pedidos", { cookieMesa: "sesion" }),
+            ENTORNO,
+            AHORA,
+            deps({
+              comensal: comensalFalso({
+                pedidos: async () => ({
+                  tipo: "ok",
+                  local: "Barra Uno",
+                  mesa: "Mesa 4",
+                  pedidos: [pedidoDeEjemplo()],
+                }),
+              }),
+            }),
+          )
+        ).text(),
+      ),
+    )
+    paginas.push(
+      textoVisible(
+        await (
+          await manejar(
+            peticion("/t/ABCDEFGH", { cookieMesa: "sesion-cerrada" }),
+            ENTORNO,
+            AHORA,
+            deps({ comensal: comensalFalso({ abrir: async () => ({ tipo: "sesion_cerrada" }) }) }),
+          )
+        ).text(),
+      ),
+    )
+    paginas.push(
+      textoVisible(
+        await (
+          await manejar(
+            peticion("/t/ABCDEFGH", { cookieMesa: "local-cerrado" }),
+            ENTORNO,
+            AHORA,
+            deps({ comensal: comensalFalso({ abrir: async () => ({ tipo: "local_inactivo" }) }) }),
+          )
+        ).text(),
+      ),
+    )
+    paginas.push(
+      textoVisible(await (await manejar(peticion("/t/ZZZZZZZZ"), ENTORNO, AHORA, deps({}))).text()),
+    )
+
+    for (const pagina of paginas) {
+      expect(faltasDeOrtografia(pagina)).toEqual([])
+    }
+
     // Los seis rótulos de rol se dibujan y pasan por la misma criba (D-043).
     for (const rol of ROLES_DE_PRUEBA) {
       const respuesta = await manejar(
@@ -371,7 +503,77 @@ describe("Panel: ortografía en español correcto", () => {
       expect(faltasDeOrtografia(textoVisible(await respuesta.text()))).toEqual([])
     }
   })
+
+  it("debe saber fallar: una palabra sin tilde se detecta como falta", () => {
+    expect(faltasDeOrtografia("Esta sesion no lleva tilde")).toContain("sesion")
+    expect(faltasDeOrtografia("La sesión correcta pasa la criba")).toEqual([])
+  })
 })
+
+const PLATO_ID = "04000000-0000-0000-0000-000000000001"
+
+const MESA_DE_SALA: Mesa = {
+  id: "m1",
+  codigo: "ABCDEFGH",
+  etiqueta: "Sala 1",
+  capacidad: 4,
+  kind: "mesa",
+  activa: true,
+  zonaId: "z1",
+  zonaNombre: "Sala",
+  posFila: 0,
+  posColumna: 0,
+}
+
+function resumenDeSala() {
+  return { mesa: MESA_DE_SALA, sesionActiva: true, solicitudId: null, comandasSinServir: 1 }
+}
+
+function lecturaDeCarta(): {
+  readonly tipo: "ok"
+  readonly sesionId: string
+  readonly carta: CartaDelComensal
+} {
+  return {
+    tipo: "ok",
+    sesionId: "sesion-de-prueba",
+    carta: {
+      local: "Barra Uno",
+      mesa: "Mesa 4",
+      estado: "aprobado",
+      restanteSegundos: null,
+      categorias: [
+        {
+          id: "c1",
+          nombre: "Entrantes",
+          platos: [
+            {
+              id: PLATO_ID,
+              nombre: "Ceviche clásico",
+              descripcion: "Con limón de pica y cilantro.",
+              precioClp: 8900,
+              fotoClave: null,
+              puestoId: "pu-frio",
+              puestoNombre: "Frío",
+              autoAcepta: false,
+            },
+          ],
+        },
+      ],
+    },
+  }
+}
+
+function pedidoDeEjemplo(): PedidoDelComensal {
+  return {
+    id: "o1",
+    destino: "Frío",
+    estado: "pendiente",
+    creadoHaceSegundos: 6,
+    lineas: [{ nombre: "Ceviche clásico", cantidad: 2, totalClp: 17800 }],
+    totalClp: 17800,
+  }
+}
 
 /** Deja solo lo que ve el usuario: sustituye cada etiqueta por un espacio. */
 function textoVisible(pagina: string): string {

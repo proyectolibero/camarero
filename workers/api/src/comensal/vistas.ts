@@ -308,6 +308,24 @@ export function vistaSinSesion(): HtmlSeguro {
   return paginaComensal("Mesa no encontrada", contenido, false)
 }
 
+/**
+ * La sesion de esta mesa se cerro: el identificador ya no vale. Hay que escanear el QR otra
+ * vez para abrir una sesion nueva, que empieza limpia.
+ */
+export function vistaSesionCerrada(): HtmlSeguro {
+  const contenido = html`<header class="comensal-cabecera">
+<span class="marca">Camarero</span>
+</header>
+<main class="contenedor">
+<section class="tarjeta">
+<h1>La cuenta de esta mesa se cerró</h1>
+<p>Esta mesa ya terminó su servicio. Vuelve a escanear el QR de tu mesa para empezar de nuevo.</p>
+<p>Si acabas de sentarte, pide al personal que abra la mesa.</p>
+</section>
+</main>`
+  return paginaComensal("Mesa cerrada", contenido, false)
+}
+
 export function vistaLocalInactivo(): HtmlSeguro {
   const contenido = html`<header class="comensal-cabecera">
 <span class="marca">Camarero</span>

@@ -632,8 +632,16 @@ function listaDeSala(resumenes: readonly ResumenDeMesa[]): HtmlSeguro {
 ${distintivo}
 <span class="crece"></span>
 <span class="mesa-datos">${cuenta}</span>
+${resumen.sesionActiva && resumen.mesa.activa ? botonCerrarMesa(resumen.mesa.id) : html``}
 </li>`
   })}</ul>`
+}
+
+/** Cerrar la mesa es un POST: deja rastro (quien y cuando) y la mesa vuelve a estar libre. */
+function botonCerrarMesa(mesaId: string): HtmlSeguro {
+  return html`<form class="cerrar-mesa" method="post" action="/admin/sala/${encodeURIComponent(mesaId)}/cerrar">
+<button class="boton-mini boton-cerrar" type="submit">Cerrar mesa</button>
+</form>`
 }
 
 export function vistaSala(
@@ -734,6 +742,11 @@ ${avisosDeEstado({ ...estado, exito })}
 <h1>${resumen.mesa.etiqueta}</h1>
 <p>${resumen.mesa.zonaNombre ?? "Sin zona"} · ${resumen.mesa.capacidad} plazas · código ${resumen.mesa.codigo}</p>
 ${distintivoDeEstado(estadoMesa)}
+${
+  resumen.sesionActiva
+    ? html`<p class="cerrar-mesa-detalle">${botonCerrarMesa(resumen.mesa.id)}</p>`
+    : html``
+}
 </section>
 ${aviso}
 <section class="tarjeta">

@@ -36,6 +36,7 @@ import {
   vistaCodigoDesconocido,
   vistaLocalInactivo,
   vistaPedidosComensal,
+  vistaSesionCerrada,
   vistaSinSesion,
 } from "./vistas.ts"
 
@@ -49,6 +50,18 @@ export function cookieDeMesa(sesionId: string): string {
   return [
     `${NOMBRE_COOKIE_MESA}=${sesionId}`,
     `Max-Age=${MAX_AGE_SESION_SEGUNDOS}`,
+    "Path=/t",
+    "HttpOnly",
+    "Secure",
+    "SameSite=Lax",
+  ].join("; ")
+}
+
+/** Borra la cookie de una sesion cerrada: el identificador deja de valer y no se reusa. */
+export function cookieDeMesaBorrada(): string {
+  return [
+    `${NOMBRE_COOKIE_MESA}=`,
+    "Max-Age=0",
     "Path=/t",
     "HttpOnly",
     "Secure",
@@ -86,13 +99,30 @@ function pantallaSinSesion(): Response {
   return respuestaHtml(renderizar(vistaSinSesion()), 400)
 }
 
+/**
+ * La sesion de la cookie se cerro (a mano o por inactividad). El identificador ya no vale:
+ * se dice la verdad, se borra la cookie y se invita a volver a escanear. La mesa se reabre
+ * con una sesion nueva, limpia.
+ */
+function pantallaSesionCerrada(): Response {
+  const respuesta = respuestaHtml(renderizar(vistaSesionCerrada()), 410)
+  respuesta.headers.append("set-cookie", cookieDeMesaBorrada())
+  return respuesta
+}
+
 /** Carta resoluble: la lectura fue "ok". */
 function esOk(lectura: LecturaComensal): lectura is Extract<LecturaComensal, { tipo: "ok" }> {
   return lectura.tipo === "ok"
 }
 
 function pantallaDeFallo(lectura: Exclude<LecturaComensal, { tipo: "ok" }>): Response {
-  return lectura.tipo === "codigo_desconocido" ? pantallaDesconocida() : pantallaLocalInactivo()
+  if (lectura.tipo === "codigo_desconocido") {
+    return pantallaDesconocida()
+  }
+  if (lectura.tipo === "sesion_cerrada") {
+    return pantallaSesionCerrada()
+  }
+  return pantallaLocalInactivo()
 }
 
 /** Indice de la carta visible, por plato: es lo unico que puede fijar nombre, precio y destino. */

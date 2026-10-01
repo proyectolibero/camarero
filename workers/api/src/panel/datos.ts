@@ -313,6 +313,7 @@ export type AlmacenPanel = {
     empleado: Empleado,
     mesaId: string,
   ) => Promise<readonly ComandaDePuesto[]>
+  readonly cerrarSesion: (empleado: Empleado, mesaId: string) => Promise<Resultado>
 }
 
 type FilaLocal = {
@@ -1398,9 +1399,10 @@ async function listarFilaComandas(
   const comandas = await cliente.query<FilaComanda>(
     `select ${COLUMNAS_COMANDA}
        from public.orders o
-       left join public.table_sessions s on s.id = o.session_id
-       left join public.tables t on t.id = s.table_id
+     left join public.table_sessions s on s.id = o.session_id
+     left join public.tables t on t.id = s.table_id
       where o.status <> 'cerrada'
+        and (s.state is null or s.state not in ('closed', 'voided'))
         and ($1::uuid is null or o.prep_station_id = $1::uuid)
       order by o.created_at, o.id`,
     [puestoId],
@@ -1731,6 +1733,22 @@ export function almacenDeBase(cadena: string): AlmacenPanel {
       }),
     listarComandasDeMesa: (empleado, mesaId): Promise<readonly ComandaDePuesto[]> =>
       enTransaccion(cadena, empleado, (cliente) => listarFilaComandasDeMesa(cliente, mesaId)),
+    cerrarSesion: (empleado, mesaId): Promise<Resultado> =>
+      enTransaccion(cadena, empleado, async (cliente): Promise<Resultado> => {
+        // La puerta unica cierra la sesion abierta de la mesa, deja rastro y clasifica la causa.
+        const resultado = await cliente.query<{ causa: string }>(
+          "select public.camarero_cerrar_sesion($1) as causa",
+          [mesaId],
+        )
+        const causa = resultado.rows[0]?.causa ?? "sin_sesion"
+        if (causa === "ok") {
+          return { ok: true, valor: undefined }
+        }
+        if (causa === "sin_sesion") {
+          return { ok: false, motivo: "no_existe" }
+        }
+        throw new Error(`Causa de cierre desconocida: ${causa}`)
+      }),
   }
 }
 
@@ -1784,6 +1802,7 @@ export function almacenNoConfigurado(): AlmacenPanel {
     }),
     listarSala: async (): Promise<readonly ResumenDeMesa[]> => [],
     listarComandasDeMesa: async (): Promise<readonly ComandaDePuesto[]> => [],
+    cerrarSesion: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
   }
 }
 
