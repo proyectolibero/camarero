@@ -14,6 +14,7 @@ import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { crc32, deflateSync } from "node:zlib"
+import { totalDeLineas } from "@camarero/domain"
 import type { Empleado } from "../src/base.ts"
 import type { LineaResuelta } from "../src/comensal/cesta.ts"
 import type { CartaDelComensal, PedidoDelComensal } from "../src/comensal/datos.ts"
@@ -673,12 +674,33 @@ const PEDIDOS_DEL_COMENSAL: readonly PedidoDelComensal[] = [
     lineas: [{ nombre: "Pisco sour", cantidad: 2, totalClp: 11800 }],
     totalClp: 11800,
   },
+  {
+    id: "o6",
+    destino: "Barra",
+    estado: "anulada",
+    creadoHaceSegundos: 48,
+    lineas: [{ nombre: "Copa de vino de la casa", cantidad: 1, totalClp: 4500 }],
+    totalClp: 4500,
+  },
 ]
+
+// El acumulado excluye lo anulado: la comanda o6 no cuenta (D-055).
+const SUBTOTAL_PEDIDOS = totalDeLineas(
+  PEDIDOS_DEL_COMENSAL.filter((pedido) => pedido.estado !== "anulada"),
+)
 
 escribir(
   "comensal-pedidos.html",
   conHojaDeEstilosRelativa(
-    renderizar(vistaPedidosComensal("Barra Uno", "Mesa 4", "ABCDEFGH", PEDIDOS_DEL_COMENSAL)),
+    renderizar(
+      vistaPedidosComensal(
+        "Barra Uno",
+        "Mesa 4",
+        "ABCDEFGH",
+        PEDIDOS_DEL_COMENSAL,
+        SUBTOTAL_PEDIDOS,
+      ),
+    ),
   ),
 )
 

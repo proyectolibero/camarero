@@ -456,6 +456,7 @@ describe("Panel: ortografía en español correcto", () => {
                   local: "Barra Uno",
                   mesa: "Mesa 4",
                   pedidos: [pedidoDeEjemplo()],
+                  subtotalAcumuladoClp: 17800,
                 }),
               }),
             }),

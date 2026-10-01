@@ -8,11 +8,12 @@
  */
 import { describe, expect, it } from "vitest"
 import type { LineaDeEnvio } from "../src/comensal/cesta.ts"
-import type {
-  AlmacenComensal,
-  CartaDelComensal,
-  LecturaComensal,
-  PedidoDelComensal,
+import {
+  type AlmacenComensal,
+  type CartaDelComensal,
+  type LecturaComensal,
+  type PedidoDelComensal,
+  subtotalDePedidos,
 } from "../src/comensal/datos.ts"
 import { manejar } from "../src/enrutador.ts"
 import { AHORA, comensalFalso, ENTORNO, peticion } from "./apoyo.ts"
@@ -211,7 +212,13 @@ function almacenConEnvios(): {
   const lineasVistas: LineaDeEnvio[][] = []
   const almacen = comensalFalso({
     abrir: async () => ok(),
-    pedidos: async () => ({ tipo: "ok", local: "Barra Uno", mesa: "Mesa 4", pedidos: PEDIDOS }),
+    pedidos: async () => ({
+      tipo: "ok",
+      local: "Barra Uno",
+      mesa: "Mesa 4",
+      pedidos: PEDIDOS,
+      subtotalAcumuladoClp: 17800,
+    }),
     enviar: async (_codigo, _sesion, clave, lineas) => {
       if (lineas.length === 0) {
         return { tipo: "cesta_vacia" }
@@ -310,6 +317,7 @@ describe("Cesta: el estado de los pedidos", () => {
             local: "Barra Uno",
             mesa: "Mesa 4",
             pedidos: PEDIDOS,
+            subtotalAcumuladoClp: 17800,
           }),
         }),
       },
@@ -318,10 +326,10 @@ describe("Cesta: el estado de los pedidos", () => {
     expect(respuesta.status).toBe(200)
     expect(cuerpo).toContain("Tus pedidos")
     // El destino que ve el comensal es el NOMBRE que nombro el dueno, no el codigo interno.
-    expect(cuerpo).toContain("Destino: <strong>Frío</strong>")
-    expect(cuerpo).not.toContain("Destino: <strong>frio</strong>")
+    expect(cuerpo).toContain("Se prepara en: <strong>Frío</strong>")
+    expect(cuerpo).not.toContain("Se prepara en: <strong>frio</strong>")
     // La etiqueta de `pendiente` no puede dar por hecho que todo va a la cocina (LL-025).
-    expect(cuerpo).toContain("Enviada")
+    expect(cuerpo).toContain("Enviado, esperando que lo acepten")
     expect(cuerpo).not.toContain("Enviada a cocina")
     expect(cuerpo).toContain("Ceviche clásico")
     expect(cuerpo).toContain('http-equiv="refresh"')
@@ -347,12 +355,13 @@ describe("Cesta: el estado de los pedidos", () => {
             local: "Barra Uno",
             mesa: "Mesa 4",
             pedidos: [deBarra],
+            subtotalAcumuladoClp: 4000,
           }),
         }),
       },
     )
     const cuerpo = await respuesta.text()
-    expect(cuerpo).toContain("Destino: <strong>Barra</strong>")
+    expect(cuerpo).toContain("Se prepara en: <strong>Barra</strong>")
     expect(cuerpo).not.toContain("Enviada a cocina")
   })
 
@@ -362,5 +371,104 @@ describe("Cesta: el estado de los pedidos", () => {
     })
     expect(respuesta.status).toBe(400)
     expect(await respuesta.text()).toContain("Vuelve a escanear el QR")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Lo que el comensal lleva pedido, y cuando la pantalla se refresca (D-055)
+// ---------------------------------------------------------------------------
+
+const PEDIDO_ANULADO: PedidoDelComensal = {
+  id: "o9",
+  destino: "Barra",
+  estado: "anulada",
+  creadoHaceSegundos: 40,
+  lineas: [{ nombre: "Copa de vino de la casa", cantidad: 1, totalClp: 4500 }],
+  totalClp: 4500,
+}
+
+function pedido(estado: string, totalClp: number): PedidoDelComensal {
+  return {
+    id: `o-${estado}`,
+    destino: "Barra",
+    estado,
+    creadoHaceSegundos: 5,
+    lineas: [{ nombre: "Agua mineral", cantidad: 1, totalClp }],
+    totalClp,
+  }
+}
+
+/** Pinta el estado de los pedidos con el acumulado que le pase el almacen. */
+async function pantallaDePedidos(pedidos: readonly PedidoDelComensal[]): Promise<string> {
+  const respuesta = await manejar(
+    peticion("/t/ABCDEFGH/pedidos", { cookieMesa: "sesion-1" }),
+    ENTORNO,
+    AHORA,
+    {
+      comensal: comensalFalso({
+        pedidos: async () => ({
+          tipo: "ok",
+          local: "Barra Uno",
+          mesa: "Mesa 4",
+          pedidos,
+          subtotalAcumuladoClp: subtotalDePedidos(pedidos),
+        }),
+      }),
+    },
+  )
+  return await respuesta.text()
+}
+
+describe("Comensal: el acumulado de la mesa", () => {
+  it("debe sumar solo las comandas vivas: la anulada no cuenta", () => {
+    expect(subtotalDePedidos([...PEDIDOS, PEDIDO_ANULADO])).toBe(17800)
+    expect(subtotalDePedidos([PEDIDO_ANULADO])).toBe(0)
+    expect(subtotalDePedidos([])).toBe(0)
+  })
+
+  it("debe mostrar lo que lleva pedido y lo que aun no ha llegado, sin la anulada", async () => {
+    const cuerpo = await pantallaDePedidos([...PEDIDOS, PEDIDO_ANULADO])
+    expect(cuerpo).toContain("Lo que llevas en esta mesa")
+    expect(cuerpo).toContain("Llevas pedido")
+    expect(cuerpo).toContain("17.800")
+    expect(cuerpo).toContain("Aún no ha llegado")
+    // La comanda anulada se ve, pero no suma al acumulado (4.500 no aparece como total vivo).
+    expect(cuerpo).toContain("Anulado por el local")
+  })
+
+  it("debe decir que todo se anulo cuando no queda ninguna comanda viva", async () => {
+    const cuerpo = await pantallaDePedidos([PEDIDO_ANULADO])
+    expect(cuerpo).toContain("Todo lo que pediste en esta mesa quedó anulado.")
+    expect(cuerpo).not.toContain("Ya está servido todo lo que has pedido.")
+  })
+})
+
+describe("Comensal: el estado de cada comanda en palabras", () => {
+  it("debe nombrar cada estado como lo entiende un comensal", async () => {
+    const cuerpo = await pantallaDePedidos([
+      pedido("pendiente", 2500),
+      pedido("aceptada", 2500),
+      pedido("preparando", 2500),
+      pedido("lista", 2500),
+      pedido("servida", 2500),
+    ])
+    expect(cuerpo).toContain("Enviado, esperando que lo acepten")
+    expect(cuerpo).toContain("Aceptado por el local")
+    expect(cuerpo).toContain("En preparación")
+    expect(cuerpo).toContain("Listo para servir")
+    expect(cuerpo).toContain("Servido en tu mesa")
+  })
+})
+
+describe("Comensal: cuando se refresca la pantalla", () => {
+  it("debe refrescarse mientras hay algo en marcha", async () => {
+    const cuerpo = await pantallaDePedidos([pedido("aceptada", 2500), pedido("lista", 2500)])
+    expect(cuerpo).toContain('http-equiv="refresh" content="15"')
+  })
+
+  it("debe dejar de refrescarse cuando ya no hay nada que contar", async () => {
+    const cuerpo = await pantallaDePedidos([pedido("servida", 2500), PEDIDO_ANULADO])
+    expect(cuerpo).not.toContain("http-equiv")
+    expect(cuerpo).toContain("Ya no queda nada en marcha")
   })
 })

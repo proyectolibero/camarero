@@ -25,10 +25,14 @@ export const ESTADO_ANULADO: EstadoDeComanda = "anulada"
 /**
  * Matriz de transiciones. Es EXACTAMENTE la tabla de CONTRACT-estados-comanda: cualquier
  * cambio aqui es un cambio de contrato y exige registrar la decision.
+ *
+ * `aceptada -> servida` es el atajo de los puestos que no preparan nada (D-055): una bebida
+ * que solo hay que entregar no pasa por `preparando` ni por `lista`. Vive en el modelo, no
+ * escondido en un boton de la pantalla, para que la misma tabla gobierne el borde y la base.
  */
 const TRANSICIONES: Readonly<Record<EstadoDeComanda, readonly EstadoDeComanda[]>> = {
   pendiente: ["aceptada", "anulada"],
-  aceptada: ["preparando", "anulada"],
+  aceptada: ["preparando", "servida", "anulada"],
   preparando: ["lista", "anulada"],
   lista: ["servida", "anulada"],
   servida: ["cerrada", "anulada"],

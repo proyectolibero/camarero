@@ -10,6 +10,7 @@
  * etiquetas no puede convertirse en ejecucion en el navegador del comensal.
  */
 
+import { totalDeLineas } from "@camarero/domain"
 import { type HtmlSeguro, html } from "../ui/html.ts"
 import type { LineaResuelta } from "./cesta.ts"
 import type {
@@ -21,12 +22,32 @@ import type {
 
 const FORMATO_CLP = new Intl.NumberFormat("es-CL", { maximumFractionDigits: 0 })
 
+/**
+ * Cada cuanto se repinta la pantalla del comensal mientras hay algo que contar.
+ *
+ * Se piensa en un movil con datos: durante el emparejamiento la ventana es corta y la
+ * respuesta importa, asi que se refresca cada 10 s; mientras hay comandas sin servir se usa
+ * el mismo ritmo que las pantallas de cocina y barra (15 s), suficiente para que el comensal
+ * vea cambiar el estado casi al mismo tiempo que el personal y la mitad de agresivo que un
+ * refresco de 10 s sobre una bateria y una tarifa movil. Cuando no queda nada en marcha la
+ * pantalla NO se refresca: no hay nada que contar.
+ */
+const REFRESCO_ESPERANDO_APROBACION = 10
+const REFRESCO_PEDIDOS_EN_MARCHA = 15
+
 function precio(clp: number): string {
   return `$ ${FORMATO_CLP.format(clp)}`
 }
 
-function paginaComensal(titulo: string, contenido: HtmlSeguro, refresco: boolean): HtmlSeguro {
-  const metaRefresco = refresco ? html`<meta http-equiv="refresh" content="10">` : html``
+function paginaComensal(
+  titulo: string,
+  contenido: HtmlSeguro,
+  refrescoSegundos: number | null,
+): HtmlSeguro {
+  const metaRefresco =
+    refrescoSegundos === null
+      ? html``
+      : html`<meta http-equiv="refresh" content="${refrescoSegundos}">`
   return html`<!doctype html>
 <html lang="es">
 <head>
@@ -151,7 +172,11 @@ ${resumenCesta}
 ${cartaVacia}
 ${carta.categorias.map((categoria) => seccionDeCategoria(categoria, codigo))}
 </main>`
-  return paginaComensal(carta.mesa, contenido, carta.estado === "esperando")
+  return paginaComensal(
+    carta.mesa,
+    contenido,
+    carta.estado === "esperando" ? REFRESCO_ESPERANDO_APROBACION : null,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -159,17 +184,27 @@ ${carta.categorias.map((categoria) => seccionDeCategoria(categoria, codigo))}
 // ---------------------------------------------------------------------------
 
 const ETIQUETA_ESTADO_PEDIDO: Readonly<Record<string, string>> = {
-  pendiente: "Enviada",
-  aceptada: "Aceptada",
+  pendiente: "Enviado, esperando que lo acepten",
+  aceptada: "Aceptado por el local",
   preparando: "En preparación",
-  lista: "Lista para servir",
-  servida: "Servida",
-  cerrada: "Cobrada",
-  anulada: "Anulada",
+  lista: "Listo para servir",
+  servida: "Servido en tu mesa",
+  cerrada: "Cuenta cerrada",
+  anulada: "Anulado por el local",
 }
 
 function insigniaDeEstado(estado: string): HtmlSeguro {
   return html`<span class="pedido-estado pedido-estado-${estado}">${ETIQUETA_ESTADO_PEDIDO[estado] ?? estado}</span>`
+}
+
+/**
+ * Una comanda sigue "en marcha" mientras no haya terminado. Solo entonces hay algo que
+ * contar y la pantalla se refresca; con todo servido (o anulado) deja de refrescarse (D-055).
+ */
+const ESTADOS_TERMINADOS: ReadonlySet<string> = new Set(["servida", "cerrada", "anulada"])
+
+function enMarcha(pedido: PedidoDelComensal): boolean {
+  return !ESTADOS_TERMINADOS.has(pedido.estado)
 }
 
 /** Los tres controles de una linea: subir, bajar y quitar, cada uno su POST. */
@@ -230,7 +265,7 @@ ${opciones.aviso === undefined ? html`` : html`<p class="aviso aviso-aviso" role
 <p><a class="boton boton-secundario" href="/t/${codigo}">Volver a la carta</a></p>
 </section>
 </main>`
-    return paginaComensal("Tu cesta", contenido, false)
+    return paginaComensal("Tu cesta", contenido, null)
   }
   const enviar = opciones.puedeEnviar
     ? html`<form method="post" action="/t/${codigo}/cesta/enviar">
@@ -251,16 +286,61 @@ ${avisoAntesDeEnviar()}
 ${enviar}
 <p><a class="boton boton-secundario" href="/t/${codigo}">Seguir pidiendo</a></p>
 </main>`
-  return paginaComensal("Tu cesta", contenido, false)
+  return paginaComensal("Tu cesta", contenido, null)
 }
 
-/** Estado de los pedidos del comensal. Se refresca solo para ver como avanza cada destino. */
+/**
+ * Explica el resumen sin mentir: si no queda nada vivo es porque todo se anulo, no porque
+ * este servido. Si no hay nada anulado y nada por llegar, entonces si esta todo servido.
+ */
+function mensajeDeCuenta(subtotalAcumuladoClp: number, pendienteDeLlegarClp: number): string {
+  if (subtotalAcumuladoClp === 0) {
+    return "Todo lo que pediste en esta mesa quedó anulado."
+  }
+  if (pendienteDeLlegarClp === 0) {
+    return "Ya está servido todo lo que has pedido."
+  }
+  return "«Llevas pedido» es todo lo que has pedido y sigue vivo; «aún no ha llegado» es lo que queda por servirte."
+}
+
+/** El resumen de la mesa: cuanto se lleva pedido y cuanto queda por llegar, sin lo anulado. */
+function resumenDeCuenta(subtotalAcumuladoClp: number, pendienteDeLlegarClp: number): HtmlSeguro {
+  return html`<section class="tarjeta pedido-cuenta">
+<h2>Lo que llevas en esta mesa</h2>
+<p class="pedido-acumulado"><span>Llevas pedido</span> <strong>${precio(subtotalAcumuladoClp)}</strong></p>
+<p class="pedido-pendiente"><span>Aún no ha llegado</span> <strong>${precio(pendienteDeLlegarClp)}</strong></p>
+<p class="ayuda">${mensajeDeCuenta(subtotalAcumuladoClp, pendienteDeLlegarClp)}</p>
+</section>`
+}
+
+/** Una comanda del comensal: en que va, de donde sale y cuanto suma. */
+function pedidoComensal(pedido: PedidoDelComensal): HtmlSeguro {
+  return html`<section class="tarjeta pedido-comensal">
+<h2>${insigniaDeEstado(pedido.estado)}</h2>
+<p class="pedido-destino">Se prepara en: <strong>${pedido.destino}</strong></p>
+<ul class="pedido-lineas">${pedido.lineas.map(
+    (linea) =>
+      html`<li><span>${linea.cantidad}× ${linea.nombre}</span><span>${precio(linea.totalClp)}</span></li>`,
+  )}</ul>
+<p class="pedido-total"><span>Total de esta comanda</span> <strong>${precio(pedido.totalClp)}</strong></p>
+</section>`
+}
+
+/**
+ * Estado de los pedidos del comensal: cuanto lleva pedido, cuanto falta por llegar y en que
+ * va cada comanda. Se refresca solo mientras haya algo en marcha (D-055); con todo servido
+ * deja de refrescarse porque ya no hay nada que contar.
+ */
 export function vistaPedidosComensal(
   local: string,
   mesa: string,
   codigo: string,
   pedidos: readonly PedidoDelComensal[],
+  subtotalAcumuladoClp: number,
 ): HtmlSeguro {
+  const hayEnMarcha = pedidos.some(enMarcha)
+  // Lo que aun no ha llegado, con la MISMA funcion de totales del dominio que el resto.
+  const pendienteDeLlegarClp = totalDeLineas(pedidos.filter(enMarcha))
   const avisoHermanas =
     pedidos.length >= 2
       ? html`<p class="aviso aviso-aviso">Tu pedido va por partes: la cocina y la barra lo preparan por separado. Por eso ves más de una comanda; cada una avanza a su ritmo.</p>`
@@ -268,30 +348,23 @@ export function vistaPedidosComensal(
   const lista =
     pedidos.length === 0
       ? html`<section class="tarjeta"><p>Todavía no has enviado ninguna comanda.</p></section>`
-      : html`${pedidos.map(
-          (pedido) =>
-            html`<section class="tarjeta pedido-comensal">
-<h2>${insigniaDeEstado(pedido.estado)}</h2>
-<p class="pedido-destino">Destino: <strong>${pedido.destino}</strong></p>
-<ul class="pedido-lineas">${pedido.lineas.map(
-              (linea) =>
-                html`<li><span>${linea.cantidad}× ${linea.nombre}</span><span>${precio(linea.totalClp)}</span></li>`,
-            )}</ul>
-<p class="pedido-total"><span>Total</span> <strong>${precio(pedido.totalClp)}</strong></p>
-</section>`,
-        )}`
+      : html`${resumenDeCuenta(subtotalAcumuladoClp, pendienteDeLlegarClp)}${pedidos.map(pedidoComensal)}`
   const contenido = html`<header class="comensal-cabecera">
 <span class="marca">Camarero</span>
 <span class="comensal-local">${local}</span>
 </header>
 <main class="contenedor">
 <h1 class="comensal-mesa">Tus pedidos · ${mesa}</h1>
-<p class="ayuda">Esta pantalla se actualiza sola para enseñarte cómo avanza cada parte.</p>
+<p class="ayuda">${
+    hayEnMarcha
+      ? "Esta pantalla se actualiza sola mientras quede algo en marcha."
+      : "Ya no queda nada en marcha: esta pantalla no necesita actualizarse."
+  }</p>
 ${avisoHermanas}
 ${lista}
 <p><a class="boton boton-secundario" href="/t/${codigo}">Volver a la carta</a></p>
 </main>`
-  return paginaComensal("Tus pedidos", contenido, true)
+  return paginaComensal("Tus pedidos", contenido, hayEnMarcha ? REFRESCO_PEDIDOS_EN_MARCHA : null)
 }
 
 /** El dispositivo no tiene una sesion de esta mesa: hay que volver a escanear el QR. */
@@ -305,7 +378,7 @@ export function vistaSinSesion(): HtmlSeguro {
 <p>Este dispositivo ya no tiene una sesión de mesa abierta. Vuelve a escanear el QR de tu mesa.</p>
 </section>
 </main>`
-  return paginaComensal("Mesa no encontrada", contenido, false)
+  return paginaComensal("Mesa no encontrada", contenido, null)
 }
 
 /**
@@ -323,7 +396,7 @@ export function vistaSesionCerrada(): HtmlSeguro {
 <p>Si acabas de sentarte, pide al personal que abra la mesa.</p>
 </section>
 </main>`
-  return paginaComensal("Mesa cerrada", contenido, false)
+  return paginaComensal("Mesa cerrada", contenido, null)
 }
 
 export function vistaLocalInactivo(): HtmlSeguro {
@@ -337,7 +410,7 @@ export function vistaLocalInactivo(): HtmlSeguro {
 <p>Vuelve a escanear el QR de tu mesa cuando te atiendan.</p>
 </section>
 </main>`
-  return paginaComensal("Local sin abrir", contenido, false)
+  return paginaComensal("Local sin abrir", contenido, null)
 }
 
 export function vistaCodigoDesconocido(): HtmlSeguro {
@@ -351,5 +424,5 @@ export function vistaCodigoDesconocido(): HtmlSeguro {
 <p>Si escribiste el código a mano, revisa que no te falte ningún carácter.</p>
 </section>
 </main>`
-  return paginaComensal("Código no encontrado", contenido, false)
+  return paginaComensal("Código no encontrado", contenido, null)
 }

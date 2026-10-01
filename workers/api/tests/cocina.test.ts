@@ -220,6 +220,49 @@ describe("Puestos: la pantalla no ensena precios", () => {
     expect(cuerpo).toContain("Comanda nueva")
   })
 
+  it("debe ofrecer servir en UN toque una comanda ya aceptada de la barra", async () => {
+    const cuerpo = await (
+      await manejar(
+        await conSesion("/admin/pedidos/pu-barra"),
+        ENTORNO,
+        AHORA,
+        deps(
+          COCINA,
+          conPuestos({
+            listarComandas: async () => COMANDAS.filter((c) => c.puestoId === "pu-barra"),
+          }),
+        ),
+      )
+    ).text()
+    // La comanda o2 esta `aceptada`: la matriz (D-055) deja ir directa a `servida`.
+    expect(cuerpo).toContain('value="servida"')
+    expect(cuerpo).toContain("Marcar servida")
+    expect(cuerpo).toContain('value="preparando"')
+  })
+
+  it("debe aceptar el salto aceptada -> servida por POST", async () => {
+    let visto: { readonly id: string; readonly destino: string } | null = null
+    const respuesta = await manejar(
+      await conSesion("/admin/pedidos/o2/estado", {
+        method: "POST",
+        formulario: { destino: "servida", puesto: "pu-barra" },
+      }),
+      ENTORNO,
+      AHORA,
+      deps(
+        COCINA,
+        conPuestos({
+          cambiarEstadoComanda: async (_empleado, id, destino) => {
+            visto = { id, destino }
+            return { ok: true, valor: { estado: destino } }
+          },
+        }),
+      ),
+    )
+    expect(visto).toEqual({ id: "o2", destino: "servida" })
+    expect(respuesta.status).toBe(303)
+  })
+
   it("debe refrescarse sola, declarado en la pagina", async () => {
     const cuerpo = await (
       await manejar(

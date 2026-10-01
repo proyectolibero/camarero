@@ -309,7 +309,15 @@ async function mostrarPedidos(
     return pantallaSinSesion()
   }
   return respuestaHtml(
-    renderizar(vistaPedidosComensal(lectura.local, lectura.mesa, codigo, lectura.pedidos)),
+    renderizar(
+      vistaPedidosComensal(
+        lectura.local,
+        lectura.mesa,
+        codigo,
+        lectura.pedidos,
+        lectura.subtotalAcumuladoClp,
+      ),
+    ),
     200,
   )
 }

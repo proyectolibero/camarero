@@ -81,6 +81,8 @@ export type LecturaPedidos =
       readonly local: string
       readonly mesa: string
       readonly pedidos: readonly PedidoDelComensal[]
+      /** Suma de las comandas NO anuladas: lo que el comensal lleva pedido en la mesa. */
+      readonly subtotalAcumuladoClp: number
     }
   | { readonly tipo: "codigo_desconocido" }
   | { readonly tipo: "sin_sesion" }
@@ -668,6 +670,15 @@ async function crearComandaDeDestino(
 }
 
 /**
+ * Lo que el comensal lleva pedido en la mesa: la suma de sus comandas vivas, sin las
+ * anuladas. Usa la MISMA funcion de totales del dominio que el total de cada comanda
+ * (CONTRACT-dinero): aqui no se vuelve a multiplicar ni a redondear.
+ */
+export function subtotalDePedidos(pedidos: readonly PedidoDelComensal[]): number {
+  return totalDeLineas(pedidos.filter((pedido) => pedido.estado !== "anulada"))
+}
+
+/**
  * Tras una carrera de idempotencia, recupera la primera comanda hermana ya creada. Otra
  * peticion identica gano el INSERT; se devuelve lo suyo en lugar de un error.
  */
@@ -782,7 +793,11 @@ async function leerPedidos(
       mesa: datos.mesa.label,
     }
     if (ordenes.rows.length === 0) {
-      return { ...cabecera, pedidos: [] as readonly PedidoDelComensal[] }
+      return {
+        ...cabecera,
+        pedidos: [] as readonly PedidoDelComensal[],
+        subtotalAcumuladoClp: 0,
+      }
     }
     const items = await cliente.query<FilaPedidoItem>(
       `select order_id, name_snapshot, qty, line_total_clp
@@ -808,7 +823,9 @@ async function leerPedidos(
         totalClp: totalDeLineas(lineas),
       }
     })
-    return { ...cabecera, pedidos }
+    // Lo que el comensal lleva pedido: la suma de las comandas vivas, sin las anuladas.
+    const subtotalAcumuladoClp = subtotalDePedidos(pedidos)
+    return { ...cabecera, pedidos, subtotalAcumuladoClp }
   })
   if ("fallo" in envuelto) {
     return envuelto.fallo === "codigo_desconocido"
@@ -820,6 +837,7 @@ async function leerPedidos(
     local: envuelto.valor.local,
     mesa: envuelto.valor.mesa,
     pedidos: envuelto.valor.pedidos,
+    subtotalAcumuladoClp: envuelto.valor.subtotalAcumuladoClp,
   }
 }
 

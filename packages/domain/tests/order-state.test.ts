@@ -16,7 +16,7 @@ import {
 
 const ESPERADAS: Readonly<Record<EstadoDeComanda, readonly EstadoDeComanda[]>> = {
   pendiente: ["aceptada", "anulada"],
-  aceptada: ["preparando", "anulada"],
+  aceptada: ["preparando", "servida", "anulada"],
   preparando: ["lista", "anulada"],
   lista: ["servida", "anulada"],
   servida: ["cerrada", "anulada"],
@@ -69,5 +69,16 @@ describe("Estados de la comanda", () => {
     expect(siguienteEstado("servida")).toBe("cerrada")
     expect(siguienteEstado("cerrada")).toBeNull()
     expect(siguienteEstado("anulada")).toBeNull()
+  })
+
+  it("debe permitir entregar una comanda aceptada sin preparar (atajo de D-055)", () => {
+    // Una bebida que solo hay que entregar no pasa por preparando ni por lista.
+    expect(transicionPermitida("aceptada", "servida")).toBe(true)
+    expect(estadosPermitidos("aceptada")).toContain("servida")
+    // El avance natural de una comanda aceptada sigue siendo preparar: el atajo no lo cambia.
+    expect(siguienteEstado("aceptada")).toBe("preparando")
+    // Sigue sin poder saltarse pasos hacia atras ni alcanzar cerrada sin cobro.
+    expect(transicionPermitida("servida", "aceptada")).toBe(false)
+    expect(transicionPermitida("aceptada", "cerrada")).toBe(false)
   })
 })
