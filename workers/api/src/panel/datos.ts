@@ -435,7 +435,7 @@ function textoEs(valor: Readonly<Record<string, unknown>> | null): string | null
   if (valor === null) {
     return null
   }
-  const es = valor["es"]
+  const es = valor.es
   if (typeof es === "string" && es.trim() !== "") {
     return es
   }

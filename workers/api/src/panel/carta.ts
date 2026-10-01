@@ -304,11 +304,11 @@ function validarPlato(
   if (!ventana.ok) {
     return ventana
   }
-  const tags = validarTags(campos["tags"] ?? [])
+  const tags = validarTags(campos.tags ?? [])
   if (!tags.ok) {
     return tags
   }
-  const allergens = validarAllergenos(campos["alergenos"] ?? [])
+  const allergens = validarAllergenos(campos.alergenos ?? [])
   if (!allergens.ok) {
     return allergens
   }
@@ -628,8 +628,8 @@ function borradorDeCampos(campos: Campos): BorradorPlato {
     desde: primer(campos, "desde"),
     hasta: primer(campos, "hasta"),
     orden: primer(campos, "orden"),
-    tags: campos["tags"] ?? [],
-    allergens: campos["alergenos"] ?? [],
+    tags: campos.tags ?? [],
+    allergens: campos.alergenos ?? [],
   }
 }
 

@@ -6,7 +6,6 @@ export {
   type PlatoConPuesto,
   type PuestoDelLocal,
   type PuestoDePantalla,
-  puestoDePlato,
 } from "./estaciones.ts"
 export {
   ESTADO_ANULADO,

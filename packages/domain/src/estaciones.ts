@@ -4,8 +4,9 @@
  * Los puestos son DATOS del local: el dueno los nombra (Parrilla, Plancha, Postre, Barra) y
  * cada uno decide si nace aceptado (`auto_accept`) o si espera aprobacion humana. Este modulo
  * ya no enumera valores fijos: solo da el vocabulario comun entre el borde, el panel y las
- * pantallas. Quien resuelve el puesto real de un plato es la base
- * (`camarero_estacion_de_plato`): plato -> categoria -> puesto por defecto del local.
+ * pantallas. La regla que resuelve el puesto real de un plato (plato -> categoria -> defecto
+ * del local) tiene UNA sola fuente de verdad en TypeScript, que es la consulta del borde; la
+ * base la aplica con `camarero_estacion_de_plato` y su disparador (H4, antes estaba triplicada).
  */
 
 /** La pantalla que junta todos los puestos de un local, para un local de una sola pantalla. */
@@ -37,19 +38,6 @@ export type PuestoDelLocal = {
 export type PlatoConPuesto = {
   readonly puestoId: string | null
   readonly autoAcepta: boolean
-}
-
-/**
- * Puesto real de un plato: el propio, si lo trae; el de su categoria, si no; y el puesto por
- * defecto del local como ultimo recurso. Es la MISMA regla que aplica la base; aqui sin base,
- * para poder probarla como logica pura.
- */
-export function puestoDePlato(
-  plato: { readonly puestoId: string | null },
-  categoria: { readonly puestoId: string | null },
-  porDefecto: { readonly id: string } | null,
-): string | null {
-  return plato.puestoId ?? categoria.puestoId ?? porDefecto?.id ?? null
 }
 
 /**

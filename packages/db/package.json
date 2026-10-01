@@ -19,6 +19,7 @@
     "ensayar:restauracion": "node scripts/ensayar-restauracion.ts"
   },
   "devDependencies": {
+    "@camarero/api": "workspace:*",
     "@types/node": "^24",
     "@types/pg": "^8",
     "pg": "^8",

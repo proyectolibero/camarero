@@ -388,6 +388,7 @@ describe("Aprobacion en las pantallas de puesto", () => {
     ).text()
     expect(cuerpo).toContain("esperando aprobación (1)")
     expect(cuerpo).toContain('action="/admin/parejas/pr-1/aprobar"')
+    // La pantalla sin puesto se sirve como `todo`; el retorno tiene que ser esa misma ruta.
     expect(cuerpo).toContain('name="volver" value="/admin/pedidos/todo"')
   })
 
@@ -403,28 +404,33 @@ describe("Aprobacion en las pantallas de puesto", () => {
     expect(cuerpo).not.toContain("esperando aprobación")
   })
 
-  it("aprobar desde un puesto debe dejar la sesion aprobada y volver al puesto", async () => {
-    let visto: string | null = null
-    const respuesta = await manejar(
-      await conSesion("/admin/parejas/pr-1/aprobar", {
-        method: "POST",
-        formulario: { volver: "/admin/pedidos/barra" },
-      }),
-      ENTORNO,
-      AHORA,
-      deps(
-        CAMARERO,
-        almacenFalso({
-          aprobarPareja: async (_empleado, solicitudId) => {
-            visto = solicitudId
-            return { ok: true, valor: undefined }
-          },
+  it("debe volver al puesto REAL por el que se aprueba, no a una ruta inventada", async () => {
+    // La aplicacion produce /admin/pedidos/<id-de-puesto> y /admin/sala/<id-de-mesa>. El
+    // retorno tiene que conservarlos: si la lista blanca no los admitiera, aprobar expulsaria
+    // al empleado de la pantalla en la que estaba (H1).
+    for (const volver of ["/admin/pedidos/pu-frio", "/admin/sala/m3"]) {
+      let visto: string | null = null
+      const respuesta = await manejar(
+        await conSesion("/admin/parejas/pr-1/aprobar", {
+          method: "POST",
+          formulario: { volver },
         }),
-      ),
-    )
-    expect(visto).toBe("pr-1")
-    expect(respuesta.status).toBe(303)
-    expect(respuesta.headers.get("location")).toBe("/admin/pedidos/barra?aprobada=1")
+        ENTORNO,
+        AHORA,
+        deps(
+          CAMARERO,
+          almacenFalso({
+            aprobarPareja: async (_empleado, solicitudId) => {
+              visto = solicitudId
+              return { ok: true, valor: undefined }
+            },
+          }),
+        ),
+      )
+      expect(visto).toBe("pr-1")
+      expect(respuesta.status).toBe(303)
+      expect(respuesta.headers.get("location")).toBe(`${volver}?aprobada=1`)
+    }
   })
 
   it("no debe admitir un destino de vuelta inventado: vuelve al panel de solicitudes", async () => {

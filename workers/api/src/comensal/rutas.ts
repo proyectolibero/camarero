@@ -142,7 +142,7 @@ async function mostrarCarta(
 // ---------------------------------------------------------------------------
 
 function cantidadDeCampos(campos: Campos): number {
-  const bruto = Number.parseInt(campos["cantidad"] ?? "1", 10)
+  const bruto = Number.parseInt(campos.cantidad ?? "1", 10)
   return Number.isInteger(bruto) && bruto >= 1 && bruto <= 99 ? bruto : 1
 }
 
@@ -152,7 +152,7 @@ async function agregar(
   cookieCesta: string | null,
 ): Promise<Response> {
   const campos = await leerCampos(peticion)
-  const platoId = campos["plato"] ?? ""
+  const platoId = campos.plato ?? ""
   const lineas = agregarALaCesta(leerCesta(cookieCesta), platoId, cantidadDeCampos(campos))
   return responderRedireccion(
     `/t/${encodeURIComponent(codigo)}`,
@@ -170,8 +170,8 @@ async function ajustar(
   cookieCesta: string | null,
 ): Promise<Response> {
   const campos = await leerCampos(peticion)
-  const accion = campos["accion"] ?? ""
-  const platoId = campos["plato"] ?? ""
+  const accion = campos.accion ?? ""
+  const platoId = campos.plato ?? ""
   const lineas = esAccionDeCesta(accion)
     ? ajustarLaCesta(leerCesta(cookieCesta), platoId, accion)
     : leerCesta(cookieCesta)
@@ -231,7 +231,7 @@ async function enviar(
     return pantallaDeFallo(lectura)
   }
   const campos = await leerCampos(peticion)
-  const clave = (campos["clave"] ?? "").trim()
+  const clave = (campos.clave ?? "").trim()
   const { lineas } = resolverCesta(leerCesta(cookieCesta), preciosDeCarta(lectura.carta))
   // Solo viaja identificador, cantidad y el puesto que la carta resolvio: el precio lo fija
   // la base, nunca la cookie (D-051).

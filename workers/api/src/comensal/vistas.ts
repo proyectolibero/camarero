@@ -159,7 +159,7 @@ ${carta.categorias.map((categoria) => seccionDeCategoria(categoria, codigo))}
 // ---------------------------------------------------------------------------
 
 const ETIQUETA_ESTADO_PEDIDO: Readonly<Record<string, string>> = {
-  pendiente: "Enviada a cocina",
+  pendiente: "Enviada",
   aceptada: "Aceptada",
   preparando: "En preparación",
   lista: "Lista para servir",

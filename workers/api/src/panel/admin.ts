@@ -82,19 +82,19 @@ function mensajeDeFallo(resultado: Resultado, accion: string): string {
 // ---------------------------------------------------------------------------
 
 function validarCambiosLocal(campos: Readonly<Record<string, string>>): Validacion<CambiosLocal> {
-  const nombre = validarNombre("nombre del local", campos["nombre"] ?? "")
+  const nombre = validarNombre("nombre del local", campos.nombre ?? "")
   if (!nombre.ok) {
     return nombre
   }
-  const timezone = validarZonaHoraria(campos["zona_horaria"] ?? "")
+  const timezone = validarZonaHoraria(campos.zona_horaria ?? "")
   if (!timezone.ok) {
     return timezone
   }
-  const status = validarEstado(campos["estado"] ?? "")
+  const status = validarEstado(campos.estado ?? "")
   if (!status.ok) {
     return status
   }
-  const serviceMode = validarModoDeServicio(campos["modo_servicio"] ?? "")
+  const serviceMode = validarModoDeServicio(campos.modo_servicio ?? "")
   if (!serviceMode.ok) {
     return serviceMode
   }
@@ -171,11 +171,11 @@ async function rutaLocal(
 // ---------------------------------------------------------------------------
 
 function validarNuevaZona(campos: Readonly<Record<string, string>>): Validacion<NuevaZona> {
-  const nombre = validarNombre("nombre de la zona", campos["nombre"] ?? "")
+  const nombre = validarNombre("nombre de la zona", campos.nombre ?? "")
   if (!nombre.ok) {
     return nombre
   }
-  const kind = validarTipoDeZona(campos["tipo"] ?? "")
+  const kind = validarTipoDeZona(campos.tipo ?? "")
   if (!kind.ok) {
     return kind
   }
@@ -253,19 +253,19 @@ function validarNuevaMesa(
   campos: Readonly<Record<string, string>>,
   zonas: readonly Zona[],
 ): Validacion<NuevaMesa> {
-  const etiqueta = validarNombre("nombre de la mesa", campos["etiqueta"] ?? "")
+  const etiqueta = validarNombre("nombre de la mesa", campos.etiqueta ?? "")
   if (!etiqueta.ok) {
     return etiqueta
   }
-  const capacidad = validarCapacidad(campos["capacidad"] ?? "")
+  const capacidad = validarCapacidad(campos.capacidad ?? "")
   if (!capacidad.ok) {
     return capacidad
   }
-  const kind = validarTipoDeMesa(campos["tipo"] ?? "mesa")
+  const kind = validarTipoDeMesa(campos.tipo ?? "mesa")
   if (!kind.ok) {
     return kind
   }
-  const zonaId = validarZonaDeLaMesa(campos["zona"] ?? "", zonas)
+  const zonaId = validarZonaDeLaMesa(campos.zona ?? "", zonas)
   if (!zonaId.ok) {
     return zonaId
   }
@@ -388,7 +388,7 @@ async function moverMesa(
     return respuestaHtml(renderizar(vistaSinPermiso(empleado, "mover mesas")), 403)
   }
   const campos = await leerCampos(peticion)
-  const direccion = campos["direccion"] ?? ""
+  const direccion = campos.direccion ?? ""
   if (!esDireccion(direccion)) {
     return await renderMesas(empleado, almacen, {
       error: "Esa dirección no es válida.",
@@ -609,18 +609,22 @@ const MENSAJE_DE_DECISION: Readonly<Record<MotivoDeDecision, string>> = {
 }
 
 /**
- * Pantallas a las que una decision puede volver. Se aprueba desde la sala y desde los puestos,
- * no solo desde el panel de solicitudes (D-053); la lista blanca evita un redirect abierto.
+ * Pantallas a las que una decision puede volver. Se aprueba desde la sala y desde cualquier
+ * pantalla de puesto, no solo desde el panel de solicitudes (D-053); la lista blanca evita un
+ * redirect abierto pero tiene que admitir EXACTAMENTE las rutas que la aplicacion produce:
+ * `/admin/sala`, `/admin/sala/<id-de-mesa>` y `/admin/pedidos[/<id-de-puesto>]`, donde el
+ * puesto es el UUID que nombro el dueno, no un codigo fijo (H1, LL-024).
+ *
+ * El valor tiene que ser un `path` relativo (sin esquema ni autoridad) y no puede llevar
+ * `?query#fragment`, o se perderia la marca `?aprobada=1` que el manejador anade. El
+ * identificador solo lleva caracteres seguros, de modo que no hay inyeccion de cabecera.
  */
-const RETORNOS_DE_DECISION: ReadonlySet<string> = new Set([
-  "/admin/sala",
-  "/admin/pedidos/cocina",
-  "/admin/pedidos/barra",
-  "/admin/pedidos/todo",
-])
+const PATRON_DE_RETORNO =
+  /^\/admin\/(?:sala(?:\/[0-9A-Za-z._~-]+)?|pedidos(?:\/[0-9A-Za-z._~-]+)?)$/
 
+/** La ruta a la que vuelve una decision, o el panel de solicitudes si no es una reconocida. */
 function destinoDeVuelta(valor: string): string {
-  return RETORNOS_DE_DECISION.has(valor) ? valor : "/admin/parejas"
+  return PATRON_DE_RETORNO.test(valor) ? valor : "/admin/parejas"
 }
 
 async function decidirPareja(
@@ -635,8 +639,8 @@ async function decidirPareja(
   }
   // El cuerpo se lee UNA sola vez: motivo y pantalla de vuelta viajan en el mismo formulario.
   const campos = await leerCampos(peticion)
-  const motivo = (campos["motivo"] ?? "").trim() || "No especificado"
-  const vuelta = destinoDeVuelta((campos["volver"] ?? "").trim())
+  const motivo = (campos.motivo ?? "").trim() || "No especificado"
+  const vuelta = destinoDeVuelta((campos.volver ?? "").trim())
   const resultado =
     decision === "aprobar"
       ? await almacen.aprobarPareja(empleado, solicitudId)

@@ -263,7 +263,7 @@ function textoEs(valor: Readonly<Record<string, unknown>> | null): string | null
   if (valor === null) {
     return null
   }
-  const es = valor["es"]
+  const es = valor.es
   if (typeof es === "string" && es.trim() !== "") {
     return es
   }
@@ -349,9 +349,12 @@ async function cargarCarta(
      where location_id = $1 and active and available order by sort_order, created_at, id`,
     [mesa.location_id],
   )
-  // El puesto del plato se resuelve aqui mismo, con la MISMA regla que la base: el suyo, si
-  // lo trae; el de su categoria; y el puesto por defecto del local. El comensal puede leer
-  // los puestos de su local (politica de 0021), que es lo unico que necesita.
+  // El puesto del plato se resuelve aqui mismo, en UNA consulta para toda la carta. La base
+  // tiene la funcion `camarero_estacion_de_plato`, que es la fuente de verdad de la regla
+  // (plato -> categoria -> defecto del local), pero resolver N platos con ella serian N
+  // consultas y no devuelve el nombre ni el auto-aceptado que la cesta necesita. Se repite la
+  // MISMA regla con un `coalesce`; sigue sin haber una tercera copia en TypeScript: la que
+  // habia en `@camarero/domain` (`puestoDePlato`) se elimino por codigo muerto (H4).
   const platos = await cliente.query<FilaPlato>(
     `select mi.id, mi.category_id, mi.name_i18n, mi.description_i18n, mi.price_clp,
             mi.photo_r2_key,
@@ -704,8 +707,8 @@ async function enviarComanda(
 type FilaPedido = {
   readonly id: string
   readonly status: string
-  readonly prep_station: string | null
   readonly creada: number
+  readonly puesto_nombre: string | null
 }
 
 type FilaPedidoItem = {
@@ -727,10 +730,13 @@ async function leerPedidos(
       [datos.mesa.location_id],
     )
     const ordenes = await cliente.query<FilaPedido>(
-      `select id, status, prep_station, extract(epoch from (now() - created_at))::int as creada
-         from public.orders
-        where session_id = $1
-        order by created_at desc, id desc`,
+      `select o.id, o.status,
+              extract(epoch from (now() - o.created_at))::int as creada,
+              coalesce(ks.name, o.prep_station) as puesto_nombre
+         from public.orders o
+         left join public.kitchen_stations ks on ks.id = o.prep_station_id
+        where o.session_id = $1
+        order by o.created_at desc, o.id desc`,
       [datos.sesion.id],
     )
     const cabecera = {
@@ -757,7 +763,7 @@ async function leerPedidos(
       const lineas = porOrden.get(fila.id) ?? []
       return {
         id: fila.id,
-        destino: fila.prep_station ?? "Sin puesto",
+        destino: fila.puesto_nombre ?? "Sin puesto",
         estado: fila.status,
         creadoHaceSegundos: fila.creada,
         lineas,

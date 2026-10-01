@@ -65,7 +65,7 @@ function ok(datos: CartaDelComensal = carta()): LecturaComensal {
 const PEDIDOS: readonly PedidoDelComensal[] = [
   {
     id: "o1",
-    destino: "frio",
+    destino: "Frío",
     estado: "pendiente",
     creadoHaceSegundos: 5,
     lineas: [{ nombre: "Ceviche clásico", cantidad: 2, totalClp: 17800 }],
@@ -298,7 +298,7 @@ describe("Cesta: enviar la comanda", () => {
 })
 
 describe("Cesta: el estado de los pedidos", () => {
-  it("debe mostrar las comandas de la sesion con su estado", async () => {
+  it("debe mostrar las comandas de la sesion con el NOMBRE del puesto y sin la frase falsa", async () => {
     const respuesta = await manejar(
       peticion("/t/ABCDEFGH/pedidos", { cookieMesa: "sesion-1" }),
       ENTORNO,
@@ -317,9 +317,43 @@ describe("Cesta: el estado de los pedidos", () => {
     const cuerpo = await respuesta.text()
     expect(respuesta.status).toBe(200)
     expect(cuerpo).toContain("Tus pedidos")
-    expect(cuerpo).toContain("Enviada a cocina")
+    // El destino que ve el comensal es el NOMBRE que nombro el dueno, no el codigo interno.
+    expect(cuerpo).toContain("Destino: <strong>Frío</strong>")
+    expect(cuerpo).not.toContain("Destino: <strong>frio</strong>")
+    // La etiqueta de `pendiente` no puede dar por hecho que todo va a la cocina (LL-025).
+    expect(cuerpo).toContain("Enviada")
+    expect(cuerpo).not.toContain("Enviada a cocina")
     expect(cuerpo).toContain("Ceviche clásico")
     expect(cuerpo).toContain('http-equiv="refresh"')
+  })
+
+  it("no debe decir «Enviada a cocina» en una comanda de la barra", async () => {
+    const deBarra: PedidoDelComensal = {
+      id: "o2",
+      destino: "Barra",
+      estado: "pendiente",
+      creadoHaceSegundos: 5,
+      lineas: [{ nombre: "Agua mineral", cantidad: 2, totalClp: 4000 }],
+      totalClp: 4000,
+    }
+    const respuesta = await manejar(
+      peticion("/t/ABCDEFGH/pedidos", { cookieMesa: "sesion-1" }),
+      ENTORNO,
+      AHORA,
+      {
+        comensal: comensalFalso({
+          pedidos: async () => ({
+            tipo: "ok",
+            local: "Barra Uno",
+            mesa: "Mesa 4",
+            pedidos: [deBarra],
+          }),
+        }),
+      },
+    )
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain("Destino: <strong>Barra</strong>")
+    expect(cuerpo).not.toContain("Enviada a cocina")
   })
 
   it("debe decir que no hay sesion de mesa si el dispositivo no la tiene", async () => {
