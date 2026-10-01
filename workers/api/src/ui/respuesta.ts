@@ -35,13 +35,22 @@ export function respuestaCss(cuerpo: string): Response {
   return new Response(cuerpo, { headers: cabeceras })
 }
 
-/** Redireccion tras una mutacion (POST), como manda la convencion del armazon. */
-export function responderRedireccion(destino: string, cookie?: string): Response {
+/**
+ * Redireccion tras una mutacion (POST), como manda la convencion del armazon. Acepta una
+ * cookie o varias: un envio de comanda deja la cesta vacia Y renueva la cookie de mesa.
+ */
+export function responderRedireccion(
+  destino: string,
+  cookies?: string | readonly string[],
+): Response {
   const cabeceras = cabecerasDePanel()
   cabeceras.set("location", destino)
   cabeceras.set("cache-control", "no-store")
-  if (cookie !== undefined) {
-    cabeceras.append("set-cookie", cookie)
+  if (cookies !== undefined) {
+    const lista = typeof cookies === "string" ? [cookies] : cookies
+    for (const cookie of lista) {
+      cabeceras.append("set-cookie", cookie)
+    }
   }
   return new Response(null, { status: 303, headers: cabeceras })
 }

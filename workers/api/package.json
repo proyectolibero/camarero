@@ -24,6 +24,7 @@
     "wrangler": "^4.142.0"
   },
   "dependencies": {
+    "@camarero/domain": "workspace:*",
     "qrcode-generator": "2.0.4"
   }
 }

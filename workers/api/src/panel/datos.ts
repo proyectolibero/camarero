@@ -8,6 +8,7 @@
  * Un fallo esperado de escritura (sin permiso, fila ausente, choque de codigo) se devuelve
  * como `Resultado`, nunca como excepcion. Un fallo inesperado (la base caida) si sube.
  */
+import { type EstadoDeComanda, esEstadoDeComanda, transicionPermitida } from "@camarero/domain"
 import { Client } from "pg"
 import { type ContextoDeEmpleado, type Empleado, fijarContextoDeEmpleado } from "../base.ts"
 import { esConflictoDeCodigo, generarCodigoMesa } from "./codigo-mesa.ts"
@@ -141,6 +142,30 @@ export type SolicitudPendiente = {
   readonly restanteSegundos: number
 }
 
+/** Una linea de una comanda tal como la ve la cocina. */
+export type LineaDeComanda = {
+  readonly nombre: string
+  readonly cantidad: number
+  readonly totalClp: number
+}
+
+/** Una comanda en la pantalla de cocina: su mesa, sus lineas, su estado y su antiguedad. */
+export type ComandaDeCocina = {
+  readonly id: string
+  readonly mesa: string
+  readonly estado: EstadoDeComanda
+  readonly creadaHaceSegundos: number
+  readonly lineas: readonly LineaDeComanda[]
+  readonly totalClp: number
+}
+
+/** Por que no se pudo cambiar el estado de una comanda. */
+export type MotivoDeCambioComanda = "sin_permiso" | "no_existe" | "transicion_invalida"
+
+export type ResultadoCambioComanda =
+  | { readonly ok: true; readonly valor: { readonly estado: EstadoDeComanda } }
+  | { readonly ok: false; readonly motivo: MotivoDeCambioComanda }
+
 /** Lo que el panel necesita de la base. Se inyecta para poder probar sin tocar Postgres. */
 export type AlmacenPanel = {
   readonly leerLocal: (empleado: Empleado) => Promise<DatosLocal | null>
@@ -208,6 +233,12 @@ export type AlmacenPanel = {
     solicitudId: string,
     motivo: string,
   ) => Promise<ResultadoDecision>
+  readonly listarComandas: (empleado: Empleado) => Promise<readonly ComandaDeCocina[]>
+  readonly cambiarEstadoComanda: (
+    empleado: Empleado,
+    comandaId: string,
+    destino: EstadoDeComanda,
+  ) => Promise<ResultadoCambioComanda>
 }
 
 type FilaLocal = {
@@ -1032,6 +1063,112 @@ async function decidirPareja(
   }
 }
 
+// ---------------------------------------------------------------------------
+// La cocina: comandas del local
+// ---------------------------------------------------------------------------
+
+type FilaComanda = {
+  readonly id: string
+  readonly status: string
+  readonly creada: number
+  readonly mesa: string
+}
+
+type FilaComandaItem = {
+  readonly order_id: string
+  readonly name_snapshot: string
+  readonly qty: number
+  readonly line_total_clp: number
+}
+
+/** Estado por defecto si la base trajera un valor fuera del contrato: no se inventa estado. */
+function aEstado(valor: string): EstadoDeComanda {
+  return esEstadoDeComanda(valor) ? valor : "anulada"
+}
+
+/**
+ * Las comandas abiertas del local (la RLS ya acota al alcance del empleado). Se muestran las
+ * que aun no estan cobradas; `cerrada` se alcanza tras el cobro, que es otra tarea.
+ */
+async function listarFilaComandas(cliente: Client): Promise<readonly ComandaDeCocina[]> {
+  const comandas = await cliente.query<FilaComanda>(
+    `select o.id, o.status,
+            extract(epoch from (now() - o.created_at))::int as creada,
+            coalesce(t.label, s.code, 'Mesa') as mesa
+       from public.orders o
+       left join public.table_sessions s on s.id = o.session_id
+       left join public.tables t on t.id = s.table_id
+      where o.status <> 'cerrada'
+      order by o.created_at, o.id`,
+  )
+  if (comandas.rows.length === 0) {
+    return []
+  }
+  const items = await cliente.query<FilaComandaItem>(
+    `select order_id, name_snapshot, qty, line_total_clp
+       from public.order_items
+      where order_id = any($1::uuid[])
+      order by created_at, id`,
+    [comandas.rows.map((fila) => fila.id)],
+  )
+  const porComanda = new Map<string, LineaDeComanda[]>()
+  for (const item of items.rows) {
+    const lista = porComanda.get(item.order_id) ?? []
+    lista.push({ nombre: item.name_snapshot, cantidad: item.qty, totalClp: item.line_total_clp })
+    porComanda.set(item.order_id, lista)
+  }
+  return comandas.rows.map((fila): ComandaDeCocina => {
+    const lineas = porComanda.get(fila.id) ?? []
+    return {
+      id: fila.id,
+      mesa: fila.mesa,
+      estado: aEstado(fila.status),
+      creadaHaceSegundos: fila.creada,
+      lineas,
+      totalClp: lineas.reduce((suma, linea) => suma + linea.totalClp, 0),
+    }
+  })
+}
+
+/**
+ * Cambia el estado de una comanda respetando la maquina de estados del contrato. La base es
+ * la que cierra los importes al aceptar; aqui solo se valida la transicion y se escribe.
+ */
+async function cambiarFilaEstadoComanda(
+  cliente: Client,
+  comandaId: string,
+  destino: EstadoDeComanda,
+): Promise<ResultadoCambioComanda> {
+  const actual = await cliente.query<{ status: string }>(
+    "select status from public.orders where id = $1",
+    [comandaId],
+  )
+  const fila = actual.rows[0]
+  if (fila === undefined) {
+    return { ok: false, motivo: "no_existe" }
+  }
+  if (!esEstadoDeComanda(fila.status) || !transicionPermitida(fila.status, destino)) {
+    return { ok: false, motivo: "transicion_invalida" }
+  }
+  try {
+    const resultado = await cliente.query(
+      "update public.orders set status = $2 where id = $1 returning id",
+      [comandaId, destino],
+    )
+    if (resultado.rowCount === 1) {
+      return { ok: true, valor: { estado: destino } }
+    }
+    const visible = await cliente.query("select 1 from public.orders where id = $1", [comandaId])
+    return { ok: false, motivo: (visible.rowCount ?? 0) > 0 ? "sin_permiso" : "no_existe" }
+  } catch (error) {
+    const motivo = motivoDeErrorDeEscritura(error)
+    if (motivo === null) {
+      throw error
+    }
+    return { ok: false, motivo: motivo === "sin_permiso" ? "sin_permiso" : "transicion_invalida" }
+  }
+}
+
 export function almacenDeBase(cadena: string): AlmacenPanel {
   return {
     leerLocal: (empleado): Promise<DatosLocal | null> =>
@@ -1199,6 +1336,12 @@ export function almacenDeBase(cadena: string): AlmacenPanel {
       enTransaccion(cadena, empleado, (cliente) =>
         decidirPareja(cliente, solicitudId, "rejected", motivo),
       ),
+    listarComandas: (empleado): Promise<readonly ComandaDeCocina[]> =>
+      enTransaccion(cadena, empleado, (cliente) => listarFilaComandas(cliente)),
+    cambiarEstadoComanda: (empleado, comandaId, destino): Promise<ResultadoCambioComanda> =>
+      enTransaccion(cadena, empleado, (cliente) =>
+        cambiarFilaEstadoComanda(cliente, comandaId, destino),
+      ),
   }
 }
 
@@ -1238,6 +1381,11 @@ export function almacenNoConfigurado(): AlmacenPanel {
     listarParejasPendientes: async (): Promise<readonly SolicitudPendiente[]> => [],
     aprobarPareja: async (): Promise<ResultadoDecision> => ({ ok: false, motivo: "otro_local" }),
     rechazarPareja: async (): Promise<ResultadoDecision> => ({ ok: false, motivo: "otro_local" }),
+    listarComandas: async (): Promise<readonly ComandaDeCocina[]> => [],
+    cambiarEstadoComanda: async (): Promise<ResultadoCambioComanda> => ({
+      ok: false,
+      motivo: "no_existe",
+    }),
   }
 }
 

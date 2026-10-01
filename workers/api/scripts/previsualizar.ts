@@ -15,17 +15,27 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { crc32, deflateSync } from "node:zlib"
 import type { Empleado } from "../src/base.ts"
+import type { LineaResuelta } from "../src/comensal/cesta.ts"
 import type { CartaDelComensal } from "../src/comensal/datos.ts"
 import {
   vistaCartaComensal,
+  vistaCestaComensal,
   vistaCodigoDesconocido,
   vistaLocalInactivo,
 } from "../src/comensal/vistas.ts"
 import { generarCodigoMesa } from "../src/panel/codigo-mesa.ts"
-import type { Categoria, Mesa, Plato, SolicitudPendiente, Zona } from "../src/panel/datos.ts"
+import type {
+  Categoria,
+  ComandaDeCocina,
+  Mesa,
+  Plato,
+  SolicitudPendiente,
+  Zona,
+} from "../src/panel/datos.ts"
 import {
   vistaCarta,
   vistaCategoria,
+  vistaCocina,
   vistaEntrada,
   vistaMesas,
   vistaParejas,
@@ -461,5 +471,77 @@ const SOLICITUDES: readonly SolicitudPendiente[] = [
 ]
 
 escribir("parejas.html", conHojaDeEstilosRelativa(renderizar(vistaParejas(DUENO, SOLICITUDES, {}))))
+
+// ---------------------------------------------------------------------------
+// La cesta del comensal y la cocina (LL-020: lo que se ve se mira)
+// ---------------------------------------------------------------------------
+
+const LINEAS_CESTA: readonly LineaResuelta[] = [
+  { platoId: "p1", nombre: "Ceviche clásico", cantidad: 2, precioClp: 8900, totalClp: 17800 },
+  { platoId: "p2", nombre: "Empanadas de queso", cantidad: 1, precioClp: 5000, totalClp: 5000 },
+  { platoId: "p4", nombre: "Lomo a lo pobre", cantidad: 1, precioClp: 15900, totalClp: 15900 },
+]
+const TOTAL_CESTA = LINEAS_CESTA.reduce((suma, linea) => suma + linea.totalClp, 0)
+
+escribir(
+  "cesta.html",
+  conHojaDeEstilosRelativa(
+    renderizar(
+      vistaCestaComensal(
+        { ...CARTA_COMENSAL, estado: "aprobado" },
+        "ABCDEFGH",
+        LINEAS_CESTA,
+        TOTAL_CESTA,
+        { clave: "clave-de-ejemplo", puedeEnviar: true },
+      ),
+    ),
+  ),
+)
+
+const COMANDAS_COCINA: readonly ComandaDeCocina[] = [
+  {
+    id: "o1",
+    mesa: "Mesa 4",
+    estado: "pendiente",
+    creadaHaceSegundos: 6,
+    lineas: [
+      { nombre: "Ceviche clásico", cantidad: 2, totalClp: 17800 },
+      { nombre: "Pisco sour", cantidad: 1, totalClp: 5900 },
+    ],
+    totalClp: 23700,
+  },
+  {
+    id: "o2",
+    mesa: "Barra 2",
+    estado: "aceptada",
+    creadaHaceSegundos: 95,
+    lineas: [{ nombre: "Lomo a lo pobre", cantidad: 1, totalClp: 15900 }],
+    totalClp: 15900,
+  },
+  {
+    id: "o3",
+    mesa: "Terraza junto a la ventana grande",
+    estado: "preparando",
+    creadaHaceSegundos: 240,
+    lineas: [
+      { nombre: "Pastel de choclo", cantidad: 2, totalClp: 23800 },
+      { nombre: "Agua mineral", cantidad: 2, totalClp: 5000 },
+    ],
+    totalClp: 28800,
+  },
+  {
+    id: "o4",
+    mesa: "Sala 1",
+    estado: "lista",
+    creadaHaceSegundos: 420,
+    lineas: [{ nombre: "Tabla de quesos del sur", cantidad: 1, totalClp: 12500 }],
+    totalClp: 12500,
+  },
+]
+
+escribir(
+  "cocina.html",
+  conHojaDeEstilosRelativa(renderizar(vistaCocina(DUENO, COMANDAS_COCINA, {}))),
+)
 
 process.stdout.write(`Previsualizacion escrita en ${SALIDA}\n`)

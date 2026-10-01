@@ -3,26 +3,23 @@
 Logica **pura** del dominio: sin red, sin base de datos, sin efectos secundarios. Es el
 corazon del negocio y el unico sitio donde un error se paga caro.
 
-Aqui vivira:
+Aqui vive, por ahora:
 
-- el **calculo de totales** y el **reparto de cuenta** (4 modos: por item, equitativo, a
-  medias y manual),
-- las **propinas** y los **descuentos** (con piso entero, nunca `float` ni `.toFixed()`),
-- las **transiciones de estado** de la comanda.
+- el **subtotal de lineas** en enteros de pesos chilenos,
+- las **transiciones de estado** de la comanda (`order-state.ts`), que son la fuente unica
+  de la matriz de `CONTRACT-estados-comanda`.
+
+Llegara con la Fase 3: el **reparto de cuenta** (4 modos: por item, equitativo, a medias y
+manual), las **propinas** y los **descuentos**.
 
 Reglas:
 
-- Todos los importes son **enteros de pesos chilenos (CLP)**.
+- Todos los importes son **enteros de pesos chilenos (CLP)**: nunca `float` ni `.toFixed()`.
 - **100 % de cobertura obligatoria**: un error de redondeo es un conflicto real con un
-  cliente. Casos borde siempre testeados (division con resto, modificadores, descuento que
-  no da entero, propina sobre total ya descontado, division entre uno).
+  cliente. Casos borde siempre testeados.
+- Sin dependencias de produccion: el borde lo empaqueta y no arrastra nada al runtime.
 
-## Por que todavia no hay codigo
+## Uso
 
-El paquete se crea ya para fijar su identidad, su configuracion de TypeScript estricta y la
-frontera de responsabilidad. El codigo llega con la tarea de la Fase 3 (cuenta), con sus
-tests. Hasta entonces no hay `src/`: una carpeta vacia no documenta nada y un
-`package.json` sin contenido es ruido.
-
-Cuando llegue el primer modulo, se anaden los scripts `typecheck` y `test` para que
-`pnpm -r run typecheck` y `pnpm -r run test` lo cubran desde la raiz.
+Se importa como paquete del workspace (`@camarero/domain`) desde `workers/api`. Sus funciones
+son puras y se prueban sin base de datos ni red.

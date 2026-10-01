@@ -5,6 +5,7 @@
  * Todo el HTML se construye con la plantilla que escapa por defecto; ningún dato de la base
  * se escribe sin pasar por ella.
  */
+import { type EstadoDeComanda, estadosPermitidos } from "@camarero/domain"
 import type { Empleado } from "../base.ts"
 import { type HtmlSeguro, html, htmlCrudo } from "../ui/html.ts"
 import { generarQrSvg } from "../ui/qr.ts"
@@ -16,7 +17,15 @@ import {
   SIN_CATEGORIA,
   TAGS,
 } from "./carta-catalogo.ts"
-import type { Categoria, DatosLocal, Mesa, Plato, SolicitudPendiente, Zona } from "./datos.ts"
+import type {
+  Categoria,
+  ComandaDeCocina,
+  DatosLocal,
+  Mesa,
+  Plato,
+  SolicitudPendiente,
+  Zona,
+} from "./datos.ts"
 import { svgDeZona } from "./mapa-svg.ts"
 import { nombreDeRol } from "./roles.ts"
 
@@ -38,7 +47,7 @@ const PANTALLAS: Readonly<Record<Superficie, readonly PantallaDelCuadro[]>> = {
     { titulo: "Carta (categorías, platos, precios, fotos, orden)", href: "/admin/carta" },
     { titulo: "Personal (invitar, roles, PIN)" },
     { titulo: "Ajustes (tema, logo, horarios, modo de servicio)" },
-    { titulo: "Pedidos e histórico, anular" },
+    { titulo: "Cocina: pedidos, aceptar, marcar listos y anular", href: "/admin/pedidos" },
     { titulo: "Métricas" },
     { titulo: "Multi-local y cuota" },
   ],
@@ -54,13 +63,19 @@ export function nombreDeSuperficie(superficie: Superficie): string {
   return superficie === "admin" ? "Panel del local" : "Panel de plataforma"
 }
 
-function pagina(titulo: string, contenido: HtmlSeguro): HtmlSeguro {
+/** `refrescoSegundos` anade un `<meta http-equiv="refresh">`: pantallas que se miran de reojo. */
+function pagina(titulo: string, contenido: HtmlSeguro, refrescoSegundos?: number): HtmlSeguro {
+  const metaRefresco =
+    refrescoSegundos === undefined
+      ? html``
+      : html`<meta http-equiv="refresh" content="${refrescoSegundos}">`
   return html`<!doctype html>
 <html lang="es">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${titulo} · Camarero</title>
+${metaRefresco}
 <link rel="stylesheet" href="/panel/estilos.css">
 </head>
 <body>
@@ -1021,4 +1036,93 @@ ${lista}
 ${enlaceVolverAlPanel()}
 </main>`
   return pagina("Solicitudes de emparejamiento", contenido)
+}
+
+// ---------------------------------------------------------------------------
+// La cocina: las comandas del local
+// ---------------------------------------------------------------------------
+
+const ETIQUETA_ESTADO_COMANDA: Readonly<Record<EstadoDeComanda, string>> = {
+  pendiente: "Nueva",
+  aceptada: "Aceptada",
+  preparando: "En preparación",
+  lista: "Lista",
+  servida: "Servida",
+  cerrada: "Cobrada",
+  anulada: "Anulada",
+}
+
+/** Texto del boton: dice a que estado lleva, no el codigo interno. */
+const ETIQUETA_DESTINO: Readonly<Record<EstadoDeComanda, string>> = {
+  pendiente: "Reabrir",
+  aceptada: "Aceptar",
+  preparando: "Empezar a preparar",
+  lista: "Marcar lista",
+  servida: "Marcar servida",
+  cerrada: "Cerrar la cuenta",
+  anulada: "Anular",
+}
+
+/**
+ * Destinos que el KDS puede escribir. `cerrada` NO esta: se alcanza tras el cobro (F3), y
+ * ofrecerlo aqui abriria una via para cerrar una comanda sin cobrarla (CONTRACT-estados-comanda,
+ * regla 6). El resto de destinos son exactamente los de la maquina de estados.
+ */
+const DESTINOS_DE_COCINA: readonly EstadoDeComanda[] = [
+  "aceptada",
+  "preparando",
+  "lista",
+  "servida",
+  "anulada",
+]
+
+function accionDeEstado(comandaId: string, destino: EstadoDeComanda): HtmlSeguro {
+  const clase = destino === "anulada" ? "boton-mini boton-anular" : "boton-mini"
+  return html`<form method="post" action="/admin/pedidos/${comandaId}/estado">
+<input type="hidden" name="destino" value="${destino}">
+<button class="${clase}" type="submit">${ETIQUETA_DESTINO[destino]}</button>
+</form>`
+}
+
+function comandaDeCocina(comanda: ComandaDeCocina): HtmlSeguro {
+  const destinos = estadosPermitidos(comanda.estado).filter((destino) =>
+    DESTINOS_DE_COCINA.includes(destino),
+  )
+  return html`<li class="pedido-cocina pedido-cocina-${comanda.estado}">
+<div class="pedido-cabecera">
+<span class="pedido-mesa">${comanda.mesa}</span>
+<span class="pedido-estado pedido-estado-${comanda.estado}">${ETIQUETA_ESTADO_COMANDA[comanda.estado]}</span>
+<span class="pedido-tiempo">hace ${etiquetaDeTiempo(comanda.creadaHaceSegundos)}</span>
+<span class="crece"></span>
+<span class="pedido-importe">${formatearPrecio(comanda.totalClp)}</span>
+</div>
+${comanda.estado === "pendiente" ? html`<p class="pedido-nueva" role="status">Comanda nueva: todavía no la ha aceptado nadie.</p>` : html``}
+<ul class="pedido-lineas">${comanda.lineas.map(
+    (linea) =>
+      html`<li><span>${linea.cantidad}× ${linea.nombre}</span><span>${formatearPrecio(linea.totalClp)}</span></li>`,
+  )}</ul>
+<div class="pedido-acciones">${destinos.map((destino) => accionDeEstado(comanda.id, destino))}</div>
+</li>`
+}
+
+export function vistaCocina(
+  empleado: Empleado,
+  comandas: readonly ComandaDeCocina[],
+  estado: EstadoPantalla,
+): HtmlSeguro {
+  const lista =
+    comandas.length === 0
+      ? html`<p>No hay pedidos abiertos ahora mismo.</p>`
+      : html`<ul class="pedidos-cocina">${comandas.map(comandaDeCocina)}</ul>`
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${avisosDeEstado(estado)}
+<section class="tarjeta">
+<h1>Pedidos de cocina</h1>
+<p>Esta pantalla se actualiza sola cada 15 segundos. Las comandas nuevas aparecen marcadas. Aceptar una comanda cierra sus importes con los precios de la carta.</p>
+${lista}
+</section>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina("Pedidos de cocina", contenido, 15)
 }

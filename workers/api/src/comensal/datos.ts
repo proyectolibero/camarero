@@ -11,6 +11,7 @@
  * aun no esta en el contexto. Se lee despues, ya con `app.session_id` fijado.
  */
 import { Client } from "pg"
+import type { LineaDeCesta } from "./cesta.ts"
 
 export type PlatoDeCarta = {
   readonly id: string
@@ -42,10 +43,54 @@ export type LecturaComensal =
   | { readonly tipo: "codigo_desconocido" }
   | { readonly tipo: "local_inactivo" }
 
+/**
+ * Resultado del envio de la cesta. Cada causa se distingue para que la pantalla pueda decir
+ * que paso: un cero sin explicar es un cero invisible (LL-024).
+ */
+export type ResultadoEnvio =
+  | { readonly tipo: "ok"; readonly pedidoId: string }
+  | { readonly tipo: "codigo_desconocido" }
+  | { readonly tipo: "sin_sesion" }
+  | { readonly tipo: "sin_aprobar" }
+  | { readonly tipo: "cesta_vacia" }
+
+/** Una linea tal como la ve el comensal en el estado de sus pedidos. */
+export type LineaDelPedido = {
+  readonly nombre: string
+  readonly cantidad: number
+  readonly totalClp: number
+}
+
+/** Una comanda del comensal, con sus lineas y el total real de la carta. */
+export type PedidoDelComensal = {
+  readonly id: string
+  readonly estado: string
+  readonly creadoHaceSegundos: number
+  readonly lineas: readonly LineaDelPedido[]
+  readonly totalClp: number
+}
+
+export type LecturaPedidos =
+  | {
+      readonly tipo: "ok"
+      readonly local: string
+      readonly mesa: string
+      readonly pedidos: readonly PedidoDelComensal[]
+    }
+  | { readonly tipo: "codigo_desconocido" }
+  | { readonly tipo: "sin_sesion" }
+
 /** Lo que el borde necesita para la pantalla del comensal. Se inyecta para probar sin base. */
 export type AlmacenComensal = {
   readonly abrir: (codigo: string, sesionId: string | null) => Promise<LecturaComensal>
   readonly pedir: (codigo: string, sesionId: string | null) => Promise<LecturaComensal>
+  readonly enviar: (
+    codigo: string,
+    sesionId: string | null,
+    clave: string,
+    lineas: readonly LineaDeCesta[],
+  ) => Promise<ResultadoEnvio>
+  readonly pedidos: (codigo: string, sesionId: string | null) => Promise<LecturaPedidos>
 }
 
 type FilaMesa = {
@@ -374,17 +419,251 @@ async function enTransaccion(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Envio de la comanda y estado de los pedidos
+// ---------------------------------------------------------------------------
+
+type SesionValidada = {
+  readonly mesa: FilaMesa
+  readonly sesion: FilaSesion
+  readonly orgId: string
+}
+
+type Envoltorio<T> = { readonly fallo: "codigo_desconocido" | "sin_sesion" } | { readonly valor: T }
+
+/**
+ * Abre una transaccion del comensal y le deja el contexto fijado. Devuelve el fallo de
+ * contexto (codigo inexistente o sin sesion) sin llamar al trabajo; si la sesion existe, el
+ * trabajo decide. Reutiliza la MISMA cerradura que `abrir`: primero el codigo, luego la mesa y
+ * la localidad, por ultimo la sesion.
+ */
+async function comoComensal<T>(
+  cadena: string,
+  codigo: string,
+  sesionId: string | null,
+  trabajo: (cliente: Client, datos: SesionValidada) => Promise<T>,
+): Promise<Envoltorio<T>> {
+  const cliente = new Client({ connectionString: cadena })
+  await cliente.connect()
+  try {
+    await cliente.query("begin")
+    await fijar(cliente, [
+      ["app.table_code", codigo],
+      ["app.table_id", ""],
+      ["app.role", ""],
+      ["app.session_id", ""],
+      ["app.location_id", ""],
+    ])
+    const mesa = await leerMesa(cliente, codigo)
+    if (mesa === null) {
+      await cliente.query("rollback")
+      return { fallo: "codigo_desconocido" }
+    }
+    await fijar(cliente, [
+      ["app.table_id", mesa.id],
+      ["app.location_id", mesa.location_id],
+    ])
+    const sesion = await sesionDeLaCookie(cliente, sesionId, mesa.id)
+    if (sesion === null) {
+      await cliente.query("rollback")
+      return { fallo: "sin_sesion" }
+    }
+    const org = await cliente.query<{ org_id: string }>(
+      "select org_id from public.table_sessions where id = $1",
+      [sesion.id],
+    )
+    const valor = await trabajo(cliente, { mesa, sesion, orgId: org.rows[0]?.org_id ?? "" })
+    await cliente.query("commit")
+    return { valor }
+  } catch (error) {
+    await cliente.query("rollback")
+    throw error
+  } finally {
+    await cliente.end()
+  }
+}
+
+function esConflictoDeIdempotencia(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false
+  }
+  return (error as { readonly code?: unknown }).code === "23505"
+}
+
+/** La comanda ya creada con esta clave, si existe y es de esta sesion. */
+async function leerPedidoPorClave(
+  cliente: Client,
+  clave: string,
+  sesionId: string,
+): Promise<string | null> {
+  const resultado = await cliente.query<{ id: string }>(
+    "select id from public.orders where idempotency_key = $1 and session_id = $2",
+    [clave, sesionId],
+  )
+  return resultado.rows[0]?.id ?? null
+}
+
+/**
+ * Envio de la comanda. La base fija el precio y el estado: aqui solo se comprueba que la
+ * sesion esta aprobada. La clave de idempotencia es unica globalmente, de modo que un doble
+ * toque o un reintento de red no crea dos comandas.
+ */
+async function enviarComanda(
+  cadena: string,
+  codigo: string,
+  sesionId: string | null,
+  clave: string,
+  lineas: readonly LineaDeCesta[],
+): Promise<ResultadoEnvio> {
+  if (lineas.length === 0 || clave === "") {
+    return { tipo: "cesta_vacia" }
+  }
+  const envuelto = await comoComensal(cadena, codigo, sesionId, async (cliente, datos) => {
+    if (datos.sesion.state !== "active") {
+      return { tipo: "sin_aprobar" } as const
+    }
+    // Ya enviada: se devuelve la misma comanda, sin crear otra.
+    const existente = await leerPedidoPorClave(cliente, clave, datos.sesion.id)
+    if (existente !== null) {
+      return { tipo: "ok", pedidoId: existente } as const
+    }
+    try {
+      await cliente.query(
+        `insert into public.orders (org_id, location_id, session_id, source, client_alias, idempotency_key)
+         values ($1, $2, $3, 'table', $4, $5)`,
+        [datos.orgId, datos.mesa.location_id, datos.sesion.id, datos.mesa.label, clave],
+      )
+    } catch (error) {
+      if (esConflictoDeIdempotencia(error)) {
+        return { tipo: "conflicto" } as const
+      }
+      throw error
+    }
+    const pedidoId = await leerPedidoPorClave(cliente, clave, datos.sesion.id)
+    if (pedidoId === null) {
+      throw new Error("La comanda recien creada no es legible")
+    }
+    for (const linea of lineas) {
+      await cliente.query(
+        `insert into public.order_items (order_id, menu_item_id, qty) values ($1, $2, $3)`,
+        [pedidoId, linea.platoId, linea.cantidad],
+      )
+    }
+    return { tipo: "ok", pedidoId } as const
+  })
+  if ("fallo" in envuelto) {
+    return envuelto.fallo === "codigo_desconocido"
+      ? { tipo: "codigo_desconocido" }
+      : { tipo: "sin_sesion" }
+  }
+  if (envuelto.valor.tipo === "conflicto") {
+    // Otro envio gano la carrera: se recupera la comanda ya creada.
+    const repetido = await comoComensal(cadena, codigo, sesionId, (cliente, datos) =>
+      leerPedidoPorClave(cliente, clave, datos.sesion.id),
+    )
+    if ("valor" in repetido && repetido.valor !== null) {
+      return { tipo: "ok", pedidoId: repetido.valor }
+    }
+    return { tipo: "sin_sesion" }
+  }
+  return envuelto.valor
+}
+
+type FilaPedido = {
+  readonly id: string
+  readonly status: string
+  readonly creada: number
+}
+
+type FilaPedidoItem = {
+  readonly order_id: string
+  readonly name_snapshot: string
+  readonly qty: number
+  readonly line_total_clp: number
+}
+
+/** Las comandas de la sesion, con sus lineas y el total real de la carta. */
+async function leerPedidos(
+  cadena: string,
+  codigo: string,
+  sesionId: string | null,
+): Promise<LecturaPedidos> {
+  const envuelto = await comoComensal(cadena, codigo, sesionId, async (cliente, datos) => {
+    const local = await cliente.query<{ name: string }>(
+      "select name from public.locations where id = $1",
+      [datos.mesa.location_id],
+    )
+    const ordenes = await cliente.query<FilaPedido>(
+      `select id, status, extract(epoch from (now() - created_at))::int as creada
+         from public.orders
+        where session_id = $1
+        order by created_at desc, id desc`,
+      [datos.sesion.id],
+    )
+    const cabecera = {
+      local: local.rows[0]?.name ?? "Tu local",
+      mesa: datos.mesa.label,
+    }
+    if (ordenes.rows.length === 0) {
+      return { ...cabecera, pedidos: [] as readonly PedidoDelComensal[] }
+    }
+    const items = await cliente.query<FilaPedidoItem>(
+      `select order_id, name_snapshot, qty, line_total_clp
+         from public.order_items
+        where order_id = any($1::uuid[])
+        order by created_at, id`,
+      [ordenes.rows.map((fila) => fila.id)],
+    )
+    const porOrden = new Map<string, LineaDelPedido[]>()
+    for (const item of items.rows) {
+      const lista = porOrden.get(item.order_id) ?? []
+      lista.push({ nombre: item.name_snapshot, cantidad: item.qty, totalClp: item.line_total_clp })
+      porOrden.set(item.order_id, lista)
+    }
+    const pedidos = ordenes.rows.map((fila): PedidoDelComensal => {
+      const lineas = porOrden.get(fila.id) ?? []
+      return {
+        id: fila.id,
+        estado: fila.status,
+        creadoHaceSegundos: fila.creada,
+        lineas,
+        totalClp: lineas.reduce((suma, linea) => suma + linea.totalClp, 0),
+      }
+    })
+    return { ...cabecera, pedidos }
+  })
+  if ("fallo" in envuelto) {
+    return envuelto.fallo === "codigo_desconocido"
+      ? { tipo: "codigo_desconocido" }
+      : { tipo: "sin_sesion" }
+  }
+  return {
+    tipo: "ok",
+    local: envuelto.valor.local,
+    mesa: envuelto.valor.mesa,
+    pedidos: envuelto.valor.pedidos,
+  }
+}
+
 export function almacenComensalDeBase(cadena: string): AlmacenComensal {
   return {
     abrir: (codigo, sesionId) => enTransaccion(cadena, false, codigo, sesionId),
     pedir: (codigo, sesionId) => enTransaccion(cadena, true, codigo, sesionId),
+    enviar: (codigo, sesionId, clave, lineas) =>
+      enviarComanda(cadena, codigo, sesionId, clave, lineas),
+    pedidos: (codigo, sesionId) => leerPedidos(cadena, codigo, sesionId),
   }
 }
 
 /** Sin base no se resuelve nada: se falla cerrado, nunca se inventa una carta. */
 export function almacenComensalNoConfigurado(): AlmacenComensal {
   const desconocido = async (): Promise<LecturaComensal> => ({ tipo: "codigo_desconocido" })
-  return { abrir: desconocido, pedir: desconocido }
+  return {
+    abrir: desconocido,
+    pedir: desconocido,
+    enviar: async () => ({ tipo: "codigo_desconocido" }),
+    pedidos: async () => ({ tipo: "codigo_desconocido" }),
+  }
 }
 
 export function comensalDeEntorno(entorno: {

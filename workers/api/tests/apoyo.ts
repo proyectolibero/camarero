@@ -52,6 +52,7 @@ export type OpcionesPeticion = {
   readonly method?: string
   readonly cookie?: string
   readonly cookieMesa?: string
+  readonly cookieCesta?: string
   readonly formulario?: Readonly<Record<string, string>>
 }
 
@@ -63,6 +64,9 @@ export function peticion(ruta: string, opciones: OpcionesPeticion = {}): Request
   }
   if (opciones.cookieMesa !== undefined) {
     cookies.push(`camarero_mesa=${opciones.cookieMesa}`)
+  }
+  if (opciones.cookieCesta !== undefined) {
+    cookies.push(`camarero_cesta=${opciones.cookieCesta}`)
   }
   if (cookies.length > 0) {
     cabeceras.set("cookie", cookies.join("; "))
@@ -84,7 +88,13 @@ export function comensalFalso(parciales: Partial<AlmacenComensal> = {}): Almacen
   const desconocido = async (): Promise<{ readonly tipo: "codigo_desconocido" }> => ({
     tipo: "codigo_desconocido",
   })
-  return { abrir: desconocido, pedir: desconocido, ...parciales }
+  return {
+    abrir: desconocido,
+    pedir: desconocido,
+    enviar: async () => ({ tipo: "codigo_desconocido" }),
+    pedidos: async () => ({ tipo: "codigo_desconocido" }),
+    ...parciales,
+  }
 }
 
 /**
@@ -120,6 +130,8 @@ export function almacenFalso(parciales: Partial<AlmacenPanel> = {}): AlmacenPane
     listarParejasPendientes: async () => [],
     aprobarPareja: async () => ({ ok: true, valor: undefined }),
     rechazarPareja: async () => ({ ok: true, valor: undefined }),
+    listarComandas: async () => [],
+    cambiarEstadoComanda: async () => ({ ok: false, motivo: "no_existe" }),
     ...parciales,
   }
 }

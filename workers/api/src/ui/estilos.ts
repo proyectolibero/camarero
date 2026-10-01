@@ -1073,4 +1073,218 @@ p {
   color: var(--tinta);
   font: inherit;
 }
+
+/* ---------------------------------------------------------------------------
+   La cesta del comensal y el estado de sus pedidos.
+   --------------------------------------------------------------------------- */
+
+.comensal-agregar {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.comensal-cesta-aviso {
+  margin: 0 0 1rem;
+}
+
+.cesta-lista {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  border: 1px solid var(--borde);
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.cesta-linea {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--papel);
+  border-top: 1px solid var(--borde);
+}
+
+.cesta-linea:first-child {
+  border-top: 0;
+}
+
+.cesta-nombre {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 9rem;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.cesta-unitario {
+  color: var(--tinta-suave);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.cesta-cantidad {
+  font-weight: 600;
+  color: var(--tinta-suave);
+}
+
+.cesta-subtotal {
+  min-width: 4.5rem;
+  text-align: right;
+  font-weight: 600;
+}
+
+.cesta-controles {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+.cesta-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 1.2rem;
+  padding: 0.5rem 0.2rem 0;
+  margin: 0 0 1rem;
+  border-top: 2px solid var(--borde);
+}
+
+.cesta-aviso {
+  margin-bottom: 1.25rem;
+}
+
+.cesta-bloqueo {
+  margin-top: 0.5rem;
+}
+
+.pedido-estado {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.pedido-estado-pendiente {
+  color: var(--acento);
+}
+
+.pedido-estado-preparando {
+  color: var(--tinta-suave);
+}
+
+.pedido-estado-lista {
+  color: var(--exito);
+}
+
+.pedido-estado-anulada {
+  color: var(--error);
+}
+
+.pedido-lineas {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.pedido-lineas li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.2rem 0;
+  border-top: 1px solid var(--borde);
+}
+
+.pedido-lineas li:first-child {
+  border-top: 0;
+}
+
+.pedido-comensal {
+  margin-bottom: 1rem;
+}
+
+.pedido-total {
+  display: flex;
+  justify-content: space-between;
+  margin: 0.6rem 0 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--borde);
+}
+
+/* ---------------------------------------------------------------------------
+   La cocina: la comanda nueva tiene que saltar a la vista (LL-020: se mira).
+   --------------------------------------------------------------------------- */
+
+.pedidos-cocina {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.pedido-cocina {
+  border: 1px solid var(--borde);
+  border-left: 0.4rem solid var(--borde);
+  border-radius: 0.75rem;
+  padding: 0.85rem 1rem;
+  background: var(--papel);
+}
+
+/* La nueva se marca con acento a la izquierda, fondo propio y una etiqueta de texto: no
+   solo por color, para que se distinga sin depender de la vista. */
+.pedido-cocina-pendiente {
+  border-color: var(--acento);
+  border-left-color: var(--acento);
+  background: var(--exito-fondo);
+}
+
+.pedido-cocina-anulada {
+  opacity: 0.75;
+  border-left-color: var(--error);
+}
+
+.pedido-cabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 0.75rem;
+}
+
+.pedido-mesa {
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.pedido-tiempo {
+  color: var(--tinta-suave);
+  font-size: 0.85rem;
+}
+
+/* El importe de la cabecera de la comanda de cocina. Distinto nombre que el total del
+   pedido del comensal, que lleva borde superior: dos reglas con el mismo nombre se pisaban
+   y dibujaban una raya suelta en la cabecera (visto al mirar la previsualizacion, LL-020). */
+.pedido-importe {
+  font-weight: 700;
+}
+
+.pedido-nueva {
+  margin: 0.5rem 0 0;
+  color: var(--exito);
+  font-weight: 600;
+}
+
+.pedido-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.boton-anular {
+  color: var(--error);
+  border-color: currentColor;
+}
 `

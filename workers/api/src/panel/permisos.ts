@@ -30,3 +30,20 @@ export function puedeGestionarPlano(empleado: Empleado): boolean {
 export function puedeGestionarCarta(empleado: Empleado): boolean {
   return puedeGestionarPlano(empleado)
 }
+
+/**
+ * El KDS (comandas, aceptar, anular y marcarlas listas) lo opera todo el personal del local,
+ * que es exactamente lo que deja `puede_operar()` en la base: plataforma, dueno, encargado,
+ * garzon, cocina y tablet compartida. Se enumeran los roles para fallar cerrado ante un rol
+ * nuevo: si no esta en la lista, no opera.
+ */
+export function puedeOperarCocina(empleado: Empleado): boolean {
+  return [
+    "platform_admin",
+    "org_owner",
+    "location_manager",
+    "server",
+    "kitchen",
+    "no_pin",
+  ].includes(empleado.rol)
+}
