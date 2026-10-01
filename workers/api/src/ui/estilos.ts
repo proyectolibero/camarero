@@ -1241,6 +1241,36 @@ p {
   background: var(--exito-fondo);
 }
 
+/* Una comanda recien enviada por un puesto automatico tambien tiene que saltar a la vista,
+   aunque su estado ya sea aceptada (la bebida nace aceptada, ADR-0033). */
+.pedido-cocina-nueva {
+  border-color: var(--acento);
+  border-left-color: var(--acento);
+  background: var(--exito-fondo);
+}
+
+/* Navegacion entre las pantallas de puesto: la tablet se queda fijada en una. */
+.puestos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.puesto-enlace,
+.puesto-actual {
+  display: inline-block;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--borde);
+  text-decoration: none;
+}
+
+.puesto-actual {
+  border-color: var(--acento);
+  font-weight: 700;
+}
+
 .pedido-cocina-anulada {
   opacity: 0.75;
   border-left-color: var(--error);
@@ -1263,11 +1293,12 @@ p {
   font-size: 0.85rem;
 }
 
-/* El importe de la cabecera de la comanda de cocina. Distinto nombre que el total del
-   pedido del comensal, que lleva borde superior: dos reglas con el mismo nombre se pisaban
-   y dibujaban una raya suelta en la cabecera (visto al mirar la previsualizacion, LL-020). */
-.pedido-importe {
-  font-weight: 700;
+/* El destino de la comanda en la cabecera del puesto. NO se ensena ningun importe aqui:
+   quien prepara no cobra (ADR-0033). Distinto nombre que el total del pedido del comensal,
+   que lleva borde superior, para no pisarse (visto al mirar la previsualizacion, LL-020). */
+.pedido-destino {
+  font-weight: 600;
+  color: var(--tinta-suave);
 }
 
 .pedido-nueva {

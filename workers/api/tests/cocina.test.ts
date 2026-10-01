@@ -1,16 +1,19 @@
 /**
- * La cocina: la pantalla de pedidos del local.
+ * Las pantallas de puesto: cocina, barra y todo (`GET /admin/pedidos[/<puesto>]`).
  *
  * Se prueba el enrutador completo con la sesion y el almacen inyectados. La cerradura de
  * aislamiento (que un empleado de otro local no ve estas comandas) es de base y se prueba en
- * `packages/db/tests/comanda.test.ts`; aqui se demuestra que la pantalla existe, que una
- * comanda nueva salta a la vista, que acepta y anula por POST y que no ofrece `cerrada`.
+ * `packages/db`; aqui se demuestra que cada ruta sirve su puesto, que la pantalla NO ensena
+ * precios, que una comanda nueva salta a la vista, que acepta y anula por POST y que no
+ * ofrece `cerrada`.
  */
+
+import { destinosDelPuesto, type PuestoDePantalla } from "@camarero/domain"
 import { beforeAll, describe, expect, it } from "vitest"
 import type { Empleado } from "../src/base.ts"
 import type { DependenciasParciales } from "../src/enrutador.ts"
 import { manejar } from "../src/enrutador.ts"
-import type { ComandaDeCocina } from "../src/panel/datos.ts"
+import type { ComandaDePuesto } from "../src/panel/datos.ts"
 import { AHORA, almacenFalso, crearFirmante, ENTORNO, type Firmante, peticion } from "./apoyo.ts"
 
 const DUENO: Empleado = {
@@ -24,22 +27,22 @@ const DUENO: Empleado = {
 
 const COCINA: Empleado = { ...DUENO, staffId: "s2", nombre: "Cocinero", rol: "kitchen" }
 
-const COMANDAS: readonly ComandaDeCocina[] = [
+const COMANDAS: readonly ComandaDePuesto[] = [
   {
     id: "o1",
     mesa: "Mesa 4",
+    destino: "frio",
     estado: "pendiente",
     creadaHaceSegundos: 5,
-    lineas: [{ nombre: "Ceviche clásico", cantidad: 2, totalClp: 17800 }],
-    totalClp: 17800,
+    lineas: [{ nombre: "Ceviche clásico", cantidad: 2 }],
   },
   {
     id: "o2",
     mesa: "Barra 2",
-    estado: "preparando",
-    creadaHaceSegundos: 120,
-    lineas: [{ nombre: "Empanada de queso", cantidad: 1, totalClp: 5000 }],
-    totalClp: 5000,
+    destino: "bebidas",
+    estado: "aceptada",
+    creadaHaceSegundos: 30,
+    lineas: [{ nombre: "Agua mineral", cantidad: 1 }],
   },
 ]
 
@@ -63,7 +66,171 @@ async function conSesion(
   return peticion(ruta, { ...opciones, cookie: await firmante.tokenPara("u1") })
 }
 
-describe("Cocina: la pantalla de pedidos", () => {
+describe("Puestos: cada ruta sirve su pantalla", () => {
+  it("sin puesto en la ruta debe servir cocina", async () => {
+    let puestoVisto: string | null = null
+    const respuesta = await manejar(
+      await conSesion("/admin/pedidos"),
+      ENTORNO,
+      AHORA,
+      deps(
+        COCINA,
+        almacenFalso({
+          listarComandas: async (_empleado, puesto) => {
+            puestoVisto = puesto
+            return COMANDAS
+          },
+        }),
+      ),
+    )
+    expect(puestoVisto).toBe("cocina")
+    expect(await respuesta.text()).toContain("Pedidos de cocina")
+  })
+
+  it("debe servir la barra y el todo por su ruta", async () => {
+    const vistos: string[] = []
+    const almacen = almacenFalso({
+      listarComandas: async (_empleado, puesto) => {
+        vistos.push(puesto)
+        return COMANDAS
+      },
+    })
+    const barra = await manejar(
+      await conSesion("/admin/pedidos/barra"),
+      ENTORNO,
+      AHORA,
+      deps(COCINA, almacen),
+    )
+    const todo = await manejar(
+      await conSesion("/admin/pedidos/todo"),
+      ENTORNO,
+      AHORA,
+      deps(COCINA, almacen),
+    )
+    expect(vistos).toEqual(["barra", "todo"])
+    expect(await barra.text()).toContain("Pedidos de barra")
+    expect(await todo.text()).toContain("Todos los pedidos")
+  })
+
+  it("no debe servir un puesto que no existe", async () => {
+    const respuesta = await manejar(
+      await conSesion("/admin/pedidos/parrilla"),
+      ENTORNO,
+      AHORA,
+      deps(COCINA),
+    )
+    expect(respuesta.status).toBe(404)
+  })
+
+  it("debe enlazar a las otras pantallas de puesto", async () => {
+    const cuerpo = await (
+      await manejar(await conSesion("/admin/pedidos/cocina"), ENTORNO, AHORA, deps(COCINA))
+    ).text()
+    expect(cuerpo).toContain('href="/admin/pedidos/barra"')
+    expect(cuerpo).toContain('href="/admin/pedidos/todo"')
+  })
+})
+
+describe("Puestos: la pantalla no ensena precios", () => {
+  it("la cocina no debe mostrar las bebidas, y la barra si", async () => {
+    const filtrar = async (
+      _empleado: Empleado,
+      puesto: PuestoDePantalla,
+    ): Promise<readonly ComandaDePuesto[]> => {
+      const destinos = destinosDelPuesto(puesto)
+      return destinos === null
+        ? COMANDAS
+        : COMANDAS.filter((comanda) => destinos.includes(comanda.destino))
+    }
+    const almacen = almacenFalso({ listarComandas: filtrar })
+    const cuerpoDe = async (puesto: string): Promise<string> =>
+      await (
+        await manejar(
+          await conSesion(`/admin/pedidos/${puesto}`),
+          ENTORNO,
+          AHORA,
+          deps(COCINA, almacen),
+        )
+      ).text()
+    const cocina = await cuerpoDe("cocina")
+    const barra = await cuerpoDe("barra")
+    const todo = await cuerpoDe("todo")
+    expect(cocina).toContain("Ceviche clásico")
+    expect(cocina).not.toContain("Agua mineral")
+    expect(barra).toContain("Agua mineral")
+    expect(barra).not.toContain("Ceviche clásico")
+    expect(todo).toContain("Ceviche clásico")
+    expect(todo).toContain("Agua mineral")
+  })
+
+  it("no debe contener ningun importe en ningun puesto", async () => {
+    for (const puesto of ["cocina", "barra", "todo"]) {
+      const cuerpo = await (
+        await manejar(
+          await conSesion(`/admin/pedidos/${puesto}`),
+          ENTORNO,
+          AHORA,
+          deps(COCINA, almacenFalso({ listarComandas: async () => COMANDAS })),
+        )
+      ).text()
+      expect(cuerpo).not.toContain("$")
+      expect(cuerpo).not.toContain("17.800")
+      expect(cuerpo).not.toContain("5.900")
+    }
+  })
+
+  it("debe listar la comanda con su mesa, sus lineas, su destino y su estado", async () => {
+    const cuerpo = await (
+      await manejar(
+        await conSesion("/admin/pedidos/todo"),
+        ENTORNO,
+        AHORA,
+        deps(COCINA, almacenFalso({ listarComandas: async () => COMANDAS })),
+      )
+    ).text()
+    expect(cuerpo).toContain("Mesa 4")
+    expect(cuerpo).toContain("2× Ceviche clásico")
+    expect(cuerpo).toContain("Frío")
+    expect(cuerpo).toContain("Nueva")
+  })
+
+  it("debe hacer que la comanda nueva salte a la vista", async () => {
+    const cuerpo = await (
+      await manejar(
+        await conSesion("/admin/pedidos/cocina"),
+        ENTORNO,
+        AHORA,
+        deps(COCINA, almacenFalso({ listarComandas: async () => COMANDAS })),
+      )
+    ).text()
+    expect(cuerpo).toContain("pedido-cocina-pendiente")
+    expect(cuerpo).toContain("Comanda nueva")
+  })
+
+  it("debe refrescarse sola, declarado en la pagina", async () => {
+    const cuerpo = await (
+      await manejar(
+        await conSesion("/admin/pedidos/cocina"),
+        ENTORNO,
+        AHORA,
+        deps(COCINA, almacenFalso({ listarComandas: async () => COMANDAS })),
+      )
+    ).text()
+    expect(cuerpo).toContain('http-equiv="refresh" content="15"')
+  })
+
+  it("debe decir cuando no hay pedidos abiertos", async () => {
+    const cuerpo = await (
+      await manejar(
+        await conSesion("/admin/pedidos/cocina"),
+        ENTORNO,
+        AHORA,
+        deps(COCINA, almacenFalso({ listarComandas: async () => [] })),
+      )
+    ).text()
+    expect(cuerpo).toContain("No hay pedidos abiertos")
+  })
+
   it("sin sesion no debe mostrar ninguna comanda, solo la entrada", async () => {
     const respuesta = await manejar(peticion("/admin/pedidos"), ENTORNO, AHORA, deps(null))
     const cuerpo = await respuesta.text()
@@ -72,62 +239,15 @@ describe("Cocina: la pantalla de pedidos", () => {
     expect(cuerpo).not.toContain("Ceviche clásico")
     expect(cuerpo).not.toContain("Mesa 4")
   })
-
-  it("debe listar las comandas con su mesa, sus lineas y su estado", async () => {
-    const respuesta = await manejar(
-      await conSesion("/admin/pedidos"),
-      ENTORNO,
-      AHORA,
-      deps(COCINA, almacenFalso({ listarComandas: async () => COMANDAS })),
-    )
-    const cuerpo = await respuesta.text()
-    expect(respuesta.status).toBe(200)
-    expect(cuerpo).toContain("Mesa 4")
-    expect(cuerpo).toContain("Barra 2")
-    expect(cuerpo).toContain("2× Ceviche clásico")
-    expect(cuerpo).toContain("17.800")
-  })
-
-  it("debe hacer que la comanda nueva salte a la vista", async () => {
-    const respuesta = await manejar(
-      await conSesion("/admin/pedidos"),
-      ENTORNO,
-      AHORA,
-      deps(COCINA, almacenFalso({ listarComandas: async () => COMANDAS })),
-    )
-    const cuerpo = await respuesta.text()
-    expect(cuerpo).toContain("pedido-cocina-pendiente")
-    expect(cuerpo).toContain("Comanda nueva")
-  })
-
-  it("debe refrescarse sola, declarado en la pagina", async () => {
-    const respuesta = await manejar(
-      await conSesion("/admin/pedidos"),
-      ENTORNO,
-      AHORA,
-      deps(COCINA, almacenFalso({ listarComandas: async () => COMANDAS })),
-    )
-    expect(await respuesta.text()).toContain('http-equiv="refresh" content="15"')
-  })
-
-  it("debe decir cuando no hay pedidos abiertos", async () => {
-    const respuesta = await manejar(
-      await conSesion("/admin/pedidos"),
-      ENTORNO,
-      AHORA,
-      deps(COCINA, almacenFalso({ listarComandas: async () => [] })),
-    )
-    expect(await respuesta.text()).toContain("No hay pedidos abiertos")
-  })
 })
 
-describe("Cocina: aceptar, marcar lista y anular", () => {
-  it("debe aceptar y volver a la lista de pedidos", async () => {
+describe("Puestos: aceptar, marcar lista y anular", () => {
+  it("debe aceptar y volver a la pantalla del mismo puesto", async () => {
     let visto: { readonly id: string; readonly destino: string } | null = null
     const respuesta = await manejar(
       await conSesion("/admin/pedidos/o1/estado", {
         method: "POST",
-        formulario: { destino: "aceptada" },
+        formulario: { destino: "aceptada", puesto: "barra" },
       }),
       ENTORNO,
       AHORA,
@@ -143,7 +263,7 @@ describe("Cocina: aceptar, marcar lista y anular", () => {
     )
     expect(visto).toEqual({ id: "o1", destino: "aceptada" })
     expect(respuesta.status).toBe(303)
-    expect(respuesta.headers.get("location")).toBe("/admin/pedidos?cambiado=1")
+    expect(respuesta.headers.get("location")).toBe("/admin/pedidos/barra?cambiado=1")
   })
 
   it("debe anular una comanda", async () => {
@@ -151,7 +271,7 @@ describe("Cocina: aceptar, marcar lista y anular", () => {
     await manejar(
       await conSesion("/admin/pedidos/o1/estado", {
         method: "POST",
-        formulario: { destino: "anulada" },
+        formulario: { destino: "anulada", puesto: "cocina" },
       }),
       ENTORNO,
       AHORA,
@@ -173,7 +293,7 @@ describe("Cocina: aceptar, marcar lista y anular", () => {
     const respuesta = await manejar(
       await conSesion("/admin/pedidos/o1/estado", {
         method: "POST",
-        formulario: { destino: "cerrada" },
+        formulario: { destino: "cerrada", puesto: "cocina" },
       }),
       ENTORNO,
       AHORA,
@@ -196,7 +316,7 @@ describe("Cocina: aceptar, marcar lista y anular", () => {
     const respuesta = await manejar(
       await conSesion("/admin/pedidos/o2/estado", {
         method: "POST",
-        formulario: { destino: "aceptada" },
+        formulario: { destino: "aceptada", puesto: "cocina" },
       }),
       ENTORNO,
       AHORA,
@@ -224,7 +344,7 @@ describe("Cocina: aceptar, marcar lista y anular", () => {
   })
 })
 
-describe("Cocina: el enlace del cuadro de mando", () => {
+describe("Puestos: el enlace del cuadro de mando", () => {
   it("debe enlazar a los pedidos desde el panel", async () => {
     const respuesta = await manejar(await conSesion("/admin"), ENTORNO, AHORA, deps(DUENO))
     expect(await respuesta.text()).toContain('href="/admin/pedidos"')

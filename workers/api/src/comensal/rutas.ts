@@ -21,9 +21,10 @@ import {
   ajustarLaCesta,
   cookieDeCesta,
   cookieDeCestaVacia,
-  type LineaDeCesta,
+  type LineaDeEnvio,
   leerCesta,
   NOMBRE_COOKIE_CESTA,
+  type PlatoResoluble,
   resolverCesta,
   serializarCesta,
   tokenDeEnvio,
@@ -94,14 +95,16 @@ function pantallaDeFallo(lectura: Exclude<LecturaComensal, { tipo: "ok" }>): Res
   return lectura.tipo === "codigo_desconocido" ? pantallaDesconocida() : pantallaLocalInactivo()
 }
 
-/** Indice de la carta visible, por plato: es lo unico que puede fijar nombre y precio. */
-function preciosDeCarta(
-  carta: CartaDelComensal,
-): Map<string, { readonly nombre: string; readonly precioClp: number }> {
-  const indice = new Map<string, { readonly nombre: string; readonly precioClp: number }>()
+/** Indice de la carta visible, por plato: es lo unico que puede fijar nombre, precio y destino. */
+function preciosDeCarta(carta: CartaDelComensal): Map<string, PlatoResoluble> {
+  const indice = new Map<string, PlatoResoluble>()
   for (const categoria of carta.categorias) {
     for (const plato of categoria.platos) {
-      indice.set(plato.id, { nombre: plato.nombre, precioClp: plato.precioClp })
+      indice.set(plato.id, {
+        nombre: plato.nombre,
+        precioClp: plato.precioClp,
+        estacion: plato.estacion,
+      })
     }
   }
   return indice
@@ -228,9 +231,12 @@ async function enviar(
   const campos = await leerCampos(peticion)
   const clave = (campos["clave"] ?? "").trim()
   const { lineas } = resolverCesta(leerCesta(cookieCesta), preciosDeCarta(lectura.carta))
-  const enviables: readonly LineaDeCesta[] = lineas.map((linea) => ({
+  // Solo viaja identificador, cantidad y la estacion de la carta: el destino y el precio los
+  // fija la base, nunca la cookie (D-051).
+  const enviables: readonly LineaDeEnvio[] = lineas.map((linea) => ({
     platoId: linea.platoId,
     cantidad: linea.cantidad,
+    estacion: linea.estacion,
   }))
   const resultado = await almacen.enviar(codigo, lectura.sesionId, clave, enviables)
   if (resultado.tipo === "ok") {

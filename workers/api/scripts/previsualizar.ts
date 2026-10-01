@@ -16,17 +16,18 @@ import { fileURLToPath } from "node:url"
 import { crc32, deflateSync } from "node:zlib"
 import type { Empleado } from "../src/base.ts"
 import type { LineaResuelta } from "../src/comensal/cesta.ts"
-import type { CartaDelComensal } from "../src/comensal/datos.ts"
+import type { CartaDelComensal, PedidoDelComensal } from "../src/comensal/datos.ts"
 import {
   vistaCartaComensal,
   vistaCestaComensal,
   vistaCodigoDesconocido,
   vistaLocalInactivo,
+  vistaPedidosComensal,
 } from "../src/comensal/vistas.ts"
 import { generarCodigoMesa } from "../src/panel/codigo-mesa.ts"
 import type {
   Categoria,
-  ComandaDeCocina,
+  ComandaDePuesto,
   Mesa,
   Plato,
   SolicitudPendiente,
@@ -477,9 +478,30 @@ escribir("parejas.html", conHojaDeEstilosRelativa(renderizar(vistaParejas(DUENO,
 // ---------------------------------------------------------------------------
 
 const LINEAS_CESTA: readonly LineaResuelta[] = [
-  { platoId: "p1", nombre: "Ceviche clásico", cantidad: 2, precioClp: 8900, totalClp: 17800 },
-  { platoId: "p2", nombre: "Empanadas de queso", cantidad: 1, precioClp: 5000, totalClp: 5000 },
-  { platoId: "p4", nombre: "Lomo a lo pobre", cantidad: 1, precioClp: 15900, totalClp: 15900 },
+  {
+    platoId: "p1",
+    nombre: "Ceviche clásico",
+    cantidad: 2,
+    precioClp: 8900,
+    totalClp: 17800,
+    estacion: "frio",
+  },
+  {
+    platoId: "p2",
+    nombre: "Empanadas de queso",
+    cantidad: 1,
+    precioClp: 5000,
+    totalClp: 5000,
+    estacion: "caliente",
+  },
+  {
+    platoId: "p4",
+    nombre: "Lomo a lo pobre",
+    cantidad: 1,
+    precioClp: 15900,
+    totalClp: 15900,
+    estacion: "caliente",
+  },
 ]
 const TOTAL_CESTA = LINEAS_CESTA.reduce((suma, linea) => suma + linea.totalClp, 0)
 
@@ -498,50 +520,95 @@ escribir(
   ),
 )
 
-const COMANDAS_COCINA: readonly ComandaDeCocina[] = [
+const COMANDAS: readonly ComandaDePuesto[] = [
   {
     id: "o1",
     mesa: "Mesa 4",
+    destino: "frio",
     estado: "pendiente",
     creadaHaceSegundos: 6,
-    lineas: [
-      { nombre: "Ceviche clásico", cantidad: 2, totalClp: 17800 },
-      { nombre: "Pisco sour", cantidad: 1, totalClp: 5900 },
-    ],
-    totalClp: 23700,
+    lineas: [{ nombre: "Ceviche clásico", cantidad: 2 }],
   },
   {
     id: "o2",
     mesa: "Barra 2",
+    destino: "caliente",
     estado: "aceptada",
     creadaHaceSegundos: 95,
-    lineas: [{ nombre: "Lomo a lo pobre", cantidad: 1, totalClp: 15900 }],
-    totalClp: 15900,
+    lineas: [{ nombre: "Lomo a lo pobre", cantidad: 1 }],
   },
   {
     id: "o3",
     mesa: "Terraza junto a la ventana grande",
+    destino: "postre",
     estado: "preparando",
     creadaHaceSegundos: 240,
-    lineas: [
-      { nombre: "Pastel de choclo", cantidad: 2, totalClp: 23800 },
-      { nombre: "Agua mineral", cantidad: 2, totalClp: 5000 },
-    ],
-    totalClp: 28800,
+    lineas: [{ nombre: "Pastel de choclo", cantidad: 2 }],
   },
   {
     id: "o4",
     mesa: "Sala 1",
-    estado: "lista",
-    creadaHaceSegundos: 420,
-    lineas: [{ nombre: "Tabla de quesos del sur", cantidad: 1, totalClp: 12500 }],
-    totalClp: 12500,
+    destino: "bar",
+    estado: "aceptada",
+    creadaHaceSegundos: 35,
+    lineas: [{ nombre: "Pisco sour", cantidad: 2 }],
+  },
+  {
+    id: "o5",
+    mesa: "Sala 4",
+    destino: "bebidas",
+    estado: "aceptada",
+    creadaHaceSegundos: 9,
+    lineas: [{ nombre: "Agua mineral", cantidad: 3 }],
+  },
+]
+
+const COMANDAS_DE_COCINA = COMANDAS.filter((comanda) =>
+  ["frio", "caliente", "postre", "cocina"].includes(comanda.destino),
+)
+const COMANDAS_DE_BARRA = COMANDAS.filter((comanda) => ["bar", "bebidas"].includes(comanda.destino))
+
+escribir(
+  "cocina.html",
+  conHojaDeEstilosRelativa(renderizar(vistaCocina(DUENO, COMANDAS_DE_COCINA, "cocina", {}))),
+)
+escribir(
+  "barra.html",
+  conHojaDeEstilosRelativa(renderizar(vistaCocina(DUENO, COMANDAS_DE_BARRA, "barra", {}))),
+)
+escribir(
+  "todo.html",
+  conHojaDeEstilosRelativa(renderizar(vistaCocina(DUENO, COMANDAS, "todo", {}))),
+)
+
+// ---------------------------------------------------------------------------
+// La pantalla del comensal con sus comandas hermanas (cocina y barra por separado).
+// ---------------------------------------------------------------------------
+
+const PEDIDOS_DEL_COMENSAL: readonly PedidoDelComensal[] = [
+  {
+    id: "o1",
+    destino: "frio",
+    estado: "pendiente",
+    creadoHaceSegundos: 6,
+    lineas: [{ nombre: "Ceviche clásico", cantidad: 2, totalClp: 17800 }],
+    totalClp: 17800,
+  },
+  {
+    id: "o4",
+    destino: "bar",
+    estado: "aceptada",
+    creadoHaceSegundos: 35,
+    lineas: [{ nombre: "Pisco sour", cantidad: 2, totalClp: 11800 }],
+    totalClp: 11800,
   },
 ]
 
 escribir(
-  "cocina.html",
-  conHojaDeEstilosRelativa(renderizar(vistaCocina(DUENO, COMANDAS_COCINA, {}))),
+  "comensal-pedidos.html",
+  conHojaDeEstilosRelativa(
+    renderizar(vistaPedidosComensal("Barra Uno", "Mesa 4", "ABCDEFGH", PEDIDOS_DEL_COMENSAL)),
+  ),
 )
 
 process.stdout.write(`Previsualizacion escrita en ${SALIDA}\n`)

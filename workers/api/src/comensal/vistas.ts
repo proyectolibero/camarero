@@ -9,6 +9,7 @@
  * local y de los platos son datos del establecimiento, no de una persona, pero un nombre con
  * etiquetas no puede convertirse en ejecucion en el navegador del comensal.
  */
+import { etiquetaDeEstacion } from "@camarero/domain"
 import { type HtmlSeguro, html } from "../ui/html.ts"
 import type { LineaResuelta } from "./cesta.ts"
 import type {
@@ -159,7 +160,7 @@ ${carta.categorias.map((categoria) => seccionDeCategoria(categoria, codigo))}
 
 const ETIQUETA_ESTADO_PEDIDO: Readonly<Record<string, string>> = {
   pendiente: "Enviada a cocina",
-  aceptada: "Aceptada por cocina",
+  aceptada: "Aceptada",
   preparando: "En preparación",
   lista: "Lista para servir",
   servida: "Servida",
@@ -198,7 +199,7 @@ ${controlesDeLinea(linea.platoId, codigo)}
 }
 
 function avisoAntesDeEnviar(): HtmlSeguro {
-  return html`<p class="aviso aviso-aviso cesta-aviso" role="alert">La comanda va <strong>directa a cocina</strong> en cuanto pulses «Enviar». Desde ahí <strong>no se deshace sola</strong>: si algo no está bien, avisa a quien te atiende.</p>`
+  return html`<p class="aviso aviso-aviso cesta-aviso" role="alert">Tu pedido va <strong>por partes</strong>: la cocina y la barra lo preparan por separado. En cuanto pulses «Enviar» <strong>no se deshace sola</strong>: si algo no está bien, avisa a quien te atiende.</p>`
 }
 
 export type OpcionesDeCesta = {
@@ -253,13 +254,17 @@ ${enviar}
   return paginaComensal("Tu cesta", contenido, false)
 }
 
-/** Estado de los pedidos del comensal. Se refresca solo para ver como avanza la cocina. */
+/** Estado de los pedidos del comensal. Se refresca solo para ver como avanza cada destino. */
 export function vistaPedidosComensal(
   local: string,
   mesa: string,
   codigo: string,
   pedidos: readonly PedidoDelComensal[],
 ): HtmlSeguro {
+  const avisoHermanas =
+    pedidos.length >= 2
+      ? html`<p class="aviso aviso-aviso">Tu pedido va por partes: la cocina y la barra lo preparan por separado. Por eso ves más de una comanda; cada una avanza a su ritmo.</p>`
+      : html``
   const lista =
     pedidos.length === 0
       ? html`<section class="tarjeta"><p>Todavía no has enviado ninguna comanda.</p></section>`
@@ -267,6 +272,7 @@ export function vistaPedidosComensal(
           (pedido) =>
             html`<section class="tarjeta pedido-comensal">
 <h2>${insigniaDeEstado(pedido.estado)}</h2>
+<p class="pedido-destino">Destino: <strong>${etiquetaDeEstacion(pedido.destino)}</strong></p>
 <ul class="pedido-lineas">${pedido.lineas.map(
               (linea) =>
                 html`<li><span>${linea.cantidad}× ${linea.nombre}</span><span>${precio(linea.totalClp)}</span></li>`,
@@ -280,7 +286,8 @@ export function vistaPedidosComensal(
 </header>
 <main class="contenedor">
 <h1 class="comensal-mesa">Tus pedidos · ${mesa}</h1>
-<p class="ayuda">Esta pantalla se actualiza sola para enseñarte cómo avanza la cocina.</p>
+<p class="ayuda">Esta pantalla se actualiza sola para enseñarte cómo avanza cada parte.</p>
+${avisoHermanas}
 ${lista}
 <p><a class="boton boton-secundario" href="/t/${codigo}">Volver a la carta</a></p>
 </main>`

@@ -117,13 +117,17 @@ export function ajustarLaCesta(
   })
 }
 
-/** Precios de la carta indexados por plato, lo unico que puede fijar el total. */
-export type PreciosDeCarta = ReadonlyMap<string, number>
+/** Datos de un plato que la carta confirma: lo unico que puede fijar nombre, precio y destino. */
+export type PlatoResoluble = {
+  readonly nombre: string
+  readonly precioClp: number
+  readonly estacion: string | null
+}
 
 /**
- * Resuelve la cesta contra la carta: devuelve el nombre y el precio que la base dice, y el
- * subtotal. Los platos que ya no estan en la carta (o no son visibles) se descartan: no se
- * inventa un precio que la base no confirma.
+ * Resuelve la cesta contra la carta: devuelve el nombre, el precio y la estacion que la base
+ * dice, y el subtotal. Los platos que ya no estan en la carta (o no son visibles) se
+ * descartan: no se inventa un precio que la base no confirma.
  */
 export type LineaResuelta = {
   readonly platoId: string
@@ -131,15 +135,16 @@ export type LineaResuelta = {
   readonly cantidad: number
   readonly precioClp: number
   readonly totalClp: number
+  readonly estacion: string | null
 }
 
 export function resolverCesta(
   lineas: readonly LineaDeCesta[],
-  nombreYprecio: ReadonlyMap<string, { readonly nombre: string; readonly precioClp: number }>,
+  platos: ReadonlyMap<string, PlatoResoluble>,
 ): { readonly lineas: readonly LineaResuelta[]; readonly totalClp: number } {
   const resueltas: LineaResuelta[] = []
   for (const linea of lineas) {
-    const plato = nombreYprecio.get(linea.platoId)
+    const plato = platos.get(linea.platoId)
     if (plato === undefined) {
       continue
     }
@@ -149,9 +154,21 @@ export function resolverCesta(
       cantidad: linea.cantidad,
       precioClp: plato.precioClp,
       totalClp: plato.precioClp * linea.cantidad,
+      estacion: plato.estacion,
     })
   }
   return { lineas: resueltas, totalClp: subtotalDeLineas(resueltas.map(aImporte)) }
+}
+
+/**
+ * Lo minimo que viaja a la base al enviar: identificador, cantidad y la estacion que la carta
+ * fijo. El destino de la comanda se deriva de esa estacion (con los platos sin estacion a
+ * cocina); el borde NUNCA manda un precio.
+ */
+export type LineaDeEnvio = {
+  readonly platoId: string
+  readonly cantidad: number
+  readonly estacion: string | null
 }
 
 function aImporte(linea: LineaResuelta): LineaDeImporte {

@@ -5,7 +5,12 @@
  * Todo el HTML se construye con la plantilla que escapa por defecto; ningún dato de la base
  * se escribe sin pasar por ella.
  */
-import { type EstadoDeComanda, estadosPermitidos } from "@camarero/domain"
+import {
+  type EstadoDeComanda,
+  estadosPermitidos,
+  etiquetaDeEstacion,
+  type PuestoDePantalla,
+} from "@camarero/domain"
 import type { Empleado } from "../base.ts"
 import { type HtmlSeguro, html, htmlCrudo } from "../ui/html.ts"
 import { generarQrSvg } from "../ui/qr.ts"
@@ -19,7 +24,7 @@ import {
 } from "./carta-catalogo.ts"
 import type {
   Categoria,
-  ComandaDeCocina,
+  ComandaDePuesto,
   DatosLocal,
   Mesa,
   Plato,
@@ -47,7 +52,10 @@ const PANTALLAS: Readonly<Record<Superficie, readonly PantallaDelCuadro[]>> = {
     { titulo: "Carta (categorías, platos, precios, fotos, orden)", href: "/admin/carta" },
     { titulo: "Personal (invitar, roles, PIN)" },
     { titulo: "Ajustes (tema, logo, horarios, modo de servicio)" },
-    { titulo: "Cocina: pedidos, aceptar, marcar listos y anular", href: "/admin/pedidos" },
+    {
+      titulo: "Pedidos por puesto (cocina, barra o todo): aceptar, marcar listos y anular",
+      href: "/admin/pedidos",
+    },
     { titulo: "Métricas" },
     { titulo: "Multi-local y cuota" },
   ],
@@ -1039,7 +1047,7 @@ ${enlaceVolverAlPanel()}
 }
 
 // ---------------------------------------------------------------------------
-// La cocina: las comandas del local
+// Las pantallas de puesto: cocina, barra y todo
 // ---------------------------------------------------------------------------
 
 const ETIQUETA_ESTADO_COMANDA: Readonly<Record<EstadoDeComanda, string>> = {
@@ -1068,7 +1076,7 @@ const ETIQUETA_DESTINO: Readonly<Record<EstadoDeComanda, string>> = {
  * ofrecerlo aqui abriria una via para cerrar una comanda sin cobrarla (CONTRACT-estados-comanda,
  * regla 6). El resto de destinos son exactamente los de la maquina de estados.
  */
-const DESTINOS_DE_COCINA: readonly EstadoDeComanda[] = [
+const DESTINOS_DE_ACCION: readonly EstadoDeComanda[] = [
   "aceptada",
   "preparando",
   "lista",
@@ -1076,53 +1084,90 @@ const DESTINOS_DE_COCINA: readonly EstadoDeComanda[] = [
   "anulada",
 ]
 
-function accionDeEstado(comandaId: string, destino: EstadoDeComanda): HtmlSeguro {
+const PUESTOS: readonly { readonly puesto: PuestoDePantalla; readonly etiqueta: string }[] = [
+  { puesto: "cocina", etiqueta: "Cocina" },
+  { puesto: "barra", etiqueta: "Barra" },
+  { puesto: "todo", etiqueta: "Todo" },
+]
+
+const TITULO_DE_PUESTO: Readonly<Record<PuestoDePantalla, string>> = {
+  cocina: "Pedidos de cocina",
+  barra: "Pedidos de barra",
+  todo: "Todos los pedidos",
+}
+
+const AYUDA_DE_PUESTO: Readonly<Record<PuestoDePantalla, string>> = {
+  cocina: "Solo lo que se prepara en cocina: frío, caliente, postre y lo que no tiene estación.",
+  barra: "Solo lo que se prepara en la barra: bar y bebidas. Las bebidas nacen aceptadas.",
+  todo: "Todos los puestos juntos, para un local con una sola pantalla.",
+}
+
+function navegacionDePuestos(actual: PuestoDePantalla): HtmlSeguro {
+  return html`<nav class="puestos">${PUESTOS.map((opcion) =>
+    opcion.puesto === actual
+      ? html`<span class="puesto-actual" aria-current="page">${opcion.etiqueta}</span>`
+      : html`<a class="puesto-enlace" href="/admin/pedidos/${opcion.puesto}">${opcion.etiqueta}</a>`,
+  )}</nav>`
+}
+
+function accionDeEstado(
+  comandaId: string,
+  destino: EstadoDeComanda,
+  puesto: PuestoDePantalla,
+): HtmlSeguro {
   const clase = destino === "anulada" ? "boton-mini boton-anular" : "boton-mini"
   return html`<form method="post" action="/admin/pedidos/${comandaId}/estado">
 <input type="hidden" name="destino" value="${destino}">
+<input type="hidden" name="puesto" value="${puesto}">
 <button class="${clase}" type="submit">${ETIQUETA_DESTINO[destino]}</button>
 </form>`
 }
 
-function comandaDeCocina(comanda: ComandaDeCocina): HtmlSeguro {
+/**
+ * Una comanda de un puesto. NO lleva importes: quien prepara no cobra. Una comanda recien
+ * enviada se marca con acento para que salte a la vista, sea de cocina o de barra.
+ */
+function comandaDePuesto(comanda: ComandaDePuesto, puesto: PuestoDePantalla): HtmlSeguro {
   const destinos = estadosPermitidos(comanda.estado).filter((destino) =>
-    DESTINOS_DE_COCINA.includes(destino),
+    DESTINOS_DE_ACCION.includes(destino),
   )
-  return html`<li class="pedido-cocina pedido-cocina-${comanda.estado}">
+  const nueva = comanda.creadaHaceSegundos <= 120
+  const pendiente = comanda.estado === "pendiente"
+  return html`<li class="pedido-cocina pedido-cocina-${comanda.estado}${nueva ? " pedido-cocina-nueva" : ""}">
 <div class="pedido-cabecera">
 <span class="pedido-mesa">${comanda.mesa}</span>
+<span class="pedido-destino">${etiquetaDeEstacion(comanda.destino)}</span>
 <span class="pedido-estado pedido-estado-${comanda.estado}">${ETIQUETA_ESTADO_COMANDA[comanda.estado]}</span>
 <span class="pedido-tiempo">hace ${etiquetaDeTiempo(comanda.creadaHaceSegundos)}</span>
-<span class="crece"></span>
-<span class="pedido-importe">${formatearPrecio(comanda.totalClp)}</span>
 </div>
-${comanda.estado === "pendiente" ? html`<p class="pedido-nueva" role="status">Comanda nueva: todavía no la ha aceptado nadie.</p>` : html``}
+${pendiente ? html`<p class="pedido-nueva" role="status">Comanda nueva: todavía no la ha aceptado nadie.</p>` : html``}
 <ul class="pedido-lineas">${comanda.lineas.map(
-    (linea) =>
-      html`<li><span>${linea.cantidad}× ${linea.nombre}</span><span>${formatearPrecio(linea.totalClp)}</span></li>`,
+    (linea) => html`<li><span>${linea.cantidad}× ${linea.nombre}</span></li>`,
   )}</ul>
-<div class="pedido-acciones">${destinos.map((destino) => accionDeEstado(comanda.id, destino))}</div>
+<div class="pedido-acciones">${destinos.map((destino) => accionDeEstado(comanda.id, destino, puesto))}</div>
 </li>`
 }
 
 export function vistaCocina(
   empleado: Empleado,
-  comandas: readonly ComandaDeCocina[],
+  comandas: readonly ComandaDePuesto[],
+  puesto: PuestoDePantalla,
   estado: EstadoPantalla,
 ): HtmlSeguro {
   const lista =
     comandas.length === 0
       ? html`<p>No hay pedidos abiertos ahora mismo.</p>`
-      : html`<ul class="pedidos-cocina">${comandas.map(comandaDeCocina)}</ul>`
+      : html`<ul class="pedidos-cocina">${comandas.map((comanda) => comandaDePuesto(comanda, puesto))}</ul>`
   const contenido = html`${cabecera("admin", empleado)}
 <main class="contenedor">
 ${avisosDeEstado(estado)}
 <section class="tarjeta">
-<h1>Pedidos de cocina</h1>
-<p>Esta pantalla se actualiza sola cada 15 segundos. Las comandas nuevas aparecen marcadas. Aceptar una comanda cierra sus importes con los precios de la carta.</p>
+<h1>${TITULO_DE_PUESTO[puesto]}</h1>
+${navegacionDePuestos(puesto)}
+<p>${AYUDA_DE_PUESTO[puesto]} Esta pantalla se actualiza sola cada 15 segundos y las comandas nuevas aparecen marcadas.</p>
 ${lista}
 </section>
 ${enlaceVolverAlPanel()}
 </main>`
-  return pagina("Pedidos de cocina", contenido, 15)
+  return pagina(TITULO_DE_PUESTO[puesto], contenido, 15)
 }

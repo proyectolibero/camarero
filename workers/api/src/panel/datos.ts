@@ -8,7 +8,13 @@
  * Un fallo esperado de escritura (sin permiso, fila ausente, choque de codigo) se devuelve
  * como `Resultado`, nunca como excepcion. Un fallo inesperado (la base caida) si sube.
  */
-import { type EstadoDeComanda, esEstadoDeComanda, transicionPermitida } from "@camarero/domain"
+import {
+  destinosDelPuesto,
+  type EstadoDeComanda,
+  esEstadoDeComanda,
+  type PuestoDePantalla,
+  transicionPermitida,
+} from "@camarero/domain"
 import { Client } from "pg"
 import { type ContextoDeEmpleado, type Empleado, fijarContextoDeEmpleado } from "../base.ts"
 import { esConflictoDeCodigo, generarCodigoMesa } from "./codigo-mesa.ts"
@@ -142,21 +148,20 @@ export type SolicitudPendiente = {
   readonly restanteSegundos: number
 }
 
-/** Una linea de una comanda tal como la ve la cocina. */
+/** Una linea de una comanda tal como se ve en la pantalla de un puesto. NUNCA lleva precio. */
 export type LineaDeComanda = {
   readonly nombre: string
   readonly cantidad: number
-  readonly totalClp: number
 }
 
-/** Una comanda en la pantalla de cocina: su mesa, sus lineas, su estado y su antiguedad. */
-export type ComandaDeCocina = {
+/** Una comanda en la pantalla de un puesto: su mesa, su destino, su estado y su antiguedad. */
+export type ComandaDePuesto = {
   readonly id: string
   readonly mesa: string
+  readonly destino: string
   readonly estado: EstadoDeComanda
   readonly creadaHaceSegundos: number
   readonly lineas: readonly LineaDeComanda[]
-  readonly totalClp: number
 }
 
 /** Por que no se pudo cambiar el estado de una comanda. */
@@ -233,7 +238,10 @@ export type AlmacenPanel = {
     solicitudId: string,
     motivo: string,
   ) => Promise<ResultadoDecision>
-  readonly listarComandas: (empleado: Empleado) => Promise<readonly ComandaDeCocina[]>
+  readonly listarComandas: (
+    empleado: Empleado,
+    puesto: PuestoDePantalla,
+  ) => Promise<readonly ComandaDePuesto[]>
   readonly cambiarEstadoComanda: (
     empleado: Empleado,
     comandaId: string,
@@ -1070,6 +1078,7 @@ async function decidirPareja(
 type FilaComanda = {
   readonly id: string
   readonly status: string
+  readonly prep_station: string
   readonly creada: number
   readonly mesa: string
 }
@@ -1078,7 +1087,6 @@ type FilaComandaItem = {
   readonly order_id: string
   readonly name_snapshot: string
   readonly qty: number
-  readonly line_total_clp: number
 }
 
 /** Estado por defecto si la base trajera un valor fuera del contrato: no se inventa estado. */
@@ -1087,25 +1095,32 @@ function aEstado(valor: string): EstadoDeComanda {
 }
 
 /**
- * Las comandas abiertas del local (la RLS ya acota al alcance del empleado). Se muestran las
- * que aun no estan cobradas; `cerrada` se alcanza tras el cobro, que es otra tarea.
+ * Las comandas abiertas que ve una pantalla de puesto (la RLS ya acota al alcance del
+ * empleado). `todo` no filtra; cocina y barra reciben solo los destinos de su puesto. Nunca
+ * se leen importes: quien prepara no cobra.
  */
-async function listarFilaComandas(cliente: Client): Promise<readonly ComandaDeCocina[]> {
+async function listarFilaComandas(
+  cliente: Client,
+  puesto: PuestoDePantalla,
+): Promise<readonly ComandaDePuesto[]> {
+  const destinos = destinosDelPuesto(puesto)
   const comandas = await cliente.query<FilaComanda>(
-    `select o.id, o.status,
+    `select o.id, o.status, o.prep_station,
             extract(epoch from (now() - o.created_at))::int as creada,
             coalesce(t.label, s.code, 'Mesa') as mesa
        from public.orders o
        left join public.table_sessions s on s.id = o.session_id
        left join public.tables t on t.id = s.table_id
       where o.status <> 'cerrada'
+        and ($1::text[] is null or o.prep_station = any($1::text[]))
       order by o.created_at, o.id`,
+    [destinos],
   )
   if (comandas.rows.length === 0) {
     return []
   }
   const items = await cliente.query<FilaComandaItem>(
-    `select order_id, name_snapshot, qty, line_total_clp
+    `select order_id, name_snapshot, qty
        from public.order_items
       where order_id = any($1::uuid[])
       order by created_at, id`,
@@ -1114,20 +1129,19 @@ async function listarFilaComandas(cliente: Client): Promise<readonly ComandaDeCo
   const porComanda = new Map<string, LineaDeComanda[]>()
   for (const item of items.rows) {
     const lista = porComanda.get(item.order_id) ?? []
-    lista.push({ nombre: item.name_snapshot, cantidad: item.qty, totalClp: item.line_total_clp })
+    lista.push({ nombre: item.name_snapshot, cantidad: item.qty })
     porComanda.set(item.order_id, lista)
   }
-  return comandas.rows.map((fila): ComandaDeCocina => {
-    const lineas = porComanda.get(fila.id) ?? []
-    return {
+  return comandas.rows.map(
+    (fila): ComandaDePuesto => ({
       id: fila.id,
       mesa: fila.mesa,
+      destino: fila.prep_station,
       estado: aEstado(fila.status),
       creadaHaceSegundos: fila.creada,
-      lineas,
-      totalClp: lineas.reduce((suma, linea) => suma + linea.totalClp, 0),
-    }
-  })
+      lineas: porComanda.get(fila.id) ?? [],
+    }),
+  )
 }
 
 /**
@@ -1336,8 +1350,8 @@ export function almacenDeBase(cadena: string): AlmacenPanel {
       enTransaccion(cadena, empleado, (cliente) =>
         decidirPareja(cliente, solicitudId, "rejected", motivo),
       ),
-    listarComandas: (empleado): Promise<readonly ComandaDeCocina[]> =>
-      enTransaccion(cadena, empleado, (cliente) => listarFilaComandas(cliente)),
+    listarComandas: (empleado, puesto): Promise<readonly ComandaDePuesto[]> =>
+      enTransaccion(cadena, empleado, (cliente) => listarFilaComandas(cliente, puesto)),
     cambiarEstadoComanda: (empleado, comandaId, destino): Promise<ResultadoCambioComanda> =>
       enTransaccion(cadena, empleado, (cliente) =>
         cambiarFilaEstadoComanda(cliente, comandaId, destino),
@@ -1381,7 +1395,7 @@ export function almacenNoConfigurado(): AlmacenPanel {
     listarParejasPendientes: async (): Promise<readonly SolicitudPendiente[]> => [],
     aprobarPareja: async (): Promise<ResultadoDecision> => ({ ok: false, motivo: "otro_local" }),
     rechazarPareja: async (): Promise<ResultadoDecision> => ({ ok: false, motivo: "otro_local" }),
-    listarComandas: async (): Promise<readonly ComandaDeCocina[]> => [],
+    listarComandas: async (): Promise<readonly ComandaDePuesto[]> => [],
     cambiarEstadoComanda: async (): Promise<ResultadoCambioComanda> => ({
       ok: false,
       motivo: "no_existe",

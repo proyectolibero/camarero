@@ -10,8 +10,9 @@
  * `INSERT ... RETURNING` aplica tambien las politicas de SELECT, y en ese instante la sesion
  * aun no esta en el contexto. Se lee despues, ya con `app.session_id` fijado.
  */
+import { destinoDeEstacion, esEstacionAutomatica } from "@camarero/domain"
 import { Client } from "pg"
-import type { LineaDeCesta } from "./cesta.ts"
+import type { LineaDeEnvio } from "./cesta.ts"
 
 export type PlatoDeCarta = {
   readonly id: string
@@ -61,9 +62,10 @@ export type LineaDelPedido = {
   readonly totalClp: number
 }
 
-/** Una comanda del comensal, con sus lineas y el total real de la carta. */
+/** Una comanda del comensal, con su destino, sus lineas y el total real de la carta. */
 export type PedidoDelComensal = {
   readonly id: string
+  readonly destino: string
   readonly estado: string
   readonly creadoHaceSegundos: number
   readonly lineas: readonly LineaDelPedido[]
@@ -88,7 +90,7 @@ export type AlmacenComensal = {
     codigo: string,
     sesionId: string | null,
     clave: string,
-    lineas: readonly LineaDeCesta[],
+    lineas: readonly LineaDeEnvio[],
   ) => Promise<ResultadoEnvio>
   readonly pedidos: (codigo: string, sesionId: string | null) => Promise<LecturaPedidos>
 }
@@ -503,53 +505,145 @@ async function leerPedidoPorClave(
   return resultado.rows[0]?.id ?? null
 }
 
+/** Una comanda a crear: su destino y las lineas que van a el. */
+type GrupoDeEnvio = {
+  readonly destino: string
+  readonly lineas: readonly LineaDeEnvio[]
+}
+
 /**
- * Envio de la comanda. La base fija el precio y el estado: aqui solo se comprueba que la
- * sesion esta aprobada. La clave de idempotencia es unica globalmente, de modo que un doble
- * toque o un reintento de red no crea dos comandas.
+ * Reparte el envio por destino. Una cesta con un plato y una bebida produce dos grupos: la
+ * cocina y la barra avanzan por separado (ADR-0033). Un plato sin estacion va a cocina.
+ */
+function agruparPorDestino(lineas: readonly LineaDeEnvio[]): readonly GrupoDeEnvio[] {
+  const grupos = new Map<string, LineaDeEnvio[]>()
+  for (const linea of lineas) {
+    const destino = destinoDeEstacion(linea.estacion)
+    const lista = grupos.get(destino)
+    if (lista === undefined) {
+      grupos.set(destino, [linea])
+    } else {
+      lista.push(linea)
+    }
+  }
+  return [...grupos.entries()].map(([destino, lista]) => ({ destino, lineas: lista }))
+}
+
+/**
+ * Clave de idempotencia de una comanda hermana. La clave del envio se comparte entre destinos,
+ * pero `orders.idempotency_key` es unica en TODO el sistema: se deriva una clave por destino
+ * para que dos comandas hermanas de la misma mesa no choquen. Reenviar el mismo envio
+ * reproduce las mismas claves y no crea comandas nuevas.
+ */
+function claveDeDestino(clave: string, destino: string): string {
+  return `${clave}.${destino}`
+}
+
+/** Crea la comanda de un destino con sus lineas; si ya existe, la devuelve sin crear otra. */
+async function crearComandaDeDestino(
+  cliente: Client,
+  datos: SesionValidada,
+  clave: string,
+  grupo: GrupoDeEnvio,
+): Promise<string> {
+  const claveDestino = claveDeDestino(clave, grupo.destino)
+  const existente = await leerPedidoPorClave(cliente, claveDestino, datos.sesion.id)
+  if (existente !== null) {
+    return existente
+  }
+  await cliente.query(
+    `insert into public.orders
+       (org_id, location_id, session_id, source, client_alias, prep_station, idempotency_key)
+     values ($1, $2, $3, 'table', $4, $5, $6)`,
+    [
+      datos.orgId,
+      datos.mesa.location_id,
+      datos.sesion.id,
+      datos.mesa.label,
+      grupo.destino,
+      claveDestino,
+    ],
+  )
+  const pedidoId = await leerPedidoPorClave(cliente, claveDestino, datos.sesion.id)
+  if (pedidoId === null) {
+    throw new Error("La comanda recien creada no es legible")
+  }
+  for (const linea of grupo.lineas) {
+    await cliente.query(
+      `insert into public.order_items (order_id, menu_item_id, qty) values ($1, $2, $3)`,
+      [pedidoId, linea.platoId, linea.cantidad],
+    )
+  }
+  if (esEstacionAutomatica(grupo.destino)) {
+    // Un puesto automatico nace aceptado: el disparador de cierre calcula los importes.
+    await cliente.query(`update public.orders set status = 'aceptada' where id = $1`, [pedidoId])
+  }
+  return pedidoId
+}
+
+/**
+ * Tras una carrera de idempotencia, recupera la primera comanda hermana ya creada. Otra
+ * peticion identica gano el INSERT; se devuelve lo suyo en lugar de un error.
+ */
+async function recuperarEnvio(
+  cadena: string,
+  codigo: string,
+  sesionId: string | null,
+  clave: string,
+  grupos: readonly GrupoDeEnvio[],
+): Promise<ResultadoEnvio | null> {
+  const envuelto = await comoComensal(cadena, codigo, sesionId, async (cliente, datos) => {
+    for (const grupo of grupos) {
+      const id = await leerPedidoPorClave(
+        cliente,
+        claveDeDestino(clave, grupo.destino),
+        datos.sesion.id,
+      )
+      if (id !== null) {
+        return id
+      }
+    }
+    return null
+  })
+  if ("fallo" in envuelto || envuelto.valor === null) {
+    return null
+  }
+  return { tipo: "ok", pedidoId: envuelto.valor }
+}
+
+/**
+ * Envio de la comanda. La base fija el precio, el destino y el estado. Una cesta se parte en
+ * una comanda por destino; cada una se crea con su propia clave de idempotencia derivada, de
+ * modo que un doble toque o un reintento de red no crea comandas nuevas.
  */
 async function enviarComanda(
   cadena: string,
   codigo: string,
   sesionId: string | null,
   clave: string,
-  lineas: readonly LineaDeCesta[],
+  lineas: readonly LineaDeEnvio[],
 ): Promise<ResultadoEnvio> {
   if (lineas.length === 0 || clave === "") {
     return { tipo: "cesta_vacia" }
   }
+  const grupos = agruparPorDestino(lineas)
   const envuelto = await comoComensal(cadena, codigo, sesionId, async (cliente, datos) => {
     if (datos.sesion.state !== "active") {
       return { tipo: "sin_aprobar" } as const
     }
-    // Ya enviada: se devuelve la misma comanda, sin crear otra.
-    const existente = await leerPedidoPorClave(cliente, clave, datos.sesion.id)
-    if (existente !== null) {
-      return { tipo: "ok", pedidoId: existente } as const
-    }
     try {
-      await cliente.query(
-        `insert into public.orders (org_id, location_id, session_id, source, client_alias, idempotency_key)
-         values ($1, $2, $3, 'table', $4, $5)`,
-        [datos.orgId, datos.mesa.location_id, datos.sesion.id, datos.mesa.label, clave],
-      )
+      let primero: string | null = null
+      for (const grupo of grupos) {
+        const pedidoId = await crearComandaDeDestino(cliente, datos, clave, grupo)
+        primero = primero ?? pedidoId
+      }
+      return { tipo: "ok", pedidoId: primero ?? "" } as const
     } catch (error) {
       if (esConflictoDeIdempotencia(error)) {
         return { tipo: "conflicto" } as const
       }
       throw error
     }
-    const pedidoId = await leerPedidoPorClave(cliente, clave, datos.sesion.id)
-    if (pedidoId === null) {
-      throw new Error("La comanda recien creada no es legible")
-    }
-    for (const linea of lineas) {
-      await cliente.query(
-        `insert into public.order_items (order_id, menu_item_id, qty) values ($1, $2, $3)`,
-        [pedidoId, linea.platoId, linea.cantidad],
-      )
-    }
-    return { tipo: "ok", pedidoId } as const
   })
   if ("fallo" in envuelto) {
     return envuelto.fallo === "codigo_desconocido"
@@ -557,14 +651,7 @@ async function enviarComanda(
       : { tipo: "sin_sesion" }
   }
   if (envuelto.valor.tipo === "conflicto") {
-    // Otro envio gano la carrera: se recupera la comanda ya creada.
-    const repetido = await comoComensal(cadena, codigo, sesionId, (cliente, datos) =>
-      leerPedidoPorClave(cliente, clave, datos.sesion.id),
-    )
-    if ("valor" in repetido && repetido.valor !== null) {
-      return { tipo: "ok", pedidoId: repetido.valor }
-    }
-    return { tipo: "sin_sesion" }
+    return (await recuperarEnvio(cadena, codigo, sesionId, clave, grupos)) ?? { tipo: "sin_sesion" }
   }
   return envuelto.valor
 }
@@ -572,6 +659,7 @@ async function enviarComanda(
 type FilaPedido = {
   readonly id: string
   readonly status: string
+  readonly prep_station: string | null
   readonly creada: number
 }
 
@@ -594,7 +682,7 @@ async function leerPedidos(
       [datos.mesa.location_id],
     )
     const ordenes = await cliente.query<FilaPedido>(
-      `select id, status, extract(epoch from (now() - created_at))::int as creada
+      `select id, status, prep_station, extract(epoch from (now() - created_at))::int as creada
          from public.orders
         where session_id = $1
         order by created_at desc, id desc`,
@@ -624,6 +712,7 @@ async function leerPedidos(
       const lineas = porOrden.get(fila.id) ?? []
       return {
         id: fila.id,
+        destino: destinoDeEstacion(fila.prep_station),
         estado: fila.status,
         creadoHaceSegundos: fila.creada,
         lineas,

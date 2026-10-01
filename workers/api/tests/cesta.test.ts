@@ -7,7 +7,7 @@
  * la comanda, y que el precio lo fija la base) se prueba contra Postgres en `packages/db`.
  */
 import { describe, expect, it } from "vitest"
-import type { LineaDeCesta } from "../src/comensal/cesta.ts"
+import type { LineaDeEnvio } from "../src/comensal/cesta.ts"
 import type {
   AlmacenComensal,
   CartaDelComensal,
@@ -61,6 +61,7 @@ function ok(datos: CartaDelComensal = carta()): LecturaComensal {
 const PEDIDOS: readonly PedidoDelComensal[] = [
   {
     id: "o1",
+    destino: "frio",
     estado: "pendiente",
     creadoHaceSegundos: 5,
     lineas: [{ nombre: "Ceviche clásico", cantidad: 2, totalClp: 17800 }],
@@ -113,7 +114,8 @@ describe("Cesta: la pantalla", () => {
     expect(cuerpo).toContain("×2")
     // 8900 × 2 + 5000 = 22800, con el precio de la carta.
     expect(cuerpo).toContain("22.800")
-    expect(cuerpo).toContain("directa a cocina")
+    expect(cuerpo).toContain("por partes")
+    expect(cuerpo).toContain("la cocina y la barra")
     expect(cuerpo).toContain("no se deshace sola")
     expect(cuerpo).toContain('action="/t/ABCDEFGH/cesta/enviar"')
     expect(cuerpo).not.toContain("<script")
@@ -199,10 +201,10 @@ describe("Cesta: subir, bajar y quitar", () => {
 function almacenConEnvios(): {
   readonly almacen: AlmacenComensal
   readonly ordenes: Map<string, string>
-  readonly lineasVistas: LineaDeCesta[][]
+  readonly lineasVistas: LineaDeEnvio[][]
 } {
   const ordenes = new Map<string, string>()
-  const lineasVistas: LineaDeCesta[][] = []
+  const lineasVistas: LineaDeEnvio[][] = []
   const almacen = comensalFalso({
     abrir: async () => ok(),
     pedidos: async () => ({ tipo: "ok", local: "Barra Uno", mesa: "Mesa 4", pedidos: PEDIDOS }),
@@ -241,8 +243,13 @@ describe("Cesta: enviar la comanda", () => {
     expect(respuesta.headers.get("location")).toBe("/t/ABCDEFGH/pedidos")
     const cookies = respuesta.headers.getSetCookie()
     expect(cookies.some((cookie) => cookie.includes("camarero_cesta=;"))).toBe(true)
-    // Las lineas que viajan a la base llevan solo identificador y cantidad, jamas un precio.
-    expect(Object.keys(lineasVistas[0]?.[0] ?? {}).sort()).toEqual(["cantidad", "platoId"])
+    // Las lineas que viajan a la base llevan solo identificador, cantidad y estacion de la
+    // carta: jamas un precio.
+    expect(Object.keys(lineasVistas[0]?.[0] ?? {}).sort()).toEqual([
+      "cantidad",
+      "estacion",
+      "platoId",
+    ])
   })
 
   it("no debe crear dos comandas cuando se envia dos veces con la misma clave", async () => {

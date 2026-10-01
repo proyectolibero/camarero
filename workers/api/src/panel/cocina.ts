@@ -1,13 +1,22 @@
 /**
- * La cocina: las comandas del local (`GET /admin/pedidos`).
+ * Las pantallas de puesto: cocina, barra y todo (`GET /admin/pedidos[/<puesto>]`).
  *
- * Se dibuja en el servidor y sin JavaScript. Se refresca a mano con `<meta http-equiv="refresh">`,
- * declarado a proposito. Aceptar cierra los importes en la base; anular y marcar lista son
- * cambios de estado que respetan la maquina de `CONTRACT-estados-comanda` (nunca `cerrada`,
- * que exige un cobro previo). La cerradura de aislamiento es la RLS: la pantalla solo decide
- * que se dibuja; si un empleado de otro local fuerza la peticion, la base no le da filas.
+ * Cada dispositivo abre su puesto por RUTA (`/admin/pedidos/cocina`, `/admin/pedidos/barra`,
+ * `/admin/pedidos/todo`) para poder dejarlo fijado en la tablet sin tocar nada. Sin puesto,
+ * la ruta sirve cocina. Las pantallas se dibujan en el servidor y sin JavaScript, y se
+ * refrescan con `<meta http-equiv="refresh">`. NINGUNA muestra precios: quien prepara no cobra.
+ *
+ * Aceptar cierra los importes en la base; anular y marcar lista son cambios de estado que
+ * respetan la maquina de `CONTRACT-estados-comanda` (nunca `cerrada`, que exige un cobro
+ * previo). La cerradura de aislamiento es la RLS: la pantalla solo decide que se dibuja; si
+ * un empleado de otro local fuerza la peticion, la base no le da filas.
  */
-import { type EstadoDeComanda, esEstadoDeComanda } from "@camarero/domain"
+import {
+  type EstadoDeComanda,
+  esEstadoDeComanda,
+  esPuestoDePantalla,
+  type PuestoDePantalla,
+} from "@camarero/domain"
 import type { Empleado } from "../base.ts"
 import { responderMetodoNoPermitido, responderNoEncontrado } from "../salud.ts"
 import { renderizar } from "../ui/html.ts"
@@ -17,6 +26,9 @@ import { puedeOperarCocina } from "./permisos.ts"
 import type { Dependencias } from "./proveedor.ts"
 import { type EntornoDePanel, resolverEmpleadoDeSesion } from "./sesion-panel.ts"
 import { type EstadoPantalla, vistaCocina, vistaEntrada, vistaSinPermiso } from "./vistas.ts"
+
+/** Sin puesto en la ruta se sirve cocina: la tablet de siempre sigue funcionando. */
+const PUESTO_POR_DEFECTO: PuestoDePantalla = "cocina"
 
 /** Destinos que el KDS puede escribir: los del contrato menos `cerrada` (exige cobro, F3). */
 const DESTINOS_DE_COCINA: ReadonlySet<EstadoDeComanda> = new Set([
@@ -34,22 +46,37 @@ const MENSAJE_DE_CAMBIO: Readonly<Record<MotivoDeCambioComanda, string>> = {
   transicion_invalida: "Ese cambio de estado no está permitido para la comanda.",
 }
 
-async function primerCampo(peticion: Request, clave: string): Promise<string> {
+type CamposDeCambio = {
+  readonly destino: string
+  readonly puesto: PuestoDePantalla
+}
+
+function puestoDeTexto(valor: string): PuestoDePantalla {
+  return esPuestoDePantalla(valor) ? valor : PUESTO_POR_DEFECTO
+}
+
+/** Lee el cuerpo del POST una sola vez: destino y puesto vienen en el mismo formulario. */
+async function leerCamposDeCambio(peticion: Request): Promise<CamposDeCambio> {
   const tipo = peticion.headers.get("content-type") ?? ""
   if (!tipo.includes("application/x-www-form-urlencoded")) {
-    return ""
+    return { destino: "", puesto: PUESTO_POR_DEFECTO }
   }
-  return (new URLSearchParams(await peticion.text()).get(clave) ?? "").trim()
+  const datos = new URLSearchParams(await peticion.text())
+  return {
+    destino: (datos.get("destino") ?? "").trim(),
+    puesto: puestoDeTexto((datos.get("puesto") ?? "").trim()),
+  }
 }
 
 async function renderCocina(
   empleado: Empleado,
   almacen: AlmacenPanel,
+  puesto: PuestoDePantalla,
   estado: EstadoPantalla,
 ): Promise<Response> {
-  const comandas = await almacen.listarComandas(empleado)
+  const comandas = await almacen.listarComandas(empleado, puesto)
   return respuestaHtml(
-    renderizar(vistaCocina(empleado, comandas, estado)),
+    renderizar(vistaCocina(empleado, comandas, puesto, estado)),
     estado.estadoError ?? 200,
   )
 }
@@ -58,9 +85,15 @@ async function mostrarCocina(
   url: URL,
   empleado: Empleado,
   almacen: AlmacenPanel,
+  puesto: PuestoDePantalla,
 ): Promise<Response> {
   const cambiado = url.searchParams.get("cambiado") === "1"
-  return await renderCocina(empleado, almacen, cambiado ? { exito: "Comanda actualizada." } : {})
+  return await renderCocina(
+    empleado,
+    almacen,
+    puesto,
+    cambiado ? { exito: "Comanda actualizada." } : {},
+  )
 }
 
 async function cambiarEstado(
@@ -69,24 +102,57 @@ async function cambiarEstado(
   comandaId: string,
   almacen: AlmacenPanel,
 ): Promise<Response> {
-  const destino = await primerCampo(peticion, "destino")
+  const { destino, puesto } = await leerCamposDeCambio(peticion)
   if (!esEstadoDeComanda(destino) || !DESTINOS_DE_COCINA.has(destino)) {
-    return await renderCocina(empleado, almacen, {
+    return await renderCocina(empleado, almacen, puesto, {
       error: "Ese estado no se puede aplicar desde cocina.",
       estadoError: 400,
     })
   }
   const resultado = await almacen.cambiarEstadoComanda(empleado, comandaId, destino)
   if (!resultado.ok) {
-    return await renderCocina(empleado, almacen, {
+    return await renderCocina(empleado, almacen, puesto, {
       error: MENSAJE_DE_CAMBIO[resultado.motivo],
       estadoError: resultado.motivo === "sin_permiso" ? 403 : 409,
     })
   }
-  return responderRedireccion("/admin/pedidos?cambiado=1")
+  return responderRedireccion(`/admin/pedidos/${puesto}?cambiado=1`)
 }
 
-/** Devuelve la respuesta de la cocina, o null si la ruta no es la de pedidos. */
+async function manejarPantallaDePuesto(
+  peticion: Request,
+  url: URL,
+  empleado: Empleado,
+  almacen: AlmacenPanel,
+  segmentos: readonly string[],
+): Promise<Response> {
+  if (segmentos.length === 2) {
+    return peticion.method === "GET"
+      ? await mostrarCocina(url, empleado, almacen, PUESTO_POR_DEFECTO)
+      : responderMetodoNoPermitido("GET")
+  }
+  if (segmentos.length === 3) {
+    const puesto = segmentos[2]
+    if (puesto === undefined || !esPuestoDePantalla(puesto)) {
+      return responderNoEncontrado()
+    }
+    return peticion.method === "GET"
+      ? await mostrarCocina(url, empleado, almacen, puesto)
+      : responderMetodoNoPermitido("GET")
+  }
+  if (segmentos.length === 4 && segmentos[3] === "estado") {
+    const comandaId = segmentos[2]
+    if (comandaId === undefined) {
+      return responderNoEncontrado()
+    }
+    return peticion.method === "POST"
+      ? await cambiarEstado(peticion, empleado, comandaId, almacen)
+      : responderMetodoNoPermitido("POST")
+  }
+  return responderNoEncontrado()
+}
+
+/** Devuelve la respuesta de un puesto, o null si la ruta no es la de pedidos. */
 export async function manejarCocina(
   peticion: Request,
   entorno: EntornoDePanel,
@@ -105,15 +171,5 @@ export async function manejarCocina(
   if (!puedeOperarCocina(empleado)) {
     return respuestaHtml(renderizar(vistaSinPermiso(empleado, "ver los pedidos")), 403)
   }
-  if (segmentos.length === 2) {
-    return peticion.method === "GET"
-      ? await mostrarCocina(url, empleado, dependencias.almacen)
-      : responderMetodoNoPermitido("GET")
-  }
-  if (segmentos.length === 4 && segmentos[3] === "estado" && segmentos[2] !== undefined) {
-    return peticion.method === "POST"
-      ? await cambiarEstado(peticion, empleado, segmentos[2], dependencias.almacen)
-      : responderMetodoNoPermitido("POST")
-  }
-  return responderNoEncontrado()
+  return await manejarPantallaDePuesto(peticion, url, empleado, dependencias.almacen, segmentos)
 }
