@@ -216,7 +216,7 @@ async function mostrarCategoria(
 // ---------------------------------------------------------------------------
 
 function validarPlato(campos: Campos, categorias: readonly Categoria[]): Validacion<EntradaPlato> {
-  const nombre = validarNombre("nombre del plato", primer(campos, "nombre"))
+  const nombre = validarNombre("nombre", primer(campos, "nombre"))
   if (!nombre.ok) {
     return nombre
   }
@@ -339,7 +339,7 @@ async function crearPlato(
       empleado,
       null,
       almacen,
-      { error: mensajeDeFallo(resultado, "crear el plato"), estadoError },
+      { error: mensajeDeFallo(resultado, "crear el registro"), estadoError },
       iniciales,
       borrador,
     )
@@ -626,18 +626,18 @@ async function guardarFotoDePlato(
   empleado: Empleado,
 ): Promise<string | null> {
   if (!cartas.disponible) {
-    return "El plato se creó, pero no se pudo guardar la foto: el almacén de fotos no está configurado. Súbela de nuevo desde la ficha cuando esté disponible."
+    return "Se creó, pero no se pudo guardar la foto: el almacén de fotos no está configurado. Súbela de nuevo desde la ficha cuando esté disponible."
   }
   const clave = claveNueva(foto.tipo)
   try {
     await cartas.guardar(clave, await foto.bytes(), foto.tipo)
   } catch {
-    return "El plato se creó, pero la foto no se pudo guardar. Vuelve a intentarlo desde la ficha del plato."
+    return "Se creó, pero la foto no se pudo guardar. Vuelve a intentarlo desde la ficha del plato."
   }
   const resultado = await almacen.fijarFoto(empleado, platoId, clave)
   if (!resultado.ok) {
     await cartas.borrar(clave)
-    return "El plato se creó, pero la foto no se pudo enlazar. Vuelve a intentarlo desde la ficha del plato."
+    return "Se creó, pero la foto no se pudo enlazar. Vuelve a intentarlo desde la ficha del plato."
   }
   if (resultado.valor !== null && resultado.valor !== clave) {
     await cartas.borrar(resultado.valor)
@@ -969,7 +969,7 @@ async function mostrarFormularioPlato(
     const categorias = await almacen.listarCategorias(empleado)
     const iniciales = inicialesDeAlta(url)
     const continuar = url.searchParams.get("continuar") === "1"
-    const estado: EstadoPantalla = continuar ? { exito: "Plato guardado. Puedes añadir otro." } : {}
+    const estado: EstadoPantalla = continuar ? { exito: "Guardado. Puedes añadir otro." } : {}
     const vista = vistaPlato(empleado, null, categorias, iniciales, estado)
     return respuestaHtml(renderizar(vista), 200)
   }
@@ -988,7 +988,7 @@ async function mostrarFormularioPlato(
     categorias,
     { categoria: null, estacion: null, bebida: false },
     {
-      exito: guardado ? "Plato guardado." : undefined,
+      exito: guardado ? "Guardado." : undefined,
     },
   )
   return respuestaHtml(renderizar(vista), 200)

@@ -819,9 +819,9 @@ function estacionDeBorrador(valor: string): string | null {
 function campoFotoNueva(): HtmlSeguro {
   return html`<fieldset class="grupo">
 <legend>Foto</legend>
-<label class="campo"><span>Foto del plato (opcional)</span>
+<label class="campo"><span>Foto (opcional)</span>
 <input type="file" name="foto" accept="image/jpeg,image/png,image/webp"></label>
-<span class="ayuda">Solo JPEG, PNG o WebP, hasta 5 MB. El SVG no se acepta. Si la foto no vale, no se crea el plato y no pierdes lo que escribiste.</span>
+<span class="ayuda">Solo JPEG, PNG o WebP, hasta 5 MB. El SVG no se acepta. Si la foto no vale, no se crea nada y no pierdes lo que escribiste.</span>
 </fieldset>`
 }
 
@@ -898,7 +898,7 @@ ${esNuevo ? campoFotoNueva() : html``}
 ${
   esNuevo
     ? html`<div class="acciones-alta">
-<button class="boton" type="submit">Crear plato</button>
+<button class="boton" type="submit">Crear</button>
 <button class="boton boton-secundario" type="submit" name="continuar" value="otro">Guardar y añadir otro</button>
 </div>`
     : html`<button class="boton" type="submit">Guardar cambios</button>`
@@ -937,6 +937,10 @@ export function vistaPlato(
   borrador: BorradorPlato | null = null,
 ): HtmlSeguro {
   const titulo = plato === null ? "Nuevo plato o bebida" : `Editar: ${plato.nombre}`
+  const categoriaDeVuelta = plato?.categoriaId ?? iniciales.categoria
+  const destinoDeVuelta =
+    categoriaDeVuelta === null ? "/admin/carta" : `/admin/carta/${categoriaDeVuelta}`
+  const rotuloDeVuelta = categoriaDeVuelta === null ? "Volver a la carta" : "Volver a la categoría"
   const contenido = html`${cabecera("admin", empleado)}
 <main class="contenedor">
 ${avisosDeEstado(estado)}
@@ -945,9 +949,7 @@ ${avisosDeEstado(estado)}
 ${formularioPlato(plato, borrador, categorias, iniciales)}
 </section>
 ${plato === null ? html`` : seccionFoto(plato)}
-<p><a class="boton boton-secundario" href="/admin/carta${
-    plato?.categoriaId === null || plato?.categoriaId === undefined ? "" : `/${plato.categoriaId}`
-  }">Volver a la categoría</a></p>
+<p><a class="boton boton-secundario" href="${destinoDeVuelta}">${rotuloDeVuelta}</a></p>
 </main>`
   return pagina(titulo, contenido)
 }
