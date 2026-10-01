@@ -35,6 +35,12 @@ ${contenido}
 </html>`
 }
 
+/** La ventana dura diez minutos: se enseña en minutos, no en un numero crudo de segundos. */
+function tiempoRestante(segundos: number): string {
+  const total = Math.max(0, Math.round(segundos))
+  return total < 60 ? `${total} segundos` : `${Math.ceil(total / 60)} minutos`
+}
+
 function bloqueEmparejamiento(carta: CartaDelComensal, codigo: string): HtmlSeguro {
   const accion = `/t/${codigo}/pareja`
   if (carta.estado === "aprobado") {
@@ -46,7 +52,7 @@ function bloqueEmparejamiento(carta: CartaDelComensal, codigo: string): HtmlSegu
     const quedan =
       carta.restanteSegundos === null
         ? html``
-        : html`<p class="ayuda">Quedan unos ${carta.restanteSegundos} segundos.</p>`
+        : html`<p class="ayuda">Quedan unos ${tiempoRestante(carta.restanteSegundos)}.</p>`
     return html`<div class="emparejamiento emparejamiento-espera" role="status">
 <p><strong>Esperando que el local lo apruebe.</strong></p>
 <p>Si tarda, avisa a quien te atiende. Esta pantalla se actualiza sola.</p>

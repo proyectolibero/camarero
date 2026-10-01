@@ -116,6 +116,16 @@ export type Resultado<T = void> =
   | { readonly ok: true; readonly valor: T }
   | { readonly ok: false; readonly motivo: MotivoDeFallo }
 
+/**
+ * Por que no se pudo decidir una solicitud de emparejamiento. Se distinguen las causas para que
+ * el mensaje deje de ser generico: un cero que no se explica es un cero invisible (LL-024).
+ */
+export type MotivoDeDecision = "sin_permiso" | "otro_local" | "ya_decidida" | "caducada"
+
+export type ResultadoDecision =
+  | { readonly ok: true; readonly valor: undefined }
+  | { readonly ok: false; readonly motivo: MotivoDeDecision }
+
 /** Por que no se pudo mover una mesa. Se explica en pantalla, nunca se ignora (D-046). */
 export type MotivoDeMovimiento = "sin_permiso" | "no_existe" | "ocupada" | "fuera_de_cuadricula"
 
@@ -192,12 +202,12 @@ export type AlmacenPanel = {
   ) => Promise<Resultado<string | null>>
   readonly contarParejasPendientes: (empleado: Empleado) => Promise<number>
   readonly listarParejasPendientes: (empleado: Empleado) => Promise<readonly SolicitudPendiente[]>
-  readonly aprobarPareja: (empleado: Empleado, solicitudId: string) => Promise<Resultado>
+  readonly aprobarPareja: (empleado: Empleado, solicitudId: string) => Promise<ResultadoDecision>
   readonly rechazarPareja: (
     empleado: Empleado,
     solicitudId: string,
     motivo: string,
-  ) => Promise<Resultado>
+  ) => Promise<ResultadoDecision>
 }
 
 type FilaLocal = {
@@ -981,37 +991,44 @@ async function listarFilaParejas(cliente: Client): Promise<FilaPareja[]> {
   return resultado.rows
 }
 
-/** Decide una solicitud y, al aprobar, activa la sesion: es lo que abre la barrera de la comanda. */
+const CAUSAS_DE_DECISION: Readonly<Record<string, MotivoDeDecision>> = {
+  sin_permiso: "sin_permiso",
+  otro_local: "otro_local",
+  ya_decidida: "ya_decidida",
+  caducada: "caducada",
+}
+
+/**
+ * Decide una solicitud a traves de la puerta unica de la base, que clasifica la causa, activa la
+ * sesion al aprobar y deja rastro en la auditoria. La base es la cerradura: si el empleado no
+ * alcanza la solicitud, la funcion devuelve `otro_local` y no toca ninguna fila.
+ */
 async function decidirPareja(
   cliente: Client,
   solicitudId: string,
   decision: "approved" | "rejected",
   motivo: string | null,
-): Promise<Resultado> {
+): Promise<ResultadoDecision> {
   try {
-    const actualizada = await cliente.query<{ session_id: string }>(
-      `update public.pairing_requests
-          set state = $2, decided_by = public.staff_actual(), decided_at = now(), reason = $3
-        where id = $1 and state = 'pending'
-        returning session_id`,
+    const resultado = await cliente.query<{ causa: string }>(
+      "select public.camarero_decidir_emparejamiento($1, $2, $3) as causa",
       [solicitudId, decision, motivo],
     )
-    const fila = actualizada.rows[0]
-    if (fila === undefined) {
-      return { ok: false, motivo: "no_existe" }
+    const causa = resultado.rows[0]?.causa ?? "otro_local"
+    if (causa === "ok") {
+      return { ok: true, valor: undefined }
     }
-    if (decision === "approved") {
-      await cliente.query("update public.table_sessions set state = 'active' where id = $1", [
-        fila.session_id,
-      ])
+    const motivoConocido = CAUSAS_DE_DECISION[causa]
+    if (motivoConocido === undefined) {
+      throw new Error(`Causa de decision desconocida: ${causa}`)
     }
-    return { ok: true, valor: undefined }
+    return { ok: false, motivo: motivoConocido }
   } catch (error) {
-    const motivoError = motivoDeErrorDeEscritura(error)
-    if (motivoError === null) {
-      throw error
+    // La RLS puede negar la fila con 42501 antes de que la funcion pueda clasificar.
+    if (motivoDeErrorDeEscritura(error) === "sin_permiso") {
+      return { ok: false, motivo: "sin_permiso" }
     }
-    return { ok: false, motivo: motivoError }
+    throw error
   }
 }
 
@@ -1174,11 +1191,11 @@ export function almacenDeBase(cadena: string): AlmacenPanel {
           restanteSegundos: fila.restante,
         })),
       ),
-    aprobarPareja: (empleado, solicitudId): Promise<Resultado> =>
+    aprobarPareja: (empleado, solicitudId): Promise<ResultadoDecision> =>
       enTransaccion(cadena, empleado, (cliente) =>
         decidirPareja(cliente, solicitudId, "approved", null),
       ),
-    rechazarPareja: (empleado, solicitudId, motivo): Promise<Resultado> =>
+    rechazarPareja: (empleado, solicitudId, motivo): Promise<ResultadoDecision> =>
       enTransaccion(cadena, empleado, (cliente) =>
         decidirPareja(cliente, solicitudId, "rejected", motivo),
       ),
@@ -1219,8 +1236,8 @@ export function almacenNoConfigurado(): AlmacenPanel {
     }),
     contarParejasPendientes: async (): Promise<number> => 0,
     listarParejasPendientes: async (): Promise<readonly SolicitudPendiente[]> => [],
-    aprobarPareja: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
-    rechazarPareja: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
+    aprobarPareja: async (): Promise<ResultadoDecision> => ({ ok: false, motivo: "otro_local" }),
+    rechazarPareja: async (): Promise<ResultadoDecision> => ({ ok: false, motivo: "otro_local" }),
   }
 }
 

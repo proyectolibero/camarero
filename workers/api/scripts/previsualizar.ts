@@ -388,7 +388,7 @@ const CARTA_COMENSAL: CartaDelComensal = {
   local: "Barra Uno",
   mesa: "Mesa 4",
   estado: "sin_pedir",
-  restanteSegundos: 90,
+  restanteSegundos: 600,
   categorias: [
     {
       id: "c1",
@@ -445,13 +445,13 @@ escribir(
 // ---------------------------------------------------------------------------
 
 const SOLICITUDES: readonly SolicitudPendiente[] = [
-  { id: "s1", mesa: "Mesa 4", pedidaHaceSegundos: 8, restanteSegundos: 82 },
-  { id: "s2", mesa: "Barra 2", pedidaHaceSegundos: 24, restanteSegundos: 66 },
+  { id: "s1", mesa: "Mesa 4", pedidaHaceSegundos: 8, restanteSegundos: 592 },
+  { id: "s2", mesa: "Barra 2", pedidaHaceSegundos: 24, restanteSegundos: 576 },
   {
     id: "s3",
     mesa: "Terraza junto a la ventana grande",
     pedidaHaceSegundos: 47,
-    restanteSegundos: 43,
+    restanteSegundos: 553,
   },
 ]
 

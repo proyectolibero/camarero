@@ -14,6 +14,7 @@ import type {
   AlmacenPanel,
   CambiosLocal,
   Mesa,
+  MotivoDeDecision,
   MotivoDeMovimiento,
   NuevaMesa,
   NuevaZona,
@@ -605,6 +606,14 @@ async function motivoDeRechazo(peticion: Request): Promise<string> {
   return motivo === "" ? "No especificado" : motivo
 }
 
+/** Cada causa tiene su mensaje: un cero sin explicar es un cero invisible (LL-024). */
+const MENSAJE_DE_DECISION: Readonly<Record<MotivoDeDecision, string>> = {
+  sin_permiso: "No tienes permiso para decidir esa solicitud.",
+  otro_local: "Esa solicitud no es de tu local o ya no existe.",
+  ya_decidida: "Esa solicitud ya se había decidido. Vuelve a mirar la lista.",
+  caducada: "Esa solicitud ha caducado: el comensal puede volver a pedirla.",
+}
+
 async function decidirPareja(
   peticion: Request,
   empleado: Empleado | null,
@@ -620,12 +629,13 @@ async function decidirPareja(
       ? await almacen.aprobarPareja(empleado, solicitudId)
       : await almacen.rechazarPareja(empleado, solicitudId, await motivoDeRechazo(peticion))
   if (!resultado.ok) {
-    const mensaje =
-      resultado.motivo === "sin_permiso"
-        ? "No tienes permiso para decidir esa solicitud."
-        : "Esa solicitud ya no está pendiente: puede haber caducado o ser de otro local."
     const solicitudes = await almacen.listarParejasPendientes(empleado)
-    return respuestaHtml(renderizar(vistaParejas(empleado, solicitudes, { error: mensaje })), 409)
+    return respuestaHtml(
+      renderizar(
+        vistaParejas(empleado, solicitudes, { error: MENSAJE_DE_DECISION[resultado.motivo] }),
+      ),
+      409,
+    )
   }
   return responderRedireccion(
     decision === "aprobar" ? "/admin/parejas?aprobada=1" : "/admin/parejas?rechazada=1",

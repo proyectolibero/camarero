@@ -1015,7 +1015,7 @@ export function vistaParejas(
 ${avisosDeEstado({ ...estado, exito })}
 <section class="tarjeta">
 <h1>Solicitudes de emparejamiento</h1>
-<p>Un comensal ha escaneado el QR de una mesa. Apruébalo para que pueda pedir. Cada solicitud se caduca a los 90 segundos; si caduca, el comensal puede volver a pedirla.</p>
+<p>Un comensal ha escaneado el QR de una mesa. Apruébalo para que pueda pedir. La solicitud tiene diez minutos de ventana desde que la pide; si caduca, el comensal puede volver a pedirla.</p>
 ${lista}
 </section>
 ${enlaceVolverAlPanel()}

@@ -126,7 +126,10 @@ describe("Solicitudes: aprobar y rechazar por POST", () => {
     expect(respuesta.headers.get("location")).toBe("/admin/parejas?rechazada=1")
   })
 
-  it("debe avisar con 409 si la solicitud ya no esta pendiente", async () => {
+  /** Ayudante: aprueba con la causa que se quiera y devuelve el aviso. */
+  async function avisoDeCausa(
+    motivo: "otro_local" | "ya_decidida" | "caducada",
+  ): Promise<{ readonly status: number; readonly cuerpo: string }> {
     const respuesta = await manejar(
       await conSesion("/admin/parejas/s1/aprobar", { method: "POST" }),
       ENTORNO,
@@ -134,13 +137,30 @@ describe("Solicitudes: aprobar y rechazar por POST", () => {
       deps(
         DUENO,
         almacenFalso({
-          aprobarPareja: async () => ({ ok: false, motivo: "no_existe" }),
+          aprobarPareja: async () => ({ ok: false, motivo }),
           listarParejasPendientes: async () => [],
         }),
       ),
     )
-    expect(respuesta.status).toBe(409)
-    expect(await respuesta.text()).toContain("ya no está pendiente")
+    return { status: respuesta.status, cuerpo: await respuesta.text() }
+  }
+
+  it("debe distinguir que la solicitud ya se habia decidido", async () => {
+    const { status, cuerpo } = await avisoDeCausa("ya_decidida")
+    expect(status).toBe(409)
+    expect(cuerpo).toContain("ya se había decidido")
+  })
+
+  it("debe distinguir que la solicitud caduco", async () => {
+    const { status, cuerpo } = await avisoDeCausa("caducada")
+    expect(status).toBe(409)
+    expect(cuerpo).toContain("ha caducado")
+  })
+
+  it("debe distinguir que la solicitud no es de este local", async () => {
+    const { status, cuerpo } = await avisoDeCausa("otro_local")
+    expect(status).toBe(409)
+    expect(cuerpo).toContain("no es de tu local")
   })
 
   it("no debe admitir GET en la accion", async () => {

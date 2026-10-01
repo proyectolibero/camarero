@@ -24,10 +24,13 @@ const ORG1 = "11111111-1111-1111-1111-111111111111"
 const ORG2 = "22222222-2222-2222-2222-222222222222"
 const LOC_A = "aaaaaaaa-0000-0000-0000-000000000001"
 const LOC_B = "bbbbbbbb-0000-0000-0000-000000000001"
+const LOC_DRAFT = "aaaaaaaa-0000-0000-0000-000000000009"
 const MESA_A1 = "e0000000-0000-0000-0000-000000000001"
 const MESA_B1 = "e0000000-0000-0000-0000-000000000002"
+const MESA_DRAFT = "e0000000-0000-0000-0000-000000000009"
 const CODIGO_A = "ABCDEFGH"
 const CODIGO_B = "ABCDEFGJ"
+const CODIGO_DRAFT = "ABCDEFGZ"
 const CODIGO_INVENTADO = "ZZZZZZZZ"
 
 const SES_ACTIVA = "f0000000-0000-0000-0000-000000000001"
@@ -44,6 +47,10 @@ const ITEM_B = "04000000-0000-0000-0000-000000000002"
 
 const STAFF_SERVER_A = "b0000000-0000-0000-0000-000000000001"
 const STAFF_SERVER_B = "b0000000-0000-0000-0000-000000000002"
+const STAFF_OWNER_A = "b0000000-0000-0000-0000-000000000011"
+const STAFF_MANAGER_A = "b0000000-0000-0000-0000-000000000012"
+const STAFF_OWNER_B = "b0000000-0000-0000-0000-000000000013"
+const STAFF_PLATFORM = "b0000000-0000-0000-0000-000000000014"
 
 // ---------------------------------------------------------------------------
 // Contexto
@@ -61,6 +68,15 @@ type Contexto = {
 
 const STAFF_A: Contexto = { orgId: ORG1, staffId: STAFF_SERVER_A, role: "server" }
 const STAFF_B: Contexto = { orgId: ORG2, staffId: STAFF_SERVER_B, role: "server" }
+const OWNER_A: Contexto = { orgId: ORG1, staffId: STAFF_OWNER_A, role: "org_owner" }
+const MANAGER_A: Contexto = {
+  orgId: ORG1,
+  staffId: STAFF_MANAGER_A,
+  role: "location_manager",
+  locationId: LOC_A,
+}
+const OWNER_B: Contexto = { orgId: ORG2, staffId: STAFF_OWNER_B, role: "org_owner" }
+const PLATFORM: Contexto = { orgId: ORG1, staffId: STAFF_PLATFORM, role: "platform_admin" }
 
 let entorno: EntornoDePruebas | undefined
 let app: ClientePostgres | undefined
@@ -145,15 +161,21 @@ async function sembrar(admin: ParametrosConexion): Promise<void> {
 
       insert into public.locations (id, org_id, slug, name, status) values
         ('${LOC_A}', '${ORG1}', 'local-a', 'Local A', 'active'),
-        ('${LOC_B}', '${ORG2}', 'local-b', 'Local B', 'active');
+        ('${LOC_B}', '${ORG2}', 'local-b', 'Local B', 'active'),
+        ('${LOC_DRAFT}', '${ORG1}', 'local-draft', 'Local en montaje', 'draft');
 
       insert into public.tables (id, location_id, label, code) values
         ('${MESA_A1}', '${LOC_A}', 'Mesa A1', '${CODIGO_A}'),
-        ('${MESA_B1}', '${LOC_B}', 'Mesa B1', '${CODIGO_B}');
+        ('${MESA_B1}', '${LOC_B}', 'Mesa B1', '${CODIGO_B}'),
+        ('${MESA_DRAFT}', '${LOC_DRAFT}', 'Mesa montaje', '${CODIGO_DRAFT}');
 
       insert into public.staff (id, org_id, location_id, email, role, display_name) values
         ('${STAFF_SERVER_A}', '${ORG1}', '${LOC_A}', 'serverA@camarero.test', 'server', 'Camarero A'),
-        ('${STAFF_SERVER_B}', '${ORG2}', '${LOC_B}', 'serverB@camarero.test', 'server', 'Camarero B');
+        ('${STAFF_SERVER_B}', '${ORG2}', '${LOC_B}', 'serverB@camarero.test', 'server', 'Camarero B'),
+        ('${STAFF_OWNER_A}', '${ORG1}', null, 'ownerA@camarero.test', 'org_owner', 'Dueno A'),
+        ('${STAFF_MANAGER_A}', '${ORG1}', '${LOC_A}', 'managerA@camarero.test', 'location_manager', 'Encargado A'),
+        ('${STAFF_OWNER_B}', '${ORG2}', null, 'ownerB@camarero.test', 'org_owner', 'Dueno B'),
+        ('${STAFF_PLATFORM}', '${ORG1}', null, 'plataforma@camarero.test', 'platform_admin', 'Plataforma');
 
       insert into public.menu_categories (id, location_id, name_i18n) values
         ('03000000-0000-0000-0000-000000000001', '${LOC_A}', '{"es":"Entrantes A"}'),
@@ -164,10 +186,10 @@ async function sembrar(admin: ParametrosConexion): Promise<void> {
         ('${ITEM_B}', '${LOC_B}', '03000000-0000-0000-0000-000000000002', '{"es":"Empanada B"}', 1500, true, true);
 
       insert into public.table_sessions (id, org_id, location_id, table_id, code, state, pairing_expires_at) values
-        ('${SES_ACTIVA}', '${ORG1}', '${LOC_A}', '${MESA_A1}', 'MESA-A-ACTIVA', 'active', now() + interval '1 hour'),
-        ('${SES_EMPAREJANDO}', '${ORG1}', '${LOC_A}', '${MESA_A1}', 'MESA-A-PAIR', 'pairing', now() + interval '1 hour'),
+        ('${SES_ACTIVA}', '${ORG1}', '${LOC_A}', '${MESA_A1}', 'MESA-A-ACTIVA', 'active', null),
+        ('${SES_EMPAREJANDO}', '${ORG1}', '${LOC_A}', '${MESA_A1}', 'MESA-A-PAIR', 'pairing', now() + public.camarero_ventana_de_emparejamiento()),
         ('${SES_CADUCADA}', '${ORG1}', '${LOC_A}', '${MESA_A1}', 'MESA-A-EXP', 'pairing', now() - interval '1 minute'),
-        ('${SES_B}', '${ORG2}', '${LOC_B}', '${MESA_B1}', 'MESA-B-PAIR', 'pairing', now() + interval '1 hour');
+        ('${SES_B}', '${ORG2}', '${LOC_B}', '${MESA_B1}', 'MESA-B-PAIR', 'pairing', now() + public.camarero_ventana_de_emparejamiento());
 
       insert into public.pairing_requests (id, session_id, table_id, state) values
         ('${PR_EMPAREJANDO}', '${SES_EMPAREJANDO}', '${MESA_A1}', 'pending'),
@@ -249,7 +271,7 @@ async function abrirSesionYleerCarta(
     const id = randomUUID()
     await cliente.query(
       `insert into public.table_sessions (id, location_id, table_id, code, state, pairing_expires_at)
-       values ($1, $2, $3, 'MESA', 'pairing', now() + interval '90 seconds')`,
+       values ($1, $2, $3, 'MESA', 'pairing', now() + public.camarero_ventana_de_emparejamiento())`,
       [id, locationId, MESA_A1],
     )
     await cliente.query("select set_config('app.session_id', $1, true)", [id])
@@ -289,7 +311,7 @@ describe("Cerradura 2: la sesion del comensal", () => {
     const filas = await escribirConContexto(
       { tableCode: CODIGO_A, tableId: MESA_B1, locationId: LOC_B },
       `insert into public.table_sessions (location_id, table_id, code, state, pairing_expires_at)
-       values ($1, $2, 'MESA', 'pairing', now() + interval '90 seconds')`,
+       values ($1, $2, 'MESA', 'pairing', now() + public.camarero_ventana_de_emparejamiento())`,
       [LOC_B, MESA_B1],
     )
     expect(filas).not.toBe(1)
@@ -299,7 +321,7 @@ describe("Cerradura 2: la sesion del comensal", () => {
     const filas = await escribirConContexto(
       { tableCode: CODIGO_A, tableId: MESA_A1, locationId: LOC_A },
       `insert into public.table_sessions (location_id, table_id, code, state, pairing_expires_at)
-       values ($1, $2, 'MESA', 'active', now() + interval '90 seconds')`,
+       values ($1, $2, 'MESA', 'active', now() + public.camarero_ventana_de_emparejamiento())`,
       [LOC_A, MESA_A1],
     )
     expect(filas).not.toBe(1)
@@ -341,16 +363,21 @@ describe("Barrera de aprobacion: pedir sin aprobar FALLA", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Aprobar: vigencia y local del empleado
+// Aprobar: vigencia, alcance y el fallo que no se podia ver
 // ---------------------------------------------------------------------------
 
-function aprobar(solicitudId: string): Promise<number> {
+/** Aprueba como un empleado concreto, con la MISMA sentencia que la politica de decision. */
+function aprobarComo(contexto: Contexto, solicitudId: string, staffId: string): Promise<number> {
   return escribirConContexto(
-    STAFF_A,
+    contexto,
     `update public.pairing_requests set state = 'approved', decided_by = $2, decided_at = now()
      where id = $1`,
-    [solicitudId, STAFF_SERVER_A],
+    [solicitudId, staffId],
   )
+}
+
+function aprobar(solicitudId: string): Promise<number> {
+  return aprobarComo(STAFF_A, solicitudId, STAFF_SERVER_A)
 }
 
 describe("Aprobar una solicitud de emparejamiento", () => {
@@ -359,27 +386,197 @@ describe("Aprobar una solicitud de emparejamiento", () => {
   })
 
   it("no debe aprobar una solicitud caducada", async () => {
-    expect(await aprobar(PR_CADUCADA)).toBe(0)
+    // La decision exige ventana viva y la unica transicion que la RLS deja pasar sin ventana
+    // es pending -> expired, de modo que la aprobacion no se aplica (error o cero filas).
+    expect(await aprobar(PR_CADUCADA)).not.toBe(1)
   })
 
   it("un empleado de otro local no debe poder aprobarla", async () => {
     // El camarero del local A no alcanza una solicitud del local B.
-    expect(
-      await escribirConContexto(
-        STAFF_A,
-        `update public.pairing_requests set state = 'approved', decided_by = $2, decided_at = now()
-         where id = $1`,
-        [PR_B, STAFF_SERVER_A],
-      ),
-    ).toBe(0)
+    expect(await aprobarComo(STAFF_A, PR_B, STAFF_SERVER_A)).toBe(0)
     // Y el del mismo local si puede: la prueba no es vacua.
-    expect(
-      await escribirConContexto(
-        STAFF_B,
-        `update public.pairing_requests set state = 'approved', decided_by = $2, decided_at = now()
-         where id = $1`,
-        [PR_B, STAFF_SERVER_B],
-      ),
-    ).toBe(1)
+    expect(await aprobarComo(STAFF_B, PR_B, STAFF_SERVER_B)).toBe(1)
+  })
+
+  it("el dueno de la organizacion debe poder aprobar (regresion exacta de LL-024)", async () => {
+    // Este ERA el fallo: el dueno veia la fila y la base le negaba actuar (0 filas).
+    expect(await aprobarComo(OWNER_A, PR_EMPAREJANDO, STAFF_OWNER_A)).toBe(1)
+  })
+
+  it("el dueno de OTRA organizacion no debe poder aprobarla", async () => {
+    expect(await aprobarComo(OWNER_B, PR_EMPAREJANDO, STAFF_OWNER_B)).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// El invariante que faltaba: quien VE una solicitud puede ACCIONAR sobre ella
+// ---------------------------------------------------------------------------
+
+const VEN_PR: ReadonlyArray<readonly [string, Contexto, string]> = [
+  ["plataforma", PLATFORM, STAFF_PLATFORM],
+  ["dueno de la organizacion", OWNER_A, STAFF_OWNER_A],
+  ["encargado del local", MANAGER_A, STAFF_MANAGER_A],
+  ["camarero del local", STAFF_A, STAFF_SERVER_A],
+]
+
+const NO_VEN_PR: ReadonlyArray<readonly [string, Contexto, string]> = [
+  ["dueno de otra organizacion", OWNER_B, STAFF_OWNER_B],
+  ["camarero de otro local", STAFF_B, STAFF_SERVER_B],
+]
+
+describe("Quien puede VER una solicitud puede ACCIONAR sobre ella (LL-024)", () => {
+  it("debe coincidir el alcance de la lectura con el de la decision, rol a rol", async () => {
+    for (const [nombre, contexto, staffId] of VEN_PR) {
+      const ve = await contar(contexto, "from public.pairing_requests where id = $1", [
+        PR_EMPAREJANDO,
+      ])
+      const accion = await aprobarComo(contexto, PR_EMPAREJANDO, staffId)
+      expect({ nombre, ve, accion }).toEqual({ nombre, ve: 1, accion: 1 })
+    }
+    for (const [nombre, contexto, staffId] of NO_VEN_PR) {
+      const ve = await contar(contexto, "from public.pairing_requests where id = $1", [
+        PR_EMPAREJANDO,
+      ])
+      const accion = await aprobarComo(contexto, PR_EMPAREJANDO, staffId)
+      expect({ nombre, ve, accion }).toEqual({ nombre, ve: 0, accion: 0 })
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Caducar: no se aprueba y se marca
+// ---------------------------------------------------------------------------
+
+describe("Una solicitud caducada no se aprueba y el mantenimiento la marca", () => {
+  it("debe quedarse sin aprobar y pasar a expired sin tocar la vigente", async () => {
+    expect(await aprobar(PR_CADUCADA)).not.toBe(1)
+
+    const cliente = clienteApp()
+    await cliente.query("begin")
+    try {
+      await aplicarContexto(cliente, PLATFORM)
+      const marcadas = await cliente.query<{ n: number }>(
+        "select public.camarero_expirar_solicitudes() as n",
+      )
+      expect(marcadas.rows[0]?.n).toBe(1)
+      const caducada = await cliente.query<{ state: string }>(
+        "select state from public.pairing_requests where id = $1",
+        [PR_CADUCADA],
+      )
+      expect(caducada.rows[0]?.state).toBe("expired")
+      const vigente = await cliente.query<{ state: string }>(
+        "select state from public.pairing_requests where id = $1",
+        [PR_EMPAREJANDO],
+      )
+      expect(vigente.rows[0]?.state).toBe("pending")
+    } finally {
+      await cliente.query("rollback")
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// La ventana: diez minutos desde que se pide, y se renueva
+// ---------------------------------------------------------------------------
+
+describe("La ventana de emparejamiento", () => {
+  it("debe durar diez minutos y el comensal debe poder renovar la suya sin aprobarse", async () => {
+    const duracion = await conContexto<{ s: number }>(
+      PLATFORM,
+      "select extract(epoch from public.camarero_ventana_de_emparejamiento())::int as s",
+    )
+    expect(duracion[0]?.s).toBe(600)
+
+    const comensal: Contexto = {
+      tableCode: CODIGO_A,
+      tableId: MESA_A1,
+      locationId: LOC_A,
+      sessionId: SES_EMPAREJANDO,
+    }
+    const renovadas = await escribirConContexto(
+      comensal,
+      `update public.table_sessions
+          set pairing_expires_at = now() + public.camarero_ventana_de_emparejamiento()
+        where id = $1`,
+      [SES_EMPAREJANDO],
+    )
+    expect(renovadas).toBe(1)
+
+    // No puede aprobarse la mesa solo: el estado de la sesion no es suyo.
+    const escalada = await escribirConContexto(
+      comensal,
+      "update public.table_sessions set state = 'active' where id = $1",
+      [SES_EMPAREJANDO],
+    )
+    expect(escalada).not.toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Un local inactivo no abre sesiones
+// ---------------------------------------------------------------------------
+
+describe("Un local que no esta activo no abre sesiones de mesa", () => {
+  it("no debe crear la sesion de la mesa de un local en borrador", async () => {
+    const filas = await escribirConContexto(
+      { tableCode: CODIGO_DRAFT, tableId: MESA_DRAFT, locationId: LOC_DRAFT },
+      `insert into public.table_sessions (id, location_id, table_id, code, state, pairing_expires_at)
+       values ($1, $2, $3, 'MESA', 'pairing', now() + public.camarero_ventana_de_emparejamiento())`,
+      [randomUUID(), LOC_DRAFT, MESA_DRAFT],
+    )
+    expect(filas).not.toBe(1)
+  })
+
+  it("si debe crear la sesion cuando el local esta activo (contraste)", async () => {
+    const filas = await escribirConContexto(
+      { tableCode: CODIGO_A, tableId: MESA_A1, locationId: LOC_A },
+      `insert into public.table_sessions (id, location_id, table_id, code, state, pairing_expires_at)
+       values ($1, $2, $3, 'MESA', 'pairing', now() + public.camarero_ventana_de_emparejamiento())`,
+      [randomUUID(), LOC_A, MESA_A1],
+    )
+    expect(filas).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Toda decision deja rastro
+// ---------------------------------------------------------------------------
+
+describe("Toda decision deja rastro en la auditoria", () => {
+  it("debe registrar el acierto y tambien el intento fallido", async () => {
+    const cliente = clienteApp()
+    await cliente.query("begin")
+    try {
+      await aplicarContexto(cliente, OWNER_A)
+
+      const aprobada = await cliente.query<{ causa: string }>(
+        "select public.camarero_decidir_emparejamiento($1, 'approved', null) as causa",
+        [PR_EMPAREJANDO],
+      )
+      expect(aprobada.rows[0]?.causa).toBe("ok")
+      const exito = await cliente.query<{ action: string }>(
+        `select action from public.audit_log
+          where entity = 'pairing_request' and entity_id = $1
+          order by created_at desc, id desc limit 1`,
+        [PR_EMPAREJANDO],
+      )
+      expect(exito.rows[0]?.action).toBe("pairing_request.approved")
+
+      // Una solicitud de otro local: la puerta clasifica la causa y deja rastro del fallo.
+      const fallo = await cliente.query<{ causa: string }>(
+        "select public.camarero_decidir_emparejamiento($1, 'approved', null) as causa",
+        [PR_B],
+      )
+      expect(fallo.rows[0]?.causa).toBe("otro_local")
+      const registrado = await cliente.query<{ action: string }>(
+        `select action from public.audit_log
+          where entity = 'pairing_request' and entity_id = $1
+          order by created_at desc, id desc limit 1`,
+        [PR_B],
+      )
+      expect(registrado.rows[0]?.action).toBe("pairing_request.decision_failed")
+    } finally {
+      await cliente.query("rollback")
+    }
   })
 })

@@ -7,6 +7,7 @@
  */
 import { type Entorno, manejar } from "./enrutador.ts"
 import { manejarLatido } from "./keepalive.ts"
+import { manejarMantenimiento } from "./mantenimiento.ts"
 
 export default {
   async fetch(peticion: Request, entorno: Entorno): Promise<Response> {
@@ -19,5 +20,6 @@ export default {
    */
   async scheduled(_evento: unknown, entorno: Entorno): Promise<void> {
     await manejarLatido(entorno)
+    await manejarMantenimiento(entorno)
   },
 }

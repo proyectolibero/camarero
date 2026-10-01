@@ -121,15 +121,40 @@ async function sesionDeLaCookie(
   return fila
 }
 
-async function crearSesion(cliente: Client, mesa: FilaMesa): Promise<FilaSesion> {
+/** El local tiene que estar en servicio: uno en montaje o en pausa no abre mesas (ADR-0032). */
+async function localActivo(cliente: Client, locationId: string): Promise<boolean> {
+  const resultado = await cliente.query<{ status: string }>(
+    "select status from public.locations where id = $1",
+    [locationId],
+  )
+  return resultado.rows[0]?.status === "active"
+}
+
+/**
+ * Crea la sesion de la mesa del contexto. La ventana arranca al PEDIR, no al escanear: al abrir
+ * la pantalla la sesion nace sin ventana (`pairing_expires_at` nula) y solo pedir la fija.
+ */
+async function crearSesion(
+  cliente: Client,
+  mesa: FilaMesa,
+  conVentana: boolean,
+): Promise<FilaSesion> {
   // La cerradura de insercion exige que aun no haya sesion en el contexto.
   await fijar(cliente, [["app.session_id", ""]])
   const id = crypto.randomUUID()
-  await cliente.query(
-    `insert into public.table_sessions (id, location_id, table_id, code, state, pairing_expires_at)
-     values ($1, $2, $3, $4, 'pairing', now() + interval '90 seconds')`,
-    [id, mesa.location_id, mesa.id, mesa.label],
-  )
+  if (conVentana) {
+    await cliente.query(
+      `insert into public.table_sessions (id, location_id, table_id, code, state, pairing_expires_at)
+       values ($1, $2, $3, $4, 'pairing', now() + public.camarero_ventana_de_emparejamiento())`,
+      [id, mesa.location_id, mesa.id, mesa.label],
+    )
+  } else {
+    await cliente.query(
+      `insert into public.table_sessions (id, location_id, table_id, code, state)
+       values ($1, $2, $3, $4, 'pairing')`,
+      [id, mesa.location_id, mesa.id, mesa.label],
+    )
+  }
   await fijar(cliente, [["app.session_id", id]])
   const fila = await leerSesion(cliente, id)
   if (fila === null) {
@@ -138,31 +163,20 @@ async function crearSesion(cliente: Client, mesa: FilaMesa): Promise<FilaSesion>
   return fila
 }
 
-function estaCaducada(sesion: FilaSesion): boolean {
-  return (
-    sesion.state !== "active" &&
-    sesion.pairing_expires_at !== null &&
-    sesion.pairing_expires_at.getTime() <= Date.now()
+/** Volver a pedir renueva la ventana de la propia sesion: diez minutos mas desde ahora. */
+async function renovarVentana(cliente: Client, sesionId: string): Promise<void> {
+  await cliente.query(
+    `update public.table_sessions
+        set pairing_expires_at = now() + public.camarero_ventana_de_emparejamiento()
+      where id = $1`,
+    [sesionId],
   )
 }
 
-/** Resuelve la sesion: reusa la valida, y solo crea otra cuando no hay o cuando se pide de nuevo. */
-async function resolverSesion(
-  cliente: Client,
-  mesa: FilaMesa,
-  cookie: string | null,
-  pedir: boolean,
-): Promise<FilaSesion> {
-  const existente = await sesionDeLaCookie(cliente, cookie, mesa.id)
-  if (existente === null) {
-    return crearSesion(cliente, mesa)
-  }
-  if (pedir && estaCaducada(existente)) {
-    return crearSesion(cliente, mesa)
-  }
-  return existente
-}
-
+/**
+ * La solicitud nace pendiente solo si no hay ya una viva. Si la ultima quedo rechazada o
+ * caducada se crea una nueva; si sigue pendiente, basta con haber renovado la ventana.
+ */
 async function registrarSolicitud(
   cliente: Client,
   mesa: FilaMesa,
@@ -171,11 +185,12 @@ async function registrarSolicitud(
   if (sesion.state === "active") {
     return
   }
-  const pendiente = await cliente.query(
-    "select 1 from public.pairing_requests where session_id = $1 and state = 'pending' limit 1",
+  const ultima = await cliente.query<{ state: string }>(
+    `select state from public.pairing_requests
+      where session_id = $1 order by created_at desc, id desc limit 1`,
     [sesion.id],
   )
-  if ((pendiente.rowCount ?? 0) > 0) {
+  if (ultima.rows[0]?.state === "pending") {
     return
   }
   await cliente.query(
@@ -311,14 +326,31 @@ async function enTransaccion(
       await cliente.query("rollback")
       return { tipo: "codigo_desconocido" } as const
     }
-    // 2. La mesa resuelta y su local: la sesion se creara sobre ellas.
+    // 2. La mesa resuelta y su local: la sesion se creara o se reusara sobre ellas.
     await fijar(cliente, [
       ["app.table_id", mesa.id],
       ["app.location_id", mesa.location_id],
     ])
-    const sesion = await resolverSesion(cliente, mesa, cookie, pedir)
+    let sesion = await sesionDeLaCookie(cliente, cookie, mesa.id)
+    if (sesion === null) {
+      // Sin sesion previa solo se abre si el local esta en servicio. El contexto se limpia
+      // antes de leer el local: la politica de contexto exige que aun no haya sesion.
+      await fijar(cliente, [["app.session_id", ""]])
+      if (!(await localActivo(cliente, mesa.location_id))) {
+        await cliente.query("rollback")
+        return { tipo: "codigo_desconocido" } as const
+      }
+      sesion = await crearSesion(cliente, mesa, pedir)
+    } else if (pedir && sesion.state !== "active") {
+      await renovarVentana(cliente, sesion.id)
+    }
     if (pedir) {
       await registrarSolicitud(cliente, mesa, sesion)
+      // La ventana renovada tiene que verse en la carta: se relee la sesion ya actualizada.
+      const actualizada = await leerSesion(cliente, sesion.id)
+      if (actualizada !== null) {
+        sesion = actualizada
+      }
     }
     // 3. La carta se lee con la sesion ya en el contexto.
     const carta = await cargarCarta(cliente, mesa, sesion)
