@@ -10,12 +10,14 @@ import type { Empleado } from "../base.ts"
 import { responderMetodoNoPermitido } from "../salud.ts"
 import { renderizar } from "../ui/html.ts"
 import { responderRedireccion, respuestaHtml } from "../ui/respuesta.ts"
+import { SIN_CATEGORIA } from "./carta-catalogo.ts"
 import {
   type AlmacenCartas,
   claveNueva,
   LIMITE_CABECERA_BYTES,
   LIMITE_CUERPO_BYTES,
   LIMITE_FOTO_BYTES,
+  type TipoDeImagen,
   tipoDeImagen,
 } from "./cartas.ts"
 import type { Categoria, EntradaPlato, MotivoDeFallo, Plato } from "./datos.ts"
@@ -37,7 +39,9 @@ import {
   valido,
 } from "./validacion.ts"
 import {
+  type BorradorPlato,
   type EstadoPantalla,
+  type InicialesPlato,
   vistaAviso,
   vistaCarta,
   vistaCategoria,
@@ -46,8 +50,7 @@ import {
   vistaSinPermiso,
 } from "./vistas.ts"
 
-/** Identificador de la vista «sin categoría»: agrupa los platos que no tienen ninguna. */
-export const SIN_CATEGORIA = "sin-categoria"
+export { SIN_CATEGORIA } from "./carta-catalogo.ts"
 
 const MENSAJE_FOTO_GRANDE = "La foto no puede pasar de 5 MB. Redúcela o recórtala antes de subirla."
 const MENSAJE_FOTO_INVALIDA =
@@ -280,34 +283,108 @@ async function renderPlato(
   plato: Plato | null,
   almacen: Dependencias["almacen"],
   estado: EstadoPantalla,
+  iniciales: InicialesPlato = { categoria: null, estacion: null, bebida: false },
+  borrador: BorradorPlato | null = null,
 ): Promise<Response> {
   const categorias = await almacen.listarCategorias(empleado)
-  const vista = vistaPlato(empleado, plato, categorias, null, estado)
+  const vista = vistaPlato(empleado, plato, categorias, iniciales, estado, borrador)
   return respuestaHtml(renderizar(vista), estado.estadoError ?? 200)
 }
 
+/**
+ * Alta de un plato o bebida. La foto entra en el MISMO envio (multipart) y se valida ANTES de
+ * crear nada: si la imagen no vale o pasa de tamano, no se crea el plato y se devuelve el
+ * formulario con lo que el dueno ya habia escrito. Crear a medias o perder el formulario es
+ * inaceptable.
+ */
 async function crearPlato(
   peticion: Request,
   empleado: Empleado,
   almacen: Dependencias["almacen"],
+  cartas: AlmacenCartas,
 ): Promise<Response> {
   if (!puedeGestionarCarta(empleado)) {
     return respuestaHtml(renderizar(vistaSinPermiso(empleado, "crear platos")), 403)
   }
+  const formulario = await leerFormularioPlato(peticion)
+  const iniciales = inicialesDeCampos(formulario.campos)
+  const borrador = borradorDeCampos(formulario.campos)
   const categorias = await almacen.listarCategorias(empleado)
-  const validado = validarPlato(await leerCampos(peticion), categorias)
+  const validado = validarPlato(formulario.campos, categorias)
   if (!validado.ok) {
-    return await renderPlato(empleado, null, almacen, { error: validado.error, estadoError: 400 })
+    return await renderPlato(
+      empleado,
+      null,
+      almacen,
+      { error: validado.error, estadoError: 400 },
+      iniciales,
+      borrador,
+    )
+  }
+  const foto = await revisarFoto(formulario.archivo)
+  if (!foto.ok) {
+    return await renderPlato(
+      empleado,
+      null,
+      almacen,
+      { error: foto.error, estadoError: foto.estado },
+      iniciales,
+      borrador,
+    )
   }
   const resultado = await almacen.crearPlato(empleado, validado.valor)
   if (!resultado.ok) {
     const estadoError = resultado.motivo === "sin_permiso" ? 403 : 409
-    return await renderPlato(empleado, null, almacen, {
-      error: mensajeDeFallo(resultado, "crear el plato"),
-      estadoError,
-    })
+    return await renderPlato(
+      empleado,
+      null,
+      almacen,
+      { error: mensajeDeFallo(resultado, "crear el plato"), estadoError },
+      iniciales,
+      borrador,
+    )
+  }
+  if (foto.valor !== null) {
+    const fallo = await guardarFotoDePlato(
+      resultado.valor.id,
+      foto.valor,
+      almacen,
+      cartas,
+      empleado,
+    )
+    if (fallo !== null) {
+      return await renderPlato(
+        empleado,
+        resultado.valor,
+        almacen,
+        { error: fallo, estadoError: 500 },
+        iniciales,
+        null,
+      )
+    }
+  }
+  if (primer(formulario.campos, "continuar") === "otro") {
+    return responderRedireccion(
+      urlDeSeguir(validado.valor.categoriaId, validado.valor.estacion, iniciales.bebida),
+    )
   }
   return responderRedireccion(urlDeCategoria(validado.valor.categoriaId))
+}
+
+/** Conserva categoría y estación al encadenar altas: teclear ochenta bebidas seguidas. */
+function urlDeSeguir(categoriaId: string | null, estacion: string | null, bebida: boolean): string {
+  const parametros = new URLSearchParams()
+  if (categoriaId !== null) {
+    parametros.set("categoria", categoriaId)
+  }
+  if (estacion !== null) {
+    parametros.set("estacion", estacion)
+  }
+  if (bebida) {
+    parametros.set("bebida", "1")
+  }
+  parametros.set("continuar", "1")
+  return `/admin/carta/plato?${parametros.toString()}`
 }
 
 function urlDeCategoria(categoriaId: string | null): string {
@@ -440,6 +517,132 @@ function esArchivo(valor: unknown): valor is ArchivoSubido {
     "size" in valor &&
     "slice" in valor
   )
+}
+
+type FormularioPlato = {
+  readonly campos: Campos
+  readonly archivo: ArchivoSubido | null
+}
+
+/**
+ * Lee el formulario de alta. Acepta multipart (cuando lleva foto) y `urlencoded` (altas sin
+ * foto): un solo camino para el alta, sin exigir una codificacion concreta.
+ */
+async function leerFormularioPlato(peticion: Request): Promise<FormularioPlato> {
+  const tipo = peticion.headers.get("content-type") ?? ""
+  if (!tipo.includes("multipart/form-data")) {
+    return { campos: await leerCampos(peticion), archivo: null }
+  }
+  let formulario: FormData
+  try {
+    formulario = await peticion.formData()
+  } catch {
+    // Cuerpo multipart mal formado: se trata como formulario vacío, sin archivo.
+    return { campos: {}, archivo: null }
+  }
+  const campos: Record<string, string[]> = {}
+  let archivo: ArchivoSubido | null = null
+  for (const [clave, valor] of formulario) {
+    if (esArchivo(valor)) {
+      if (clave === "foto" && valor.size > 0) {
+        archivo = valor
+      }
+      continue
+    }
+    const lista = campos[clave]
+    if (lista === undefined) {
+      campos[clave] = [String(valor)]
+    } else {
+      lista.push(String(valor))
+    }
+  }
+  return { campos, archivo }
+}
+
+function borradorDeCampos(campos: Campos): BorradorPlato {
+  return {
+    nombre: primer(campos, "nombre"),
+    descripcion: primer(campos, "descripcion"),
+    precio: primer(campos, "precio"),
+    categoria: primer(campos, "categoria"),
+    estacion: primer(campos, "estacion"),
+    disponible: marcado(campos, "disponible"),
+    activo: marcado(campos, "activo"),
+    desde: primer(campos, "desde"),
+    hasta: primer(campos, "hasta"),
+    orden: primer(campos, "orden"),
+    tags: campos["tags"] ?? [],
+    allergens: campos["alergenos"] ?? [],
+  }
+}
+
+function inicialesDeCampos(campos: Campos): InicialesPlato {
+  const categoriaBruta = primer(campos, "categoria")
+  const estacion = validarEstacion(primer(campos, "estacion"))
+  return {
+    categoria: categoriaBruta === "" || categoriaBruta === SIN_CATEGORIA ? null : categoriaBruta,
+    estacion: estacion.ok ? estacion.valor : null,
+    bebida: marcado(campos, "bebida"),
+  }
+}
+
+type FotoRevisada = {
+  readonly tipo: TipoDeImagen
+  readonly bytes: () => Promise<Uint8Array>
+}
+
+type RevisionFoto =
+  | { readonly ok: true; readonly valor: FotoRevisada | null }
+  | { readonly ok: false; readonly error: string; readonly estado: number }
+
+/** Valida la imagen antes de crear nada: tamano y contenido, nunca el nombre del fichero. */
+async function revisarFoto(archivo: ArchivoSubido | null): Promise<RevisionFoto> {
+  if (archivo === null) {
+    return { ok: true, valor: null }
+  }
+  if (archivo.size > LIMITE_FOTO_BYTES) {
+    return { ok: false, error: MENSAJE_FOTO_GRANDE, estado: 413 }
+  }
+  const cabecera = new Uint8Array(await archivo.slice(0, LIMITE_CABECERA_BYTES).arrayBuffer())
+  const tipo = tipoDeImagen(cabecera)
+  if (tipo === null) {
+    return { ok: false, error: MENSAJE_FOTO_INVALIDA, estado: 415 }
+  }
+  return {
+    ok: true,
+    valor: { tipo, bytes: async () => new Uint8Array(await archivo.arrayBuffer()) },
+  }
+}
+
+/**
+ * Guarda la foto DESPUES de crear el plato y la enlaza. Si algo falla, devuelve el mensaje que
+ * se le ensena al dueno: el plato se queda sin foto, nunca se borra en silencio.
+ */
+async function guardarFotoDePlato(
+  platoId: string,
+  foto: FotoRevisada,
+  almacen: Dependencias["almacen"],
+  cartas: AlmacenCartas,
+  empleado: Empleado,
+): Promise<string | null> {
+  if (!cartas.disponible) {
+    return "El plato se creó, pero no se pudo guardar la foto: el almacén de fotos no está configurado. Súbela de nuevo desde la ficha cuando esté disponible."
+  }
+  const clave = claveNueva(foto.tipo)
+  try {
+    await cartas.guardar(clave, await foto.bytes(), foto.tipo)
+  } catch {
+    return "El plato se creó, pero la foto no se pudo guardar. Vuelve a intentarlo desde la ficha del plato."
+  }
+  const resultado = await almacen.fijarFoto(empleado, platoId, clave)
+  if (!resultado.ok) {
+    await cartas.borrar(clave)
+    return "El plato se creó, pero la foto no se pudo enlazar. Vuelve a intentarlo desde la ficha del plato."
+  }
+  if (resultado.valor !== null && resultado.valor !== clave) {
+    await cartas.borrar(resultado.valor)
+  }
+  return null
 }
 
 function respuestaDeFoto(
@@ -716,7 +919,7 @@ async function despachar(
     }
     case "nuevo_plato":
       if (peticion.method === "POST") {
-        return await crearPlato(peticion, empleado, almacen)
+        return await crearPlato(peticion, empleado, almacen, cartas)
       }
       if (peticion.method !== "GET") {
         return responderMetodoNoPermitido("GET, POST")
@@ -764,9 +967,10 @@ async function mostrarFormularioPlato(
   }
   if (platoId === null) {
     const categorias = await almacen.listarCategorias(empleado)
-    const inicial = url.searchParams.get("categoria")
-    const seleccionada = inicial === SIN_CATEGORIA ? null : inicial
-    const vista = vistaPlato(empleado, null, categorias, seleccionada, {})
+    const iniciales = inicialesDeAlta(url)
+    const continuar = url.searchParams.get("continuar") === "1"
+    const estado: EstadoPantalla = continuar ? { exito: "Plato guardado. Puedes añadir otro." } : {}
+    const vista = vistaPlato(empleado, null, categorias, iniciales, estado)
     return respuestaHtml(renderizar(vista), 200)
   }
   const plato = await almacen.leerPlato(empleado, platoId)
@@ -778,10 +982,27 @@ async function mostrarFormularioPlato(
   }
   const categorias = await almacen.listarCategorias(empleado)
   const guardado = url.searchParams.get("guardado") === "1"
-  const vista = vistaPlato(empleado, plato, categorias, null, {
-    exito: guardado ? "Plato guardado." : undefined,
-  })
+  const vista = vistaPlato(
+    empleado,
+    plato,
+    categorias,
+    { categoria: null, estacion: null, bebida: false },
+    {
+      exito: guardado ? "Plato guardado." : undefined,
+    },
+  )
   return respuestaHtml(renderizar(vista), 200)
+}
+
+/** Preselecciones del alta que llegan por la direccion: categoría, estación y atajo de bebidas. */
+function inicialesDeAlta(url: URL): InicialesPlato {
+  const categoria = url.searchParams.get("categoria")
+  const estacion = validarEstacion(url.searchParams.get("estacion") ?? "")
+  return {
+    categoria: categoria === null || categoria === SIN_CATEGORIA ? null : categoria,
+    estacion: estacion.ok ? estacion.valor : null,
+    bebida: url.searchParams.get("bebida") === "1",
+  }
 }
 
 /**

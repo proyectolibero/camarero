@@ -9,7 +9,12 @@
 import { beforeAll, describe, expect, it } from "vitest"
 import type { Empleado } from "../src/base.ts"
 import { type DependenciasParciales, manejar } from "../src/enrutador.ts"
-import { claveNueva, LIMITE_FOTO_BYTES, tipoDeImagen } from "../src/panel/cartas.ts"
+import {
+  almacenCartasNoConfigurado,
+  claveNueva,
+  LIMITE_FOTO_BYTES,
+  tipoDeImagen,
+} from "../src/panel/cartas.ts"
 import type {
   AlmacenPanel,
   Categoria,
@@ -176,6 +181,29 @@ function peticionConArchivo(
 ): Request {
   const formulario = new FormData()
   formulario.set("foto", new File([comoArrayBuffer(archivo.bytes)], archivo.nombre))
+  const cabeceras = new Headers()
+  cabeceras.set("cookie", `camarero_sesion=${cookie}`)
+  return new Request(`https://camarero.test${ruta}`, {
+    method: "POST",
+    headers: cabeceras,
+    body: formulario,
+  })
+}
+
+/** Alta completa: campos del formulario y, si toca, la foto, en un solo POST multipart. */
+function peticionAlta(
+  ruta: string,
+  cookie: string,
+  campos: Readonly<Record<string, string>>,
+  archivo?: { readonly bytes: Uint8Array; readonly nombre: string },
+): Request {
+  const formulario = new FormData()
+  for (const [clave, valor] of Object.entries(campos)) {
+    formulario.set(clave, valor)
+  }
+  if (archivo !== undefined) {
+    formulario.set("foto", new File([comoArrayBuffer(archivo.bytes)], archivo.nombre))
+  }
   const cabeceras = new Headers()
   cabeceras.set("cookie", `camarero_sesion=${cookie}`)
   return new Request(`https://camarero.test${ruta}`, {
@@ -689,5 +717,213 @@ describe("Deteccion de imagen por contenido", () => {
     expect(tipoDeImagen(SVG)).toBeNull()
     expect(tipoDeImagen(TEXTO_RENOMBRADO)).toBeNull()
     expect(tipoDeImagen(Uint8Array.from([0xff, 0xd8]))).toBeNull()
+  })
+})
+
+describe("Alta con foto en un solo envio", () => {
+  it("debe crear el plato y enlazar la foto con un unico POST multipart", async () => {
+    const { almacen, creadosPlatos, fotosFijadas } = espiaCarta()
+    const { almacen: cartas, objetos } = cartasFalsas()
+    const token = await firmante.tokenPara("u1")
+    const respuesta = await manejar(
+      peticionAlta(
+        "/admin/carta/plato",
+        token,
+        { nombre: "Pisco sour", precio: "5900", categoria: "c1", estacion: "bar" },
+        { bytes: PNG_1X1, nombre: "pisco.png" },
+      ),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO, cartas),
+    )
+    expect(respuesta.status).toBe(303)
+    expect(respuesta.headers.get("location")).toBe("/admin/carta/c1?cambiada=1")
+    expect(creadosPlatos).toHaveLength(1)
+    expect(creadosPlatos[0]?.nombre).toBe("Pisco sour")
+    expect(creadosPlatos[0]?.estacion).toBe("bar")
+    expect(objetos.size).toBe(1)
+    expect(fotosFijadas).toHaveLength(1)
+    expect(fotosFijadas[0]).toMatch(/\.png$/)
+  })
+
+  it("no debe crear el plato si la foto es invalida y conserva lo escrito", async () => {
+    const { almacen, creadosPlatos, fotosFijadas } = espiaCarta()
+    const { almacen: cartas, objetos } = cartasFalsas()
+    const token = await firmante.tokenPara("u1")
+    const respuesta = await manejar(
+      peticionAlta(
+        "/admin/carta/plato",
+        token,
+        { nombre: "Ceviche raro", descripcion: "Con piedra", precio: "4500", categoria: "c1" },
+        { bytes: SVG, nombre: "dibujo.svg" },
+      ),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO, cartas),
+    )
+    expect(respuesta.status).toBe(415)
+    expect(creadosPlatos).toHaveLength(0)
+    expect(objetos.size).toBe(0)
+    expect(fotosFijadas).toHaveLength(0)
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain("no es una imagen válida")
+    expect(cuerpo).toContain("Ceviche raro")
+    expect(cuerpo).toContain("Con piedra")
+    expect(cuerpo).toContain("4500")
+  })
+
+  it("no debe crear el plato si la foto pasa de 5 MB y conserva lo escrito", async () => {
+    const { almacen, creadosPlatos, fotosFijadas } = espiaCarta()
+    const { almacen: cartas, objetos } = cartasFalsas()
+    const token = await firmante.tokenPara("u1")
+    const grande = new Uint8Array(LIMITE_FOTO_BYTES + 1024 * 1024)
+    grande.set(PNG_1X1, 0)
+    const respuesta = await manejar(
+      peticionAlta(
+        "/admin/carta/plato",
+        token,
+        { nombre: "Enorme", precio: "9900", categoria: "c1" },
+        { bytes: grande, nombre: "enorme.png" },
+      ),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO, cartas),
+    )
+    expect(respuesta.status).toBe(413)
+    expect(creadosPlatos).toHaveLength(0)
+    expect(objetos.size).toBe(0)
+    expect(fotosFijadas).toHaveLength(0)
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain("5 MB")
+    expect(cuerpo).toContain("Enorme")
+  })
+
+  it("debe dejar el plato sin foto y avisar si el almacen no esta configurado", async () => {
+    const { almacen, creadosPlatos, fotosFijadas } = espiaCarta()
+    const token = await firmante.tokenPara("u1")
+    const respuesta = await manejar(
+      peticionAlta(
+        "/admin/carta/plato",
+        token,
+        { nombre: "Sin cubo", precio: "1000", categoria: "c1" },
+        { bytes: PNG_1X1, nombre: "foto.png" },
+      ),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO, almacenCartasNoConfigurado()),
+    )
+    expect(respuesta.status).toBe(500)
+    expect(creadosPlatos).toHaveLength(1)
+    expect(fotosFijadas).toHaveLength(0)
+    expect(await respuesta.text()).toContain("no se pudo guardar la foto")
+  })
+})
+
+describe("Guardar y anadir otro", () => {
+  it("debe volver al formulario vacio con la categoria y la estacion usadas", async () => {
+    const { almacen, creadosPlatos } = espiaCarta()
+    const token = await firmante.tokenPara("u1")
+    const respuesta = await manejar(
+      peticionAlta("/admin/carta/plato", token, {
+        nombre: "Agua mineral",
+        precio: "2500",
+        categoria: "c1",
+        estacion: "bar",
+        continuar: "otro",
+      }),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    expect(respuesta.status).toBe(303)
+    expect(creadosPlatos).toHaveLength(1)
+    const location = new URL(respuesta.headers.get("location") ?? "", "https://camarero.test")
+    expect(location.pathname).toBe("/admin/carta/plato")
+    expect(location.searchParams.get("categoria")).toBe("c1")
+    expect(location.searchParams.get("estacion")).toBe("bar")
+    expect(location.searchParams.get("continuar")).toBe("1")
+
+    const formulario = await manejar(
+      await conSesion(`${location.pathname}${location.search}`),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    const cuerpo = await formulario.text()
+    expect(cuerpo).toContain('name="nombre" value=""')
+    expect(cuerpo).toContain('value="c1" selected')
+    expect(cuerpo).toContain('value="bar" selected')
+    expect(cuerpo).toContain("Puedes añadir otro")
+  })
+})
+
+describe("Atajos de alta desde la carta", () => {
+  it("debe ofrecer anadir plato o bebida y el atajo de bebidas sin categoria", async () => {
+    const { almacen } = espiaCarta()
+    const respuesta = await manejar(
+      await conSesion("/admin/carta"),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain("Añadir plato o bebida")
+    expect(cuerpo).toContain("Añadir bebida")
+    expect(cuerpo).toContain("estacion=bar")
+    expect(cuerpo).toContain("bebida=1")
+  })
+
+  it("debe preseleccionar la categoria de bebidas cuando existe", async () => {
+    const BEBIDAS: Categoria = {
+      id: "c3",
+      nombre: "Bebidas",
+      orden: 2,
+      activa: true,
+      disponible: true,
+    }
+    const { almacen } = espiaCarta({ listarCategorias: async () => [CATEGORIA, BEBIDAS] })
+    const respuesta = await manejar(
+      await conSesion("/admin/carta"),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    expect(await respuesta.text()).toContain("categoria=c3")
+  })
+
+  it("debe abrir el alta con la estacion en barra y avisar si no hay bebidas", async () => {
+    const { almacen } = espiaCarta()
+    const respuesta = await manejar(
+      await conSesion("/admin/carta/plato?estacion=bar&bebida=1"),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    expect(respuesta.status).toBe(200)
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain('enctype="multipart/form-data"')
+    expect(cuerpo).toContain('name="foto"')
+    expect(cuerpo).toContain('value="bar" selected')
+    expect(cuerpo).toContain("categoría de bebidas")
+  })
+
+  it("debe mostrar la categoria de bebidas seleccionada en el alta por atajo", async () => {
+    const BEBIDAS: Categoria = {
+      id: "c3",
+      nombre: "Bebidas",
+      orden: 2,
+      activa: true,
+      disponible: true,
+    }
+    const { almacen } = espiaCarta({ listarCategorias: async () => [CATEGORIA, BEBIDAS] })
+    const respuesta = await manejar(
+      await conSesion("/admin/carta/plato?estacion=bar&bebida=1&categoria=c3"),
+      ENTORNO,
+      AHORA,
+      deps(almacen, DUENO),
+    )
+    const cuerpo = await respuesta.text()
+    expect(cuerpo).toContain('value="c3" selected')
+    expect(cuerpo).not.toContain("categoría de bebidas")
   })
 })

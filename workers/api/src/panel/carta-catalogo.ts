@@ -9,6 +9,9 @@
 
 export type Opcion = { readonly valor: string; readonly etiqueta: string }
 
+/** Vista «sin categoría»: agrupa los platos que no tienen ninguna. No es una fila de la base. */
+export const SIN_CATEGORIA = "sin-categoria"
+
 /** Estaciones del `check` de `menu_items_prep_station_valido`. */
 export const ESTACIONES: readonly Opcion[] = [
   { valor: "frio", etiqueta: "Frío" },

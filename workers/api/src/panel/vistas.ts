@@ -8,7 +8,14 @@
 import type { Empleado } from "../base.ts"
 import { type HtmlSeguro, html, htmlCrudo } from "../ui/html.ts"
 import { generarQrSvg } from "../ui/qr.ts"
-import { ALERGENOS, ESTACIONES, etiquetaDe, type Opcion, TAGS } from "./carta-catalogo.ts"
+import {
+  ALERGENOS,
+  ESTACIONES,
+  etiquetaDe,
+  type Opcion,
+  SIN_CATEGORIA,
+  TAGS,
+} from "./carta-catalogo.ts"
 import type { Categoria, DatosLocal, Mesa, Plato, Zona } from "./datos.ts"
 import { svgDeZona } from "./mapa-svg.ts"
 import { nombreDeRol } from "./roles.ts"
@@ -535,6 +542,52 @@ ${introduccion}
 // La carta: categorias, platos y bebidas
 // ---------------------------------------------------------------------------
 
+/** Valores en crudo del formulario de alta, para no perder lo escrito si algo falla. */
+export type BorradorPlato = {
+  readonly nombre: string
+  readonly descripcion: string
+  readonly precio: string
+  readonly categoria: string
+  readonly estacion: string
+  readonly disponible: boolean
+  readonly activo: boolean
+  readonly desde: string
+  readonly hasta: string
+  readonly orden: string
+  readonly tags: readonly string[]
+  readonly allergens: readonly string[]
+}
+
+/** Con qué se abre el formulario de alta: categoría y estación ya elegidas. */
+export type InicialesPlato = {
+  readonly categoria: string | null
+  readonly estacion: string | null
+  readonly bebida: boolean
+}
+
+/** Reconoce una categoría de bebidas por su nombre, sin acentos ni mayúsculas. */
+function esCategoriaDeBebidas(nombre: string): boolean {
+  const limpio = nombre
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+  return limpio.includes("bebida")
+}
+
+function categoriaDeBebidas(categorias: readonly Categoria[]): Categoria | null {
+  return categorias.find((categoria) => esCategoriaDeBebidas(categoria.nombre)) ?? null
+}
+
+/**
+ * Atajo de bebidas: el mismo formulario de alta, con la estación en barra y la categoría de
+ * bebidas preseleccionada si existe. Si no existe, el formulario lo dice con claridad.
+ */
+function urlAtajoBebida(categorias: readonly Categoria[]): string {
+  const bebidas = categoriaDeBebidas(categorias)
+  const sufijo = bebidas === null ? "" : `&categoria=${encodeURIComponent(bebidas.id)}`
+  return `/admin/carta/plato?estacion=bar&bebida=1${sufijo}`
+}
+
 const FORMATO_CLP = new Intl.NumberFormat("es-CL", { maximumFractionDigits: 0 })
 
 function formatearPrecio(clp: number): string {
@@ -622,12 +675,19 @@ export function vistaCarta(
   estado: EstadoPantalla & { readonly creada?: boolean },
 ): HtmlSeguro {
   const exito = estado.creada === true ? "Categoría creada." : estado.exito
+  const acciones = puedeGestionar
+    ? html`<p class="acciones-carta">
+<a class="boton" href="/admin/carta/plato">Añadir plato o bebida</a>
+<a class="boton boton-secundario" href="${urlAtajoBebida(categorias)}">Añadir bebida</a>
+</p>`
+    : html``
   const contenido = html`${cabecera("admin", empleado)}
 <main class="contenedor">
 ${avisosDeEstado({ ...estado, exito })}
 <section class="tarjeta">
 <h1>Carta</h1>
 <p>Las categorías ordenan la carta del comensal. Una categoría oculta no se ve, pero no se borra.</p>
+${acciones}
 ${puedeGestionar ? formularioNuevaCategoria() : html`<p>Puedes consultar la carta, pero solo el dueño o el encargado pueden cambiarla.</p>`}
 </section>
 <section class="tarjeta">
@@ -747,25 +807,61 @@ function campoCategoria(categorias: readonly Categoria[], actual: string | null)
   )}</select></label>`
 }
 
+function categoriaDeBorrador(valor: string): string | null {
+  return valor === "" || valor === SIN_CATEGORIA ? null : valor
+}
+
+function estacionDeBorrador(valor: string): string | null {
+  return valor === "" ? null : valor
+}
+
+/** El campo de foto del alta: opcional, y se valida antes de crear nada (mensaje en el formulario). */
+function campoFotoNueva(): HtmlSeguro {
+  return html`<fieldset class="grupo">
+<legend>Foto</legend>
+<label class="campo"><span>Foto del plato (opcional)</span>
+<input type="file" name="foto" accept="image/jpeg,image/png,image/webp"></label>
+<span class="ayuda">Solo JPEG, PNG o WebP, hasta 5 MB. El SVG no se acepta. Si la foto no vale, no se crea el plato y no pierdes lo que escribiste.</span>
+</fieldset>`
+}
+
+function avisoSinCategoriaDeBebidas(): HtmlSeguro {
+  return html`<p class="aviso aviso-aviso" role="status">Todavía no tienes una categoría de bebidas. Puedes guardar la bebida sin categoría o <a href="/admin/carta">crear antes la categoría en «Carta»</a>.</p>`
+}
+
 function formularioPlato(
   plato: Plato | null,
+  borrador: BorradorPlato | null,
   categorias: readonly Categoria[],
-  categoriaInicial: string | null,
+  iniciales: InicialesPlato,
 ): HtmlSeguro {
-  const nombre = plato?.nombre ?? ""
-  const descripcion = plato?.descripcion ?? ""
-  const precio = plato === null ? "" : String(plato.precioClp)
-  const categoria = plato?.categoriaId ?? categoriaInicial
-  const estacion = plato?.estacion ?? null
-  const disponible = plato?.disponible ?? true
-  const activo = plato?.activo ?? true
-  const desde = plato?.desde ?? ""
-  const hasta = plato?.hasta ?? ""
-  const orden = plato === null ? "0" : String(plato.orden)
-  const tags = new Set(plato?.tags ?? [])
-  const allergens = new Set(plato?.allergens ?? [])
-  const accion = plato === null ? "/admin/carta/plato" : `/admin/carta/plato/${plato.id}`
-  return html`<form method="post" action="${accion}">
+  const esNuevo = plato === null
+  const nombre = borrador?.nombre ?? plato?.nombre ?? ""
+  const descripcion = borrador?.descripcion ?? plato?.descripcion ?? ""
+  const precio = borrador?.precio ?? (plato === null ? "" : String(plato.precioClp))
+  const categoria =
+    borrador !== null
+      ? categoriaDeBorrador(borrador.categoria)
+      : (plato?.categoriaId ?? iniciales.categoria)
+  const estacion =
+    borrador !== null
+      ? estacionDeBorrador(borrador.estacion)
+      : (plato?.estacion ?? iniciales.estacion)
+  const disponible = borrador?.disponible ?? plato?.disponible ?? true
+  const activo = borrador?.activo ?? plato?.activo ?? true
+  const desde = borrador?.desde ?? plato?.desde ?? ""
+  const hasta = borrador?.hasta ?? plato?.hasta ?? ""
+  const orden = borrador?.orden ?? (plato === null ? "0" : String(plato.orden))
+  const tags = new Set(borrador?.tags ?? plato?.tags ?? [])
+  const allergens = new Set(borrador?.allergens ?? plato?.allergens ?? [])
+  const accion = esNuevo ? "/admin/carta/plato" : `/admin/carta/plato/${plato.id}`
+  const enctype = esNuevo ? htmlCrudo(' enctype="multipart/form-data"') : html``
+  const ocultoBebida =
+    esNuevo && iniciales.bebida ? html`<input type="hidden" name="bebida" value="1">` : html``
+  const avisoBebidas =
+    esNuevo && iniciales.bebida && categoria === null ? avisoSinCategoriaDeBebidas() : html``
+  return html`<form method="post" action="${accion}"${enctype}>
+${ocultoBebida}
 <label class="campo"><span>Nombre</span>
 <input type="text" name="nombre" value="${nombre}" maxlength="120" required></label>
 <label class="campo"><span>Descripción</span>
@@ -774,6 +870,7 @@ function formularioPlato(
 <label class="campo"><span>Precio (pesos chilenos)</span>
 <input type="text" name="precio" inputmode="numeric" value="${precio}" placeholder="4500" required>
 <span class="ayuda">Número entero de pesos, sin decimales ni puntos. Por ejemplo: 4500.</span></label>
+${avisoBebidas}
 ${campoCategoria(categorias, categoria)}
 ${campoSeleccion("Estación de preparación", "estacion", estacion, ESTACIONES, "Sin estación")}
 <fieldset class="grupo">
@@ -797,7 +894,15 @@ ${casillas("tags", TAGS, tags)}
 <legend>Alérgenos</legend>
 ${casillas("alergenos", ALERGENOS, allergens)}
 </fieldset>
-<button class="boton" type="submit">${plato === null ? "Crear plato" : "Guardar cambios"}</button>
+${esNuevo ? campoFotoNueva() : html``}
+${
+  esNuevo
+    ? html`<div class="acciones-alta">
+<button class="boton" type="submit">Crear plato</button>
+<button class="boton boton-secundario" type="submit" name="continuar" value="otro">Guardar y añadir otro</button>
+</div>`
+    : html`<button class="boton" type="submit">Guardar cambios</button>`
+}
 </form>`
 }
 
@@ -827,8 +932,9 @@ export function vistaPlato(
   empleado: Empleado,
   plato: Plato | null,
   categorias: readonly Categoria[],
-  categoriaInicial: string | null,
+  iniciales: InicialesPlato,
   estado: EstadoPantalla,
+  borrador: BorradorPlato | null = null,
 ): HtmlSeguro {
   const titulo = plato === null ? "Nuevo plato o bebida" : `Editar: ${plato.nombre}`
   const contenido = html`${cabecera("admin", empleado)}
@@ -836,7 +942,7 @@ export function vistaPlato(
 ${avisosDeEstado(estado)}
 <section class="tarjeta">
 <h1>${titulo}</h1>
-${formularioPlato(plato, categorias, categoriaInicial)}
+${formularioPlato(plato, borrador, categorias, iniciales)}
 </section>
 ${plato === null ? html`` : seccionFoto(plato)}
 <p><a class="boton boton-secundario" href="/admin/carta${

@@ -353,7 +353,27 @@ if (ceviche === undefined) {
 escribir(
   "plato.html",
   conFotosRelativas(
-    conHojaDeEstilosRelativa(renderizar(vistaPlato(DUENO, ceviche, CATEGORIAS, null, {}))),
+    conHojaDeEstilosRelativa(
+      renderizar(
+        vistaPlato(
+          DUENO,
+          ceviche,
+          CATEGORIAS,
+          { categoria: null, estacion: null, bebida: false },
+          {},
+        ),
+      ),
+    ),
+  ),
+)
+
+// `alta.html`: el formulario de alta con su campo de foto. La foto viaja en el MISMO envio.
+escribir(
+  "alta.html",
+  conHojaDeEstilosRelativa(
+    renderizar(
+      vistaPlato(DUENO, null, CATEGORIAS, { categoria: "c1", estacion: null, bebida: false }, {}),
+    ),
   ),
 )
 
