@@ -55,6 +55,9 @@ jobs:
             await c.connect()
             return c
           }
+          async function ctx(c, pares) {
+            for (const [k, v] of pares) await c.query("select set_config($1,$2,true)", [k, v])
+          }
 
           const url = process.env.CAMARERO_DB_URL_ADMIN
           const adminPass = process.env.CAMARERO_DB_PASSWORD_ADMIN
@@ -65,30 +68,6 @@ jobs:
           const admin = paramsFromUrl(url, adminPass)
           const appParams = { ...admin, user: userFor(admin.user, "camarero_app"), password: appPass }
           log(`Destino: ${admin.host}:${admin.port}`)
-
-          async function ctxConsumidor(c, mesa) {
-            const pares = [["app.table_code", mesa.code], ["app.table_id", ""], ["app.role", ""], ["app.session_id", ""], ["app.location_id", ""]]
-            for (const [k, v] of pares) await c.query("select set_config($1,$2,true)", [k, v])
-          }
-          async function ctxStaff(c, s) {
-            const pares = [["app.role", s.role], ["app.staff_id", s.id], ["app.org_id", s.org_id], ["app.location_id", s.location_id ?? ""], ["app.session_id", ""]]
-            for (const [k, v] of pares) await c.query("select set_config($1,$2,true)", [k, v])
-          }
-          async function crearPendiente(c, mesa) {
-            await ctxConsumidor(c, mesa)
-            const m = await c.query("select id from public.tables where code=$1", [mesa.code])
-            await c.query("select set_config('app.table_id',$1,true)", [m.rows[0].id])
-            await c.query("select set_config('app.location_id',$1,true)", [mesa.location_id])
-            const ses = randomUUID()
-            await c.query(
-              `insert into public.table_sessions (id, location_id, table_id, code, state, pairing_expires_at)
-               values ($1,$2,$3,$4,'pairing', now() + public.camarero_ventana_de_emparejamiento())`,
-              [ses, mesa.location_id, m.rows[0].id, mesa.label])
-            await c.query("select set_config('app.session_id',$1,true)", [ses])
-            const req = randomUUID()
-            await c.query("insert into public.pairing_requests (id, session_id, table_id, state) values ($1,$2,$3,'pending')", [req, ses, m.rows[0].id])
-            return { ses, req }
-          }
 
           const a = await connect(admin, ca)
           try {
@@ -107,25 +86,41 @@ jobs:
             const loc = await a.query("select id, org_id, slug, status from public.locations order by created_at")
             const staff = await a.query("select id, org_id, location_id, role, active from public.staff order by role, created_at")
             const tablas = await a.query("select t.id, t.code, t.label, t.location_id, l.org_id, l.status as local_status from public.tables t join public.locations l on l.id = t.location_id order by t.created_at")
-            log(`Localizaciones: ${loc.rowCount}; empleados: ${staff.rowCount}; mesas: ${tablas.rowCount}`)
+            log(`Localizaciones: ${JSON.stringify(loc.rows)}`)
+            log(`Empleados: ${JSON.stringify(staff.rows)}`)
+            log(`Mesas: ${JSON.stringify(tablas.rows)}`)
 
-            const activo = tablas.rows.find((r) => r.local_status === "active")
-            const owner = staff.rows.find((s) => s.role === "org_owner" && s.org_id === activo?.org_id && s.active !== false)
-            const otro = staff.rows.find((s) => ["location_manager", "server", "kitchen", "no_pin"].includes(s.role) && s.location_id && s.location_id !== activo?.location_id)
-            log(`Mesa elegida: ${activo ? `${activo.code} (${activo.label})` : "ninguna"}`)
+            const mesa = tablas.rows[0]
+            const owner = staff.rows.find((s) => s.role === "org_owner" && s.org_id === mesa?.org_id)
+            const otro = staff.rows.find((s) => ["location_manager", "server", "kitchen", "no_pin"].includes(s.role) && s.location_id && s.location_id !== mesa?.location_id)
+            log(`Mesa elegida: ${mesa ? `${mesa.code} (${mesa.label}, local ${mesa.local_status})` : "ninguna"}`)
             log(`Dueno elegido: ${owner ? `${owner.id} org=${owner.org_id}` : "ninguno"}`)
-            log(`Actor de otro local: ${otro ? `${otro.id} local=${otro.location_id}` : "ninguno"}`)
+            log(`Actor de otro local: ${otro ? `${otro.id} local=${otro.location_id}` : "ninguno (solo hay un empleado)"}`)
 
-            if (!activo || !owner) {
-              log("No hay mesa activa o dueno: no se puede reproducir.")
+            if (!mesa || !owner) {
+              log("No hay mesa o dueno: no se puede reproducir.")
             } else {
-              log("\n===== 2. EL DUENO APRUEBA: UPDATE directo (transaccion deshecha) =====")
+              const ctxPlataforma = [["app.role", "platform_admin"], ["app.staff_id", owner.id], ["app.org_id", owner.org_id], ["app.location_id", ""], ["app.session_id", ""]]
+              const ctxDueno = [["app.role", "org_owner"], ["app.staff_id", owner.id], ["app.org_id", owner.org_id], ["app.location_id", owner.location_id ?? ""], ["app.session_id", ""]]
+              const sembrar = async (c) => {
+                await ctx(c, ctxPlataforma)
+                const ses = randomUUID()
+                await c.query(
+                  `insert into public.table_sessions (id, location_id, table_id, code, state, pairing_expires_at)
+                   values ($1,$2,$3,$4,'pairing', now() + public.camarero_ventana_de_emparejamiento())`,
+                  [ses, mesa.location_id, mesa.id, mesa.label])
+                const req = randomUUID()
+                await c.query("insert into public.pairing_requests (id, session_id, table_id, state) values ($1,$2,$3,'pending')", [req, ses, mesa.id])
+                return { ses, req }
+              }
+
+              log("\n===== 2. EL DUENO APRUEBA: UPDATE directo con RLS (transaccion deshecha) =====")
               {
                 const c = await connect(appParams, ca)
                 try {
                   await c.query("begin")
-                  const { req } = await crearPendiente(c, activo)
-                  await ctxStaff(c, owner)
+                  const { req } = await sembrar(c)
+                  await ctx(c, ctxDueno)
                   const upd = await c.query(
                     `update public.pairing_requests set state='approved', decided_by=public.staff_actual(), decided_at=now()
                       where id=$1 and state='pending'`, [req])
@@ -139,8 +134,8 @@ jobs:
                 const c = await connect(appParams, ca)
                 try {
                   await c.query("begin")
-                  const { ses, req } = await crearPendiente(c, activo)
-                  await ctxStaff(c, owner)
+                  const { ses, req } = await sembrar(c)
+                  await ctx(c, ctxDueno)
                   const causa = await c.query("select public.camarero_decidir_emparejamiento($1,'approved',null) as causa", [req])
                   log(`causa devuelta: ${causa.rows[0].causa}`)
                   const pr = await c.query("select state, decided_by is not null as con_rastro, decided_at is not null as con_fecha from public.pairing_requests where id=$1", [req])
@@ -155,13 +150,13 @@ jobs:
 
               log("\n===== 4. Un empleado de OTRO local no puede (transaccion deshecha) =====")
               if (!otro) {
-                log("No existe un empleado de otro local en la base real: no se puede contrastar en vivo.")
+                log("No existe un empleado de otro local en la base real: no se puede contrastar en vivo; la prueba de base lo cubre.")
               } else {
                 const c = await connect(appParams, ca)
                 try {
                   await c.query("begin")
-                  const { req } = await crearPendiente(c, activo)
-                  await ctxStaff(c, otro)
+                  const { req } = await sembrar(c)
+                  await ctx(c, [["app.role", otro.role], ["app.staff_id", otro.id], ["app.org_id", otro.org_id], ["app.location_id", otro.location_id ?? ""], ["app.session_id", ""]])
                   const upd = await c.query(
                     `update public.pairing_requests set state='approved', decided_by=public.staff_actual(), decided_at=now()
                       where id=$1 and state='pending'`, [req])
@@ -177,9 +172,9 @@ jobs:
                 const c = await connect(appParams, ca)
                 try {
                   await c.query("begin")
-                  const { req } = await crearPendiente(c, activo)
-                  await c.query("update public.table_sessions set pairing_expires_at = now() - interval '1 minute' where id = (select session_id from public.pairing_requests where id=$1)", [req])
-                  await c.query("select set_config('app.role','platform_admin',true)")
+                  const { ses, req } = await sembrar(c)
+                  await c.query("update public.table_sessions set pairing_expires_at = now() - interval '1 minute' where id=$1", [ses])
+                  await ctx(c, [["app.role", "platform_admin"]])
                   const n = await c.query("select public.camarero_expirar_solicitudes() as n")
                   const estado = await c.query("select state from public.pairing_requests where id=$1", [req])
                   log(`marcadas por el mantenimiento: ${n.rows[0].n}; estado de la solicitud: ${estado.rows[0].state}`)
