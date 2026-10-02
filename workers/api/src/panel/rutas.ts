@@ -7,10 +7,11 @@
  */
 import type { Empleado } from "../base.ts"
 import { responderMetodoNoPermitido } from "../salud.ts"
-import { ESTILOS } from "../ui/estilos.ts"
+import { ESTILOS, estilosDe } from "../ui/estilos.ts"
 import { renderizar } from "../ui/html.ts"
 import { responderRedireccion, respuestaCss, respuestaHtml } from "../ui/respuesta.ts"
 import { manejarAdmin } from "./admin.ts"
+import { manejarAvisos } from "./avisos.ts"
 import { manejarCarta } from "./carta.ts"
 import { manejarCocina } from "./cocina.ts"
 import { manejarCuentas } from "./cuentas.ts"
@@ -108,6 +109,25 @@ async function mostrarPanel(
   return respuestaHtml(renderizar(vistaCuadro(superficie, empleado, pendientes)), 200)
 }
 
+/**
+ * La hoja del panel: la del sistema, con el acento y el modelo DEL LOCAL del empleado cuando
+ * los tiene (ADR-0035). Si no hay sesion o el local no ha elegido, se sirve la general. La
+ * cache es corta y revalidable porque la hoja cambia con la identidad del local y de despliegue.
+ */
+async function respuestaEstilos(
+  peticion: Request,
+  entorno: EntornoDePanel,
+  ahora: Date,
+  dependencias: Dependencias,
+): Promise<Response> {
+  const empleado = await resolverEmpleadoDeSesion(peticion, entorno, ahora, dependencias)
+  if (empleado === null) {
+    return respuestaCss(ESTILOS)
+  }
+  const local = await dependencias.almacen.leerLocal(empleado)
+  return respuestaCss(local === null ? ESTILOS : estilosDe(local.modelo, local.acento ?? undefined))
+}
+
 /** Devuelve la respuesta del panel, o null si la ruta no es del panel. */
 export async function manejarPanel(
   peticion: Request,
@@ -118,7 +138,9 @@ export async function manejarPanel(
   const url = new URL(peticion.url)
 
   if (url.pathname === RUTA_ESTILOS) {
-    return peticion.method === "GET" ? respuestaCss(ESTILOS) : responderMetodoNoPermitido("GET")
+    return peticion.method === "GET"
+      ? await respuestaEstilos(peticion, entorno, ahora, dependencias)
+      : responderMetodoNoPermitido("GET")
   }
 
   const raiz = RUTAS_RAIZ[url.pathname]
@@ -160,6 +182,11 @@ export async function manejarPanel(
   const respuestaCuentas = await manejarCuentas(peticion, entorno, ahora, dependencias)
   if (respuestaCuentas !== null) {
     return respuestaCuentas
+  }
+
+  const respuestaAvisos = await manejarAvisos(peticion, entorno, ahora, dependencias)
+  if (respuestaAvisos !== null) {
+    return respuestaAvisos
   }
 
   const respuestaCocina = await manejarCocina(peticion, entorno, ahora, dependencias)

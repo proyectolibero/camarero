@@ -1,0 +1,26 @@
+{
+  "name": "@camarero/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "El sistema visual de Camarero: tokens, cinco modelos y los componentes basicos. Sin dependencias y sin framework.",
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "^5",
+    "vitest": "^5"
+  }
+}

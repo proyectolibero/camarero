@@ -48,6 +48,10 @@ const LOCAL: DatosLocal = {
   currency: "CLP",
   status: "draft",
   serviceMode: "dine_in",
+  modelo: "sobrio",
+  acento: null,
+  logoClave: null,
+  portadaClave: null,
 }
 
 type EspiaAlmacen = { readonly almacen: AlmacenPanel; readonly cambios: CambiosLocal[] }
@@ -151,6 +155,10 @@ describe("El local: dueno", () => {
         timezone: "America/Santiago",
         status: "active",
         serviceMode: "both",
+        modelo: "sobrio",
+        acento: null,
+        logoClave: null,
+        portadaClave: null,
       },
     ])
   })

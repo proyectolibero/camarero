@@ -38,6 +38,10 @@ export type CartaDelComensal = {
   readonly mesa: string
   readonly estado: EstadoEmparejamiento
   readonly restanteSegundos: number | null
+  /** Identidad visual del local como dato (ADR-0035). El borde la materializa en temaCss. */
+  readonly identidad: IdentidadDelLocal
+  /** Avisos vivos de esta mesa que el comensal ya ha pedido, para que vea que lo ha hecho. */
+  readonly avisos: readonly EstadoDeAviso[]
   /**
    * Lo que el comensal lleva pedido en la mesa. Viaja con la carta para que la franja del
    * gasto (D-056) lo muestre en la carta y en la cesta, no solo en la pantalla de pedidos.
@@ -46,6 +50,20 @@ export type CartaDelComensal = {
   /** Ya ha pedido la cuenta: se le dice y deja de poder pedir platos. */
   readonly cuentaPedida: boolean
   readonly categorias: readonly CategoriaDeCarta[]
+}
+
+/** Identidad visual del local que llega al comensal. El logo y la portada son claves de R2. */
+export type IdentidadDelLocal = {
+  readonly modelo: string
+  readonly acento: string | null
+  readonly logoClave: string | null
+  readonly portadaClave: string | null
+}
+
+/** Un aviso que esta mesa tiene vivo: el comensal ve que ya lo ha pedido. */
+export type EstadoDeAviso = {
+  readonly tipo: "llamar_empleado" | "necesita_limpieza"
+  readonly pedidoHaceSegundos: number
 }
 
 export type LecturaComensal =
@@ -73,6 +91,15 @@ export type ResultadoCuenta =
   | { readonly tipo: "sin_sesion" }
   | { readonly tipo: "sin_aprobar" }
 
+/** Resultado de pedir un aviso (llamar al empleado o avisar de la limpieza). */
+export type ResultadoAviso =
+  | { readonly tipo: "ok" }
+  | { readonly tipo: "codigo_desconocido" }
+  | { readonly tipo: "sin_sesion" }
+  | { readonly tipo: "sin_aprobar" }
+  /** Ya hay uno vivo de ese tipo: el tope de una llamada por mesa. No es un error, es el tope. */
+  | { readonly tipo: "ya_pedido" }
+
 /** Una linea tal como la ve el comensal en el estado de sus pedidos. */
 export type LineaDelPedido = {
   readonly nombre: string
@@ -95,6 +122,8 @@ export type LecturaPedidos =
       readonly tipo: "ok"
       readonly local: string
       readonly mesa: string
+      /** Identidad del local, para que esta pantalla tambien lleve su tema (ADR-0035). */
+      readonly identidad: IdentidadDelLocal
       readonly pedidos: readonly PedidoDelComensal[]
       /** Suma de las comandas NO anuladas: lo que el comensal lleva pedido en la mesa. */
       readonly subtotalAcumuladoClp: number
@@ -116,6 +145,11 @@ export type AlmacenComensal = {
   ) => Promise<ResultadoEnvio>
   readonly pedidos: (codigo: string, sesionId: string | null) => Promise<LecturaPedidos>
   readonly pedirCuenta: (codigo: string, sesionId: string | null) => Promise<ResultadoCuenta>
+  readonly avisar: (
+    codigo: string,
+    sesionId: string | null,
+    tipo: "llamar_empleado" | "necesita_limpieza",
+  ) => Promise<ResultadoAviso>
 }
 
 type FilaMesa = {
@@ -397,8 +431,18 @@ async function cargarCarta(
   mesa: FilaMesa,
   sesion: FilaSesion,
 ): Promise<CartaDelComensal> {
-  const local = await cliente.query<{ name: string }>(
-    "select name from public.locations where id = $1",
+  const local = await cliente.query<{
+    name: string
+    modelo: string
+    acento: string | null
+    logo: string | null
+    portada: string | null
+  }>(
+    `select name,
+            coalesce(theme_json->>'modelo', 'sobrio') as modelo,
+            theme_json->>'acento' as acento,
+            logo_r2_key as logo, cover_r2_key as portada
+       from public.locations where id = $1`,
     [mesa.location_id],
   )
   const ultima = await cliente.query<{ state: string }>(
@@ -440,15 +484,38 @@ async function cargarCarta(
   // El gasto acumulado sale de las MISMAS comandas y con la MISMA funcion de totales que la
   // pantalla de pedidos (D-056): no hay un segundo calculo que pueda separarse del primero.
   const pedidos = await cargarPedidos(cliente, sesion.id)
+  const fila = local.rows[0]
   return {
-    local: local.rows[0]?.name ?? "Tu local",
+    local: fila?.name ?? "Tu local",
     mesa: mesa.label,
     estado,
     restanteSegundos: restante,
+    identidad: {
+      modelo: fila?.modelo ?? "sobrio",
+      acento: fila?.acento ?? null,
+      logoClave: fila?.logo ?? null,
+      portadaClave: fila?.portada ?? null,
+    },
+    avisos: await cargarAvisos(cliente, sesion.id),
     subtotalAcumuladoClp: subtotalDePedidos(pedidos),
     cuentaPedida: await hayCuentaViva(cliente, sesion.id),
     categorias: agrupar(categorias.rows, platos.rows),
   }
+}
+
+/** Los avisos vivos de la sesion, para que el comensal vea que ya los ha pedido. */
+async function cargarAvisos(cliente: Client, sesionId: string): Promise<readonly EstadoDeAviso[]> {
+  const resultado = await cliente.query<{ kind: string; pedido: number }>(
+    `select kind, extract(epoch from (now() - requested_at))::int as pedido
+       from public.table_notices
+      where session_id = $1 and state = 'pendiente' and expires_at > now()
+      order by requested_at, id`,
+    [sesionId],
+  )
+  return resultado.rows.map((fila) => ({
+    tipo: fila.kind === "necesita_limpieza" ? "necesita_limpieza" : "llamar_empleado",
+    pedidoHaceSegundos: fila.pedido,
+  }))
 }
 
 async function enTransaccion(
@@ -859,14 +926,31 @@ async function leerPedidos(
   sesionId: string | null,
 ): Promise<LecturaPedidos> {
   const envuelto = await comoComensal(cadena, codigo, sesionId, async (cliente, datos) => {
-    const local = await cliente.query<{ name: string }>(
-      "select name from public.locations where id = $1",
+    const local = await cliente.query<{
+      name: string
+      modelo: string
+      acento: string | null
+      logo: string | null
+      portada: string | null
+    }>(
+      `select name,
+              coalesce(theme_json->>'modelo', 'sobrio') as modelo,
+              theme_json->>'acento' as acento,
+              logo_r2_key as logo, cover_r2_key as portada
+         from public.locations where id = $1`,
       [datos.mesa.location_id],
     )
     const pedidos = await cargarPedidos(cliente, datos.sesion.id)
+    const fila = local.rows[0]
     return {
-      local: local.rows[0]?.name ?? "Tu local",
+      local: fila?.name ?? "Tu local",
       mesa: datos.mesa.label,
+      identidad: {
+        modelo: fila?.modelo ?? "sobrio",
+        acento: fila?.acento ?? null,
+        logoClave: fila?.logo ?? null,
+        portadaClave: fila?.portada ?? null,
+      },
       pedidos,
       // Lo que el comensal lleva pedido: la suma de las comandas vivas, sin las anuladas.
       subtotalAcumuladoClp: subtotalDePedidos(pedidos),
@@ -882,6 +966,7 @@ async function leerPedidos(
     tipo: "ok",
     local: envuelto.valor.local,
     mesa: envuelto.valor.mesa,
+    identidad: envuelto.valor.identidad,
     pedidos: envuelto.valor.pedidos,
     subtotalAcumuladoClp: envuelto.valor.subtotalAcumuladoClp,
     cuentaPedida: envuelto.valor.cuentaPedida,
@@ -919,6 +1004,44 @@ async function pedirLaCuenta(
   return envuelto.valor
 }
 
+/**
+ * El comensal pide un aviso (llamar al empleado o avisar de la limpieza). Solo con la sesion
+ * aprobada: avisar sin mesa emparejada no tiene sentido. El TOPE de una llamada viva de cada
+ * tipo por mesa lo impone la base con su indice unico parcial; aqui se traduce ese choque a
+ * `ya_pedido`, que no es un error sino el tope funcionando.
+ */
+async function pedirAviso(
+  cadena: string,
+  codigo: string,
+  sesionId: string | null,
+  tipo: "llamar_empleado" | "necesita_limpieza",
+): Promise<ResultadoAviso> {
+  const envuelto = await comoComensal(cadena, codigo, sesionId, async (cliente, datos) => {
+    if (datos.sesion.state !== "active") {
+      return { tipo: "sin_aprobar" } as const
+    }
+    try {
+      await cliente.query(
+        `insert into public.table_notices (session_id, table_id, kind, expires_at)
+         values ($1, $2, $3, now() + interval '20 minutes')`,
+        [datos.sesion.id, datos.mesa.id, tipo],
+      )
+      return { tipo: "ok" } as const
+    } catch (error) {
+      if (esConflictoDeIdempotencia(error)) {
+        return { tipo: "ya_pedido" } as const
+      }
+      throw error
+    }
+  })
+  if ("fallo" in envuelto) {
+    return envuelto.fallo === "codigo_desconocido"
+      ? { tipo: "codigo_desconocido" }
+      : { tipo: "sin_sesion" }
+  }
+  return envuelto.valor
+}
+
 export function almacenComensalDeBase(cadena: string): AlmacenComensal {
   return {
     abrir: (codigo, sesionId) => enTransaccion(cadena, false, codigo, sesionId),
@@ -927,6 +1050,7 @@ export function almacenComensalDeBase(cadena: string): AlmacenComensal {
       enviarComanda(cadena, codigo, sesionId, clave, lineas),
     pedidos: (codigo, sesionId) => leerPedidos(cadena, codigo, sesionId),
     pedirCuenta: (codigo, sesionId) => pedirLaCuenta(cadena, codigo, sesionId),
+    avisar: (codigo, sesionId, tipo) => pedirAviso(cadena, codigo, sesionId, tipo),
   }
 }
 
@@ -939,6 +1063,7 @@ export function almacenComensalNoConfigurado(): AlmacenComensal {
     enviar: async () => ({ tipo: "codigo_desconocido" }),
     pedidos: async () => ({ tipo: "codigo_desconocido" }),
     pedirCuenta: async () => ({ tipo: "codigo_desconocido" }),
+    avisar: async () => ({ tipo: "codigo_desconocido" }),
   }
 }
 

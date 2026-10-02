@@ -28,8 +28,11 @@ import { type EntornoDePanel, resolverEmpleadoDeSesion } from "./sesion-panel.ts
 import {
   invalido,
   type Validacion,
+  validarAcento,
   validarCapacidad,
+  validarClaveDeImagen,
   validarEstado,
+  validarModelo,
   validarModoDeServicio,
   validarNombre,
   validarTipoDeMesa,
@@ -98,11 +101,31 @@ function validarCambiosLocal(campos: Readonly<Record<string, string>>): Validaci
   if (!serviceMode.ok) {
     return serviceMode
   }
+  const modelo = validarModelo(campos.modelo ?? "sobrio")
+  if (!modelo.ok) {
+    return modelo
+  }
+  const acento = validarAcento(campos.acento ?? "")
+  if (!acento.ok) {
+    return acento
+  }
+  const logo = validarClaveDeImagen(campos.logo ?? "")
+  if (!logo.ok) {
+    return logo
+  }
+  const portada = validarClaveDeImagen(campos.portada ?? "")
+  if (!portada.ok) {
+    return portada
+  }
   return valido({
     nombre: nombre.valor,
     timezone: timezone.valor,
     status: status.valor,
     serviceMode: serviceMode.valor,
+    modelo: modelo.valor,
+    acento: acento.valor,
+    logoClave: logo.valor,
+    portadaClave: portada.valor,
   })
 }
 

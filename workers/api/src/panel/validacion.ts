@@ -95,6 +95,46 @@ export function validarTipoDeMesa(valor: string): Validacion<TipoDeMesa> {
   return esUnoDe(TIPOS_DE_MESA, valor) ? valido(valor) : invalido("El tipo de mesa no es válido.")
 }
 
+export type ModeloVisual = "sobrio" | "calido" | "moderno" | "nocturno" | "verde"
+
+/** Los cinco modelos del sistema (ADR-0035). El catalogo es el mismo del check de la base. */
+const MODELOS: readonly ModeloVisual[] = ["sobrio", "calido", "moderno", "nocturno", "verde"]
+
+const PATRON_ACENTO = /^#[0-9a-fA-F]{6}$/
+const PATRON_CLAVE_R2 = /^[A-Za-z0-9/._-]{1,200}$/
+
+export function validarModelo(valor: string): Validacion<ModeloVisual> {
+  return esUnoDe(MODELOS, valor) ? valido(valor) : invalido("Ese modelo visual no existe.")
+}
+
+/**
+ * Color de acento del local. Vacio significa "usa el del modelo" (nulo). Cualquier otra cosa
+ * que no sea un hex de seis cifras se rechaza: un acento inventado no puede llegar a la base.
+ */
+export function validarAcento(valor: string): Validacion<string | null> {
+  const limpio = valor.trim()
+  if (limpio === "") {
+    return valido(null)
+  }
+  return PATRON_ACENTO.test(limpio)
+    ? valido(limpio.toLowerCase())
+    : invalido("El color de acento no es válido.")
+}
+
+/**
+ * Clave de una imagen en R2. No es una URL: es la clave con la que se guarda y se firma al
+ * servirla. Vacia significa "sin imagen".
+ */
+export function validarClaveDeImagen(valor: string): Validacion<string | null> {
+  const limpio = valor.trim()
+  if (limpio === "") {
+    return valido(null)
+  }
+  return PATRON_CLAVE_R2.test(limpio)
+    ? valido(limpio)
+    : invalido("La clave de la imagen no es válida.")
+}
+
 /** Forma de pago con la que se registro el cobro. Es una etiqueta, sin ningun dato de pago. */
 export function validarFormaDePago(valor: string): Validacion<FormaDePago> {
   return esUnoDe(FORMAS_DE_PAGO, valor)

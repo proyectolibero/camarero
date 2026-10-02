@@ -15,6 +15,7 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { crc32, deflateSync } from "node:zlib"
 import { totalDeLineas } from "@camarero/domain"
+import { NOMBRES_MODELO } from "@camarero/ui"
 import type { Empleado } from "../src/base.ts"
 import type { LineaResuelta } from "../src/comensal/cesta.ts"
 import type { CartaDelComensal, PedidoDelComensal } from "../src/comensal/datos.ts"
@@ -27,6 +28,7 @@ import {
 } from "../src/comensal/vistas.ts"
 import { generarCodigoMesa } from "../src/panel/codigo-mesa.ts"
 import type {
+  AvisoDeMesa,
   Categoria,
   ComandaDePuesto,
   CuentaDeMesa,
@@ -38,6 +40,7 @@ import type {
   Zona,
 } from "../src/panel/datos.ts"
 import {
+  vistaAvisos,
   vistaCarta,
   vistaCategoria,
   vistaCocina,
@@ -51,7 +54,7 @@ import {
   vistaPuestos,
   vistaSala,
 } from "../src/panel/vistas.ts"
-import { ESTILOS } from "../src/ui/estilos.ts"
+import { ESTILOS, estilosDe, MODELO_POR_DEFECTO, temaCss } from "../src/ui/estilos.ts"
 import { renderizar } from "../src/ui/html.ts"
 
 const RAIZ = fileURLToPath(new URL("../../..", import.meta.url))
@@ -63,7 +66,7 @@ const DUENO: Empleado = {
   nombre: "Dueña de ejemplo",
   rol: "org_owner",
   organizacion: { id: "o1", nombre: "Restaurante de ejemplo" },
-  local: { id: "l1", nombre: "Barra Uno" },
+  local: { id: "l1", nombre: "Barra Uno", logoClave: "foto-ceviche.png" },
 }
 
 const ZONAS: readonly Zona[] = [
@@ -346,7 +349,12 @@ function pngDePrueba(
 
 /** En produccion la CSP permite la ruta absoluta; en `file://` hace falta una relativa. */
 function conHojaDeEstilosRelativa(pagina: string): string {
-  return pagina.replace('href="/panel/estilos.css"', 'href="estilos.css"')
+  return (
+    pagina
+      .replace('href="/panel/estilos.css"', 'href="estilos.css"')
+      // El tema por-local apunta a `/t/<codigo>/tema.css`; en la previsualizacion se sirve al lado.
+      .replaceAll(/href="\/t\/[^"]+\/tema\.css"/g, 'href="tema.css"')
+  )
 }
 
 /** La foto se sirve en `/cartas/<clave>`; en local se resuelve al fichero de al lado. */
@@ -458,6 +466,13 @@ const CARTA_COMENSAL: CartaDelComensal = {
   mesa: "Mesa 4",
   estado: "aprobado",
   restanteSegundos: null,
+  identidad: {
+    modelo: "sobrio",
+    acento: null,
+    logoClave: null,
+    portadaClave: null,
+  },
+  avisos: [],
   subtotalAcumuladoClp: 17800,
   cuentaPedida: false,
   categorias: [
@@ -853,6 +868,93 @@ escribir(
   "cuenta.html",
   conHojaDeEstilosRelativa(
     renderizar(vistaCuenta(DUENO, CUENTA_PEDIDA, COMANDAS_DE_LA_MESA, true, {})),
+  ),
+)
+
+// ---------------------------------------------------------------------------
+// Los cinco modelos (TASK-F4-01): una previsualizacion por modelo, para elegir viendolos.
+// ---------------------------------------------------------------------------
+
+// La hoja general del comensal usa el modelo por defecto; los modelos piden la suya.
+escribir("tema.css", temaCss(MODELO_POR_DEFECTO))
+
+/**
+ * Una pagina por modelo: la carta del comensal con la identidad de ese modelo (logo y portada
+ * de ejemplo), enlazando su propia hoja `tema-<modelo>.css`. El humano compara viendolas.
+ */
+function previsualizarModelo(
+  nombre: string,
+  acento: string | undefined,
+  logoClave: string,
+  portadaClave: string,
+): void {
+  const carta: CartaDelComensal = {
+    ...CARTA_COMENSAL,
+    identidad: { modelo: nombre, acento: acento ?? null, logoClave, portadaClave },
+  }
+  escribir(`tema-${nombre}.css`, estilosDe(nombre, acento))
+  const pagina = conFotosRelativas(
+    conHojaDeEstilosRelativa(renderizar(vistaCartaComensal(carta, "ABCDEFGH"))).replace(
+      'href="tema.css"',
+      `href="tema-${nombre}.css"`,
+    ),
+  )
+  escribir(`modelo-${nombre}.html`, pagina)
+}
+
+for (const nombre of NOMBRES_MODELO) {
+  // Un acento propio de ejemplo solo en dos modelos, para que se vea que el acento se puede
+  // ajustar sin cambiar de modelo (es un DATO del local, ADR-0035).
+  const acento = nombre === "sobrio" ? "#b8860b" : nombre === "verde" ? "#0f766e" : undefined
+  previsualizarModelo(nombre, acento, FOTO_CEVICHE, FOTO_LOMO)
+}
+
+// ---------------------------------------------------------------------------
+// Los avisos del comensal (TASK-F1-13): como se piden y como los ve el personal.
+// ---------------------------------------------------------------------------
+
+const AVISOS_DEL_PERSONAL: readonly AvisoDeMesa[] = [
+  { id: "a1", mesa: "Mesa 4", tipo: "llamar_empleado", pedidoHaceSegundos: 15 },
+  { id: "a2", mesa: "Barra 2", tipo: "necesita_limpieza", pedidoHaceSegundos: 95 },
+  {
+    id: "a3",
+    mesa: "Terraza junto a la ventana",
+    tipo: "llamar_empleado",
+    pedidoHaceSegundos: 240,
+  },
+]
+escribir(
+  "avisos.html",
+  conFotosRelativas(
+    conHojaDeEstilosRelativa(
+      renderizar(
+        vistaAvisos(DUENO, AVISOS_DEL_PERSONAL, { exito: "Aviso marcado como atendido." }),
+      ),
+    ),
+  ),
+)
+
+// La carta con una llamada ya pedida: el comensal VE que lo ha pedido.
+escribir(
+  "comensal-avisos.html",
+  conFotosRelativas(
+    conHojaDeEstilosRelativa(
+      renderizar(
+        vistaCartaComensal(
+          {
+            ...CARTA_COMENSAL,
+            avisos: [{ tipo: "llamar_empleado", pedidoHaceSegundos: 20 }],
+            identidad: {
+              modelo: "calido",
+              acento: "#9a4a1f",
+              logoClave: FOTO_CEVICHE,
+              portadaClave: FOTO_LOMO,
+            },
+          },
+          "ABCDEFGH",
+        ),
+      ),
+    ).replace('href="tema.css"', 'href="tema-calido.css"'),
   ),
 )
 

@@ -22,6 +22,8 @@ function carta(parciales: Partial<CartaDelComensal> = {}): CartaDelComensal {
     mesa: "Mesa 4",
     estado: "sin_pedir",
     restanteSegundos: 90,
+    identidad: { modelo: "sobrio", acento: null, logoClave: null, portadaClave: null },
+    avisos: [],
     subtotalAcumuladoClp: 0,
     cuentaPedida: false,
     categorias: [

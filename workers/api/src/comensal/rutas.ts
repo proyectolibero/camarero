@@ -13,8 +13,9 @@
 import { PATRON_CODIGO_MESA } from "../panel/codigo-mesa.ts"
 import { leerCookie } from "../panel/sesion.ts"
 import { responderMetodoNoPermitido, responderNoEncontrado } from "../salud.ts"
+import { temaCss } from "../ui/estilos.ts"
 import { renderizar } from "../ui/html.ts"
-import { responderRedireccion, respuestaHtml } from "../ui/respuesta.ts"
+import { responderRedireccion, respuestaCss, respuestaHtml } from "../ui/respuesta.ts"
 import {
   type AccionDeCesta,
   agregarALaCesta,
@@ -319,10 +320,68 @@ async function mostrarPedidos(
         lectura.pedidos,
         lectura.subtotalAcumuladoClp,
         lectura.cuentaPedida,
+        lectura.identidad,
       ),
     ),
     200,
   )
+}
+
+// ---------------------------------------------------------------------------
+// El tema del local y los avisos al personal
+// ---------------------------------------------------------------------------
+
+/**
+ * La hoja de tema del local: el modelo y el acento que el dueno eligio como DATO (ADR-0035).
+ * Se genera con la misma funcion que la hoja por defecto, de modo que no hay dos maneras de
+ * pintar el tema. Si el codigo no existe, se sirve el tema por defecto: nunca un color a mano.
+ */
+async function mostrarTema(
+  almacen: AlmacenComensal,
+  codigo: string,
+  cookieMesa: string | null,
+): Promise<Response> {
+  if (!PATRON_CODIGO_MESA.test(codigo)) {
+    return respuestaCss(temaCss("sobrio"))
+  }
+  const lectura = await almacen.abrir(codigo, cookieMesa)
+  if (!esOk(lectura)) {
+    return respuestaCss(temaCss("sobrio"))
+  }
+  const { modelo, acento } = lectura.carta.identidad
+  return respuestaCss(temaCss(modelo, acento ?? undefined))
+}
+
+/**
+ * El comensal pide un aviso al personal. Es un POST (mutacion) y vuelve a la carta con el
+ * aviso ya visible: el comensal VE que lo ha pedido. El tope de uno vivo por tipo lo impone
+ * la base; si ya habia uno, se vuelve igualmente a la carta, que lo muestra.
+ */
+async function pedirAviso(
+  peticion: Request,
+  almacen: AlmacenComensal,
+  codigo: string,
+  cookieMesa: string | null,
+): Promise<Response> {
+  if (!PATRON_CODIGO_MESA.test(codigo)) {
+    return pantallaDesconocida()
+  }
+  const campos = await leerCampos(peticion)
+  const tipo = campos.tipo
+  if (tipo !== "llamar_empleado" && tipo !== "necesita_limpieza") {
+    return pantallaDesconocida()
+  }
+  const resultado = await almacen.avisar(codigo, cookieMesa, tipo)
+  if (resultado.tipo === "codigo_desconocido") {
+    return pantallaDesconocida()
+  }
+  if (resultado.tipo === "sin_sesion") {
+    return pantallaSinSesion()
+  }
+  if (resultado.tipo === "sin_aprobar") {
+    return respuestaHtml(renderizar(vistaSinSesion()), 400)
+  }
+  return responderRedireccion(`/t/${encodeURIComponent(codigo)}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -402,6 +461,18 @@ export async function manejarComensal(
       return responderMetodoNoPermitido("POST")
     }
     return await pedirCuenta(almacen, codigo, cookieMesa)
+  }
+  if (resto[0] === "avisar" && resto.length === 1) {
+    if (peticion.method !== "POST") {
+      return responderMetodoNoPermitido("POST")
+    }
+    return await pedirAviso(peticion, almacen, codigo, cookieMesa)
+  }
+  if (resto[0] === "tema.css" && resto.length === 1) {
+    if (peticion.method !== "GET") {
+      return responderMetodoNoPermitido("GET")
+    }
+    return await mostrarTema(almacen, codigo, cookieMesa)
   }
   return responderNoEncontrado()
 }

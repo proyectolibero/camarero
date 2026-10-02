@@ -28,6 +28,8 @@ function carta(parciales: Partial<CartaDelComensal> = {}): CartaDelComensal {
     mesa: "Mesa 4",
     estado: "aprobado",
     restanteSegundos: null,
+    identidad: { modelo: "sobrio", acento: null, logoClave: null, portadaClave: null },
+    avisos: [],
     subtotalAcumuladoClp: 17800,
     cuentaPedida: false,
     categorias: [
@@ -70,6 +72,7 @@ function almacenConGasto(datos: CartaDelComensal): DependenciasParciales {
         tipo: "ok",
         local: datos.local,
         mesa: datos.mesa,
+        identidad: { modelo: "sobrio", acento: null, logoClave: null, portadaClave: null },
         pedidos: [PEDIDO],
         subtotalAcumuladoClp: 17800,
         cuentaPedida: false,

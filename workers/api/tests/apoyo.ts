@@ -94,6 +94,7 @@ export function comensalFalso(parciales: Partial<AlmacenComensal> = {}): Almacen
     enviar: async () => ({ tipo: "codigo_desconocido" }),
     pedidos: async () => ({ tipo: "codigo_desconocido" }),
     pedirCuenta: async () => ({ tipo: "codigo_desconocido" }),
+    avisar: async () => ({ tipo: "codigo_desconocido" }),
     ...parciales,
   }
 }
@@ -145,6 +146,8 @@ export function almacenFalso(parciales: Partial<AlmacenPanel> = {}): AlmacenPane
     cerrarSesion: async () => ({ ok: true, valor: undefined }),
     listarCuentas: async () => [],
     cobrar: async () => ({ ok: true, valor: { importeClp: 0, propinaClp: 0, totalClp: 0 } }),
+    listarAvisos: async () => [],
+    atenderAviso: async () => ({ ok: true }),
     ...parciales,
   }
 }

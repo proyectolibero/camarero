@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@camarero/domain": "workspace:*",
+    "@camarero/ui": "workspace:*",
     "qrcode-generator": "2.0.4"
   }
 }

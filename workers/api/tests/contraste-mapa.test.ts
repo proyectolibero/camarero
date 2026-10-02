@@ -59,15 +59,54 @@ function contraste(unColor: string, otroColor: string): number {
   return (Math.max(uno, otro) + 0.05) / (Math.min(uno, otro) + 0.05)
 }
 
-/** Valor real de una variable del CSS servido; en oscuro, dentro del bloque `prefers-color-scheme`. */
-function valorDeMapa(nombre: string, oscuro: boolean): string {
-  const bloque = oscuro ? ESTILOS.slice(ESTILOS.indexOf("prefers-color-scheme: dark")) : ESTILOS
-  const coincidencia = new RegExp(`${nombre}\\s*:\\s*(#[0-9a-fA-F]{6})`).exec(bloque)
-  const valor = coincidencia?.[1]
-  if (valor === undefined) {
-    throw new Error(`No encontre la variable ${nombre} (oscuro=${oscuro})`)
+type MapaDeVariables = ReadonlyMap<string, string>
+
+/** Extrae los pares `--variable: valor;` de un bloque del CSS. */
+function variablesDe(bloque: string): MapaDeVariables {
+  const mapa = new Map<string, string>()
+  for (const coincidencia of bloque.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/gi)) {
+    const nombre = coincidencia[1]
+    const valor = coincidencia[2]
+    if (nombre !== undefined && valor !== undefined) {
+      mapa.set(nombre, valor.trim())
+    }
   }
-  return valor
+  return mapa
+}
+
+/**
+ * El CSS tiene dos capas: crudos y alias. La base y el modo oscuro aportan crudos distintos,
+ * mientras los alias siguen apuntando a los mismos nombres. El resolutor recorre los `var()`
+ * hasta el hex, que es lo que de verdad llega al ojo.
+ */
+function capasDeCss(): { readonly base: MapaDeVariables; readonly oscuro: MapaDeVariables } {
+  const base = /:root\s*\{([\s\S]*?)\n\}/.exec(ESTILOS)
+  const oscuro =
+    /@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([\s\S]*?)\n\s*\}\s*\}/.exec(ESTILOS)
+  return { base: variablesDe(base?.[1] ?? ""), oscuro: variablesDe(oscuro?.[1] ?? "") }
+}
+
+/** Valor real de una variable del CSS servido, resolviendo los alias hasta el hex. */
+function valorDeMapa(nombre: string, oscuro: boolean): string {
+  const capas = capasDeCss()
+  const paso = (variable: string, profundidad: number): string => {
+    if (profundidad > 20) {
+      throw new Error(`Cadena de var() demasiado larga en ${variable}`)
+    }
+    const valor = (oscuro ? capas.oscuro.get(variable) : undefined) ?? capas.base.get(variable)
+    if (valor === undefined) {
+      throw new Error(`No encontre la variable ${variable} (oscuro=${oscuro})`)
+    }
+    const referencia = /^var\((--[a-z0-9-]+)\)$/.exec(valor)
+    if (referencia?.[1] !== undefined) {
+      return paso(referencia[1], profundidad + 1)
+    }
+    if (!/^#[0-9a-fA-F]{6}$/.test(valor)) {
+      throw new Error(`La variable ${variable} no resuelve a un hex: ${valor}`)
+    }
+    return valor
+  }
+  return paso(nombre, 0)
 }
 
 /** Contraste tal y como se ve de verdad: si hay opacidad, se compone antes de medir. */

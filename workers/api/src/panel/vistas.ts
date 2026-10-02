@@ -18,6 +18,7 @@ import { type HtmlSeguro, html, htmlCrudo } from "../ui/html.ts"
 import { generarQrSvg } from "../ui/qr.ts"
 import { ALERGENOS, type Opcion, SIN_CATEGORIA, TAGS } from "./carta-catalogo.ts"
 import type {
+  AvisoDeMesa,
   Categoria,
   ComandaDePuesto,
   CuentaDeMesa,
@@ -59,6 +60,7 @@ const PANTALLAS: Readonly<Record<Superficie, readonly PantallaDelCuadro[]>> = {
       href: "/admin/sala",
     },
     { titulo: "Las cuentas: verlas y registrar el cobro", href: "/admin/cuentas" },
+    { titulo: "Avisos de las mesas (llamar al empleado y limpieza)", href: "/admin/avisos" },
     { titulo: "Solicitudes de emparejamiento", href: "/admin/parejas" },
     {
       titulo: "Puestos de preparación (parrilla, plancha, postre, barra)",
@@ -67,7 +69,7 @@ const PANTALLAS: Readonly<Record<Superficie, readonly PantallaDelCuadro[]>> = {
     { titulo: "Alta del local (asistente)" },
     { titulo: "Carta (categorías, platos, precios, fotos, orden)", href: "/admin/carta" },
     { titulo: "Personal (invitar, roles, PIN)" },
-    { titulo: "Ajustes (tema, logo, horarios, modo de servicio)" },
+    { titulo: "Ajustes (tema, logo, horarios, modo de servicio)", href: "/admin/local" },
     {
       titulo: "Pedidos por puesto (cocina, barra o todo): aceptar, marcar listos y anular",
       href: "/admin/pedidos",
@@ -115,7 +117,13 @@ function avisoError(mensaje: string): HtmlSeguro {
 function cabecera(superficie: Superficie, empleado: Empleado): HtmlSeguro {
   const quien = html`<strong>${empleado.nombre}</strong> ·
     ${nombreDeRol(empleado.rol)} · ${nombreDeSuperficie(superficie)}`
+  // El panel lleva el logo del local si lo tiene (ADR-0035): sobrio, junto a la marca.
+  const logo =
+    empleado.local?.logoClave == null
+      ? html``
+      : html`<img class="cabecera-logo" src="/cartas/${empleado.local.logoClave}" alt="" loading="lazy">`
   return html`<header class="cabecera">
+${logo}
 <span class="marca">Camarero</span>
 <span class="quien">${quien}</span>
 <span class="crece"></span>
@@ -264,8 +272,18 @@ ${enlaceVolverAlPanel()}
   return pagina("Sin permiso", contenido)
 }
 
+const ETIQUETA_MODELO: Readonly<Record<string, string>> = {
+  sobrio: "Sobrio",
+  calido: "Cálido",
+  moderno: "Moderno",
+  nocturno: "Nocturno",
+  verde: "Verde",
+}
+
 function formularioLocal(local: DatosLocal): HtmlSeguro {
   return html`<form method="post" action="/admin/local">
+<fieldset class="grupo">
+<legend>El local</legend>
 <label class="campo"><span>Nombre del local</span>
 <input type="text" name="nombre" value="${local.nombre}" maxlength="120" required></label>
 <label class="campo"><span>Zona horaria</span>
@@ -277,6 +295,22 @@ function formularioLocal(local: DatosLocal): HtmlSeguro {
 <label class="campo"><span>Modo de servicio</span>
 <select name="modo_servicio">${opcionesDeSelect(["dine_in", "delivery", "both"], local.serviceMode, ETIQUETA_MODO)}</select></label>
 <p class="dato-fijo"><span>Moneda</span> <strong>${local.currency}</strong> — fija para el piloto en Chile.</p>
+</fieldset>
+<fieldset class="grupo">
+<legend>La identidad de tu carta</legend>
+<p class="ayuda">Esto es cómo se ve tu carta para tus clientes. Cámbialo y se aplica al instante, sin tocar nada más.</p>
+<label class="campo"><span>Modelo</span>
+<select name="modelo">${opcionesDeSelect(["sobrio", "calido", "moderno", "nocturno", "verde"], local.modelo, ETIQUETA_MODELO)}</select></label>
+<label class="campo campo-en-linea"><span>Color de acento</span>
+<input type="text" name="acento" value="${local.acento ?? ""}" pattern="#[0-9a-fA-F]{6}">
+<span class="ayuda">Un color en formato almohadilla + seis cifras hexadecimales. Déjalo vacío para usar el del modelo.</span></label>
+<label class="campo"><span>Logo (clave en el almacén de imágenes)</span>
+<input type="text" name="logo" value="${local.logoClave ?? ""}" maxlength="200">
+<span class="ayuda">La clave del logo ya subido. Déjalo vacío si aún no tienes.</span></label>
+<label class="campo"><span>Portada (clave en el almacén de imágenes)</span>
+<input type="text" name="portada" value="${local.portadaClave ?? ""}" maxlength="200">
+<span class="ayuda">La clave de la imagen de portada. Déjalo vacío si aún no tienes.</span></label>
+</fieldset>
 <button class="boton" type="submit">Guardar cambios</button>
 </form>`
 }
@@ -288,6 +322,10 @@ function datosLocalDeSoloLectura(local: DatosLocal): HtmlSeguro {
 <dt>Zona horaria</dt><dd>${local.timezone}</dd>
 <dt>Estado</dt><dd>${ETIQUETA_ESTADO[local.status] ?? local.status}</dd>
 <dt>Modo de servicio</dt><dd>${ETIQUETA_MODO[local.serviceMode] ?? local.serviceMode}</dd>
+<dt>Modelo</dt><dd>${ETIQUETA_MODELO[local.modelo] ?? local.modelo}</dd>
+<dt>Color de acento</dt><dd>${local.acento ?? "El del modelo"}</dd>
+<dt>Logo</dt><dd>${local.logoClave ?? "Sin logo"}</dd>
+<dt>Portada</dt><dd>${local.portadaClave ?? "Sin portada"}</dd>
 <dt>Moneda</dt><dd>${local.currency}</dd>
 </dl>`
 }
@@ -1608,6 +1646,49 @@ ${lista}
 ${enlaceVolverAlPanel()}
 </main>`
   return pagina("Solicitudes de emparejamiento", contenido)
+}
+
+// ---------------------------------------------------------------------------
+// Los avisos del comensal (TASK-F1-13): llamar al empleado y avisar de la limpieza
+// ---------------------------------------------------------------------------
+
+const ETIQUETA_AVISO: Readonly<Record<string, string>> = {
+  llamar_empleado: "Llama a un empleado",
+  necesita_limpieza: "La mesa necesita limpieza",
+}
+
+function filaDeAviso(aviso: AvisoDeMesa): HtmlSeguro {
+  return html`<li class="aviso-fila">
+<span class="aviso-tipo">${ETIQUETA_AVISO[aviso.tipo] ?? aviso.tipo}</span>
+<span class="aviso-mesa">${aviso.mesa}</span>
+<span class="aviso-tiempo">Hace ${etiquetaDeTiempo(aviso.pedidoHaceSegundos)}</span>
+<span class="crece"></span>
+<form method="post" action="/admin/avisos/${aviso.id}/atender">
+<button class="boton" type="submit">Marcar atendido</button>
+</form>
+</li>`
+}
+
+export function vistaAvisos(
+  empleado: Empleado,
+  avisos: readonly AvisoDeMesa[],
+  estado: EstadoPantalla,
+): HtmlSeguro {
+  const lista =
+    avisos.length === 0
+      ? html`<p>No hay avisos pendientes ahora mismo.</p>`
+      : html`<ul class="avisos-lista">${avisos.map(filaDeAviso)}</ul>`
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${avisosDeEstado(estado)}
+<section class="tarjeta">
+<h1>Avisos de las mesas</h1>
+<p>Lo que piden tus clientes desde el móvil: que alguien vaya o que la mesa necesita limpieza. Cuando alguien lo atiende, desaparece de la lista. Si nadie lo atiende, caduca solo.</p>
+${lista}
+</section>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina("Avisos de las mesas", contenido)
 }
 
 // ---------------------------------------------------------------------------

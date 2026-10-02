@@ -73,6 +73,8 @@ function carta(cuentaPedida: boolean): CartaDelComensal {
     mesa: "Mesa 4",
     estado: "aprobado",
     restanteSegundos: null,
+    identidad: { modelo: "sobrio", acento: null, logoClave: null, portadaClave: null },
+    avisos: [],
     subtotalAcumuladoClp: 15900,
     cuentaPedida,
     categorias: [
@@ -103,6 +105,7 @@ function comensalConCuenta(cuentaPedida: boolean, llamadas: { pedir?: number } =
       tipo: "ok",
       local: "Barra Uno",
       mesa: "Mesa 4",
+      identidad: { modelo: "sobrio", acento: null, logoClave: null, portadaClave: null },
       pedidos: [PEDIDO],
       subtotalAcumuladoClp: 15900,
       cuentaPedida,

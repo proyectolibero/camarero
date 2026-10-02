@@ -61,6 +61,7 @@ const TABLAS_DEL_CONTRATO = [
   "table_sessions",
   "table_devices",
   "pairing_requests",
+  "table_notices",
   "orders",
   "order_items",
   "order_item_modifiers",
@@ -308,7 +309,7 @@ afterAll(async () => {
 // Metadatos de las tablas: RLS activada, forzada y con politica
 // ---------------------------------------------------------------------------
 
-describe("Cobertura de RLS en las 28 tablas del contrato", () => {
+describe("Cobertura de RLS en las 29 tablas del contrato", () => {
   it("debe tener RLS activada y forzada en todas, y al menos una politica salvo las de plataforma", async () => {
     const filas = await conectarYConsultar(
       parametrosApp(),

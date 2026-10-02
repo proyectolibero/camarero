@@ -16,11 +16,26 @@ import type { LineaResuelta } from "./cesta.ts"
 import type {
   CartaDelComensal,
   CategoriaDeCarta,
+  IdentidadDelLocal,
   PedidoDelComensal,
   PlatoDeCarta,
 } from "./datos.ts"
 
 const FORMATO_CLP = new Intl.NumberFormat("es-CL", { maximumFractionDigits: 0 })
+
+/**
+ * Ruta del tema del comensal. La hoja general (`/panel/estilos.css`) usa el modelo por defecto;
+ * esta la genera el borde con el modelo y el acento DEL LOCAL (ADR-0035), de modo que cambiar
+ * la identidad no toca codigo. Se sirve por GET y sin sesion.
+ */
+export function rutaDelTema(codigo: string): string {
+  return `/t/${encodeURIComponent(codigo)}/tema.css`
+}
+
+/** Identificador estable de una categoria para las pildoras y los anclajes de salto. */
+function anclaDeCategoria(categoria: CategoriaDeCarta, indice: number): string {
+  return categoria.id === "" ? `categoria-${indice}` : `cat-${categoria.id}`
+}
 
 /**
  * Cada cuanto se repinta la pantalla del comensal mientras hay algo que contar.
@@ -40,7 +55,7 @@ function precio(clp: number): string {
 }
 
 /**
- * La cabecera del comensal con la franja del gasto (D-056).
+ * La cabecera del comensal con la franja del gasto (D-056) y la identidad del local.
  *
  * Va en todas las pantallas donde ya hay mesa —la carta, la cesta, los pedidos y el estado del
  * emparejamiento— y NO en las que dicen que no hay mesa. Cuando no se ha pedido nada no se
@@ -49,10 +64,16 @@ function precio(clp: number): string {
 function cabeceraComensal(
   local: string,
   codigo: string,
+  identidad: IdentidadDelLocal,
   subtotalAcumuladoClp: number,
   enElDesglose: boolean,
 ): HtmlSeguro {
-  const marca = html`<span class="marca">Camarero</span>
+  const logo =
+    identidad.logoClave === null
+      ? html``
+      : html`<img class="comensal-logo" src="/cartas/${identidad.logoClave}" alt="" loading="lazy">`
+  // El nombre visible del sistema va delante del del local; el logo, si lo hay, a la izquierda.
+  const marca = html`${logo}<span class="marca">Camarero</span>
 <span class="comensal-local">${local}</span>`
   if (subtotalAcumuladoClp === 0) {
     return html`<header class="comensal-cabecera">
@@ -77,11 +98,19 @@ function paginaComensal(
   titulo: string,
   contenido: HtmlSeguro,
   refrescoSegundos: number | null,
+  tema: { readonly codigo: string; readonly identidad: IdentidadDelLocal } | null,
 ): HtmlSeguro {
   const metaRefresco =
     refrescoSegundos === null
       ? html``
       : html`<meta http-equiv="refresh" content="${refrescoSegundos}">`
+  // Con el codigo de mesa, la hoja propia del tema del local cambia por modelo y acento; sin
+  // el (pantallas de error), la hoja general del sistema. Nunca se escribe un color a mano.
+  const hojaDeEstilos =
+    tema === null
+      ? html`<link rel="stylesheet" href="/panel/estilos.css">`
+      : html`<link rel="stylesheet" href="/panel/estilos.css">
+<link rel="stylesheet" href="${rutaDelTema(tema.codigo)}">`
   return html`<!doctype html>
 <html lang="es">
 <head>
@@ -89,7 +118,7 @@ function paginaComensal(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${titulo} · Camarero</title>
 ${metaRefresco}
-<link rel="stylesheet" href="/panel/estilos.css">
+${hojaDeEstilos}
 </head>
 <body class="comensal">
 ${contenido}
@@ -164,19 +193,25 @@ function bloqueCuenta(codigo: string, cuentaPedida: boolean): HtmlSeguro {
 </div>`
 }
 
-/** Añadir a la cesta es un POST sin JavaScript: cada plato lleva su boton y su accion. */
+/**
+ * Añadir a la cesta es un POST sin JavaScript. El boton es GRANDE y de PULGAR (D-057): el
+ * comensal pide con una mano y con mala luz, asi que el objetivo no puede ser un enlace pequeño.
+ * Es un boton de ancho comodo y altura de pulgar, no una x minima.
+ */
 function botonAgregar(plato: PlatoDeCarta, codigo: string): HtmlSeguro {
   return html`<form class="comensal-agregar" method="post" action="/t/${codigo}/cesta">
 <input type="hidden" name="plato" value="${plato.id}">
 <input type="hidden" name="cantidad" value="1">
-<button class="boton-mini" type="submit">Añadir</button>
+<button class="boton comensal-agregar-boton" type="submit" aria-label="Añadir ${plato.nombre} a la cesta">
+<span class="comensal-agregar-signo" aria-hidden="true">+</span> Añadir
+</button>
 </form>`
 }
 
 function fichaDePlato(plato: PlatoDeCarta, codigo: string, puedeAnadir: boolean): HtmlSeguro {
   const foto =
     plato.fotoClave === null
-      ? html``
+      ? html`<span class="comensal-foto comensal-foto-vacia" aria-hidden="true"></span>`
       : html`<img class="comensal-foto" src="/cartas/${plato.fotoClave}" alt="Foto de ${plato.nombre}" loading="lazy">`
   const descripcion =
     plato.descripcion === null
@@ -195,13 +230,64 @@ ${puedeAnadir ? botonAgregar(plato, codigo) : html``}
 
 function seccionDeCategoria(
   categoria: CategoriaDeCarta,
+  indice: number,
   codigo: string,
   puedeAnadir: boolean,
 ): HtmlSeguro {
-  return html`<section class="comensal-categoria">
-<h2>${categoria.nombre}</h2>
+  return html`<section class="comensal-categoria" id="${anclaDeCategoria(categoria, indice)}">
+<h2 class="comensal-categoria-titulo">${categoria.nombre}</h2>
 <ul class="comensal-platos">${categoria.platos.map((plato) => fichaDePlato(plato, codigo, puedeAnadir))}</ul>
 </section>`
+}
+
+/**
+ * Las categorias como PILDORAS para saltar (D-057): el comensal ve de un vistazo que hay y
+ * toca para ir. Son enlaces de ancla, sin JavaScript, y se desplazan en horizontal si no caben.
+ */
+function pildorasDeCategoria(categorias: readonly CategoriaDeCarta[]): HtmlSeguro {
+  if (categorias.length === 0) {
+    return html``
+  }
+  return html`<nav class="comensal-pildoras" aria-label="Categorías de la carta">
+${categorias.map(
+  (categoria, indice) =>
+    html`<a class="comensal-pildora" href="#${anclaDeCategoria(categoria, indice)}">${categoria.nombre}</a>`,
+)}
+</nav>`
+}
+
+/**
+ * Los dos avisos al personal (TASK-F1-13): llamar a un empleado y avisar de la limpieza.
+ * Cuando ya se han pedido, se dice —con su tipo— en lugar de ofrecer el boton otra vez: el
+ * comensal VE que lo ha pedido. La frase es distinta por tipo y nunca promete mas de lo que hay.
+ */
+const ETIQUETA_DE_AVISO: Readonly<Record<string, string>> = {
+  llamar_empleado: "Has llamado a un empleado",
+  necesita_limpieza: "Has avisado de que la mesa necesita limpieza",
+}
+
+const BOTON_DE_AVISO: Readonly<Record<string, string>> = {
+  llamar_empleado: "Llamar a un empleado",
+  necesita_limpieza: "La mesa necesita limpieza",
+}
+
+function bloqueAvisos(carta: CartaDelComensal, codigo: string): HtmlSeguro {
+  if (carta.estado !== "aprobado") {
+    return html``
+  }
+  const vivos = new Set(carta.avisos.map((aviso) => aviso.tipo))
+  const boton = (tipo: string): HtmlSeguro =>
+    vivos.has(tipo as "llamar_empleado" | "necesita_limpieza")
+      ? html`<p class="comensal-aviso-hecho" role="status">${ETIQUETA_DE_AVISO[tipo]}. Enseguida viene alguien.</p>`
+      : html`<form method="post" action="/t/${codigo}/avisar">
+<input type="hidden" name="tipo" value="${tipo}">
+<button class="boton boton-secundario comensal-aviso-boton" type="submit">${BOTON_DE_AVISO[tipo]}</button>
+</form>`
+  return html`<div class="comensal-avisos">
+<p class="comensal-avisos-titulo">¿Necesitas algo?</p>
+${boton("llamar_empleado")}
+${boton("necesita_limpieza")}
+</div>`
 }
 
 export function vistaCartaComensal(
@@ -217,20 +303,29 @@ export function vistaCartaComensal(
     cantidadCesta > 0
       ? html`<p class="comensal-cesta-aviso"><a class="boton" href="/t/${codigo}/cesta">Ver mi cesta (${cantidadCesta} ${cantidadCesta === 1 ? "plato" : "platos"})</a></p>`
       : html``
-  const contenido = html`${cabeceraComensal(carta.local, codigo, carta.subtotalAcumuladoClp, false)}
-<main class="contenedor">
+  // La portada del local, si la tiene: es la entrada bonita de la carta.
+  const portada =
+    carta.identidad.portadaClave === null
+      ? html``
+      : html`<img class="comensal-portada" src="/cartas/${carta.identidad.portadaClave}" alt="Portada de ${carta.local}" loading="lazy">`
+  const contenido = html`${cabeceraComensal(carta.local, codigo, carta.identidad, carta.subtotalAcumuladoClp, false)}
+<main class="contenedor comensal-principal">
+${portada}
 <h1 class="comensal-mesa">${carta.mesa}</h1>
 ${bloqueEmparejamiento(carta, codigo)}
+${bloqueAvisos(carta, codigo)}
 ${carta.estado === "aprobado" ? bloqueCuenta(codigo, carta.cuentaPedida) : html``}
 ${resumenCesta}
 <h2 class="comensal-carta-titulo">Carta</h2>
+${pildorasDeCategoria(carta.categorias)}
 ${cartaVacia}
-${carta.categorias.map((categoria) => seccionDeCategoria(categoria, codigo, !carta.cuentaPedida))}
+${carta.categorias.map((categoria, indice) => seccionDeCategoria(categoria, indice, codigo, !carta.cuentaPedida))}
 </main>`
   return paginaComensal(
     carta.mesa,
     contenido,
     carta.estado === "esperando" ? REFRESCO_ESPERANDO_APROBACION : null,
+    { codigo, identidad: carta.identidad },
   )
 }
 
@@ -306,7 +401,13 @@ export function vistaCestaComensal(
   totalClp: number,
   opciones: OpcionesDeCesta,
 ): HtmlSeguro {
-  const cabecera = cabeceraComensal(carta.local, codigo, carta.subtotalAcumuladoClp, false)
+  const cabecera = cabeceraComensal(
+    carta.local,
+    codigo,
+    carta.identidad,
+    carta.subtotalAcumuladoClp,
+    false,
+  )
   if (lineas.length === 0) {
     const contenido = html`${cabecera}
 <main class="contenedor">
@@ -317,7 +418,7 @@ ${opciones.aviso === undefined ? html`` : html`<p class="aviso aviso-aviso" role
 <p><a class="boton boton-secundario" href="/t/${codigo}">Volver a la carta</a></p>
 </section>
 </main>`
-    return paginaComensal("Tu cesta", contenido, null)
+    return paginaComensal("Tu cesta", contenido, null, { codigo, identidad: carta.identidad })
   }
   const enviar = opciones.puedeEnviar
     ? html`<form method="post" action="/t/${codigo}/cesta/enviar">
@@ -342,7 +443,7 @@ ${opciones.puedeEnviar ? avisoAntesDeEnviar() : html``}
 ${enviar}
 <p><a class="boton boton-secundario" href="/t/${codigo}">Seguir pidiendo</a></p>
 </main>`
-  return paginaComensal("Tu cesta", contenido, null)
+  return paginaComensal("Tu cesta", contenido, null, { codigo, identidad: carta.identidad })
 }
 
 /**
@@ -394,6 +495,12 @@ export function vistaPedidosComensal(
   pedidos: readonly PedidoDelComensal[],
   subtotalAcumuladoClp: number,
   cuentaPedida = false,
+  identidad: IdentidadDelLocal = {
+    modelo: "sobrio",
+    acento: null,
+    logoClave: null,
+    portadaClave: null,
+  },
 ): HtmlSeguro {
   const hayEnMarcha = pedidos.some(enMarcha)
   // Lo que aun no ha llegado, con la MISMA funcion de totales del dominio que el resto.
@@ -406,7 +513,7 @@ export function vistaPedidosComensal(
     pedidos.length === 0
       ? html`<section class="tarjeta"><p>Todavía no has enviado ninguna comanda.</p></section>`
       : html`${resumenDeCuenta(subtotalAcumuladoClp, pendienteDeLlegarClp)}${pedidos.map(pedidoComensal)}`
-  const contenido = html`${cabeceraComensal(local, codigo, subtotalAcumuladoClp, true)}
+  const contenido = html`${cabeceraComensal(local, codigo, identidad, subtotalAcumuladoClp, true)}
 <main class="contenedor">
 <h1 class="comensal-mesa">Tus pedidos · ${mesa}</h1>
 <p class="ayuda">${
@@ -419,7 +526,10 @@ ${lista}
 ${bloqueCuenta(codigo, cuentaPedida)}
 <p><a class="boton boton-secundario" href="/t/${codigo}">Volver a la carta</a></p>
 </main>`
-  return paginaComensal("Tus pedidos", contenido, hayEnMarcha ? REFRESCO_PEDIDOS_EN_MARCHA : null)
+  return paginaComensal("Tus pedidos", contenido, hayEnMarcha ? REFRESCO_PEDIDOS_EN_MARCHA : null, {
+    codigo,
+    identidad,
+  })
 }
 
 /** El dispositivo no tiene una sesion de esta mesa: hay que volver a escanear el QR. */
@@ -433,7 +543,7 @@ export function vistaSinSesion(): HtmlSeguro {
 <p>Este dispositivo ya no tiene una sesión de mesa abierta. Vuelve a escanear el QR de tu mesa.</p>
 </section>
 </main>`
-  return paginaComensal("Mesa no encontrada", contenido, null)
+  return paginaComensal("Mesa no encontrada", contenido, null, null)
 }
 
 /**
@@ -451,7 +561,7 @@ export function vistaSesionCerrada(): HtmlSeguro {
 <p>Si acabas de sentarte, pide al personal que abra la mesa.</p>
 </section>
 </main>`
-  return paginaComensal("Mesa cerrada", contenido, null)
+  return paginaComensal("Mesa cerrada", contenido, null, null)
 }
 
 export function vistaLocalInactivo(): HtmlSeguro {
@@ -465,7 +575,7 @@ export function vistaLocalInactivo(): HtmlSeguro {
 <p>Vuelve a escanear el QR de tu mesa cuando te atiendan.</p>
 </section>
 </main>`
-  return paginaComensal("Local sin abrir", contenido, null)
+  return paginaComensal("Local sin abrir", contenido, null, null)
 }
 
 export function vistaCodigoDesconocido(): HtmlSeguro {
@@ -479,5 +589,5 @@ export function vistaCodigoDesconocido(): HtmlSeguro {
 <p>Si escribiste el código a mano, revisa que no te falte ningún carácter.</p>
 </section>
 </main>`
-  return paginaComensal("Código no encontrado", contenido, null)
+  return paginaComensal("Código no encontrado", contenido, null, null)
 }

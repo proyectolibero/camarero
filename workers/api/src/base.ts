@@ -24,6 +24,8 @@ export type Organizacion = {
 export type Local = {
   readonly id: string
   readonly nombre: string | null
+  /** Clave del logo en R2, si el local tiene uno. Lo lleva el panel para su cabecera (ADR-0035). */
+  readonly logoClave?: string | null
 }
 
 /** Ficha resuelta de un empleado: lo que el panel necesita para dibujar. */
@@ -48,6 +50,7 @@ type FilaStaff = {
 type FilaNombres = {
   readonly org_nombre: string | null
   readonly local_nombre: string | null
+  readonly logo_r2_key: string | null
 }
 
 /** Los cuatro valores que `staff_actual()`, `en_mi_org()` y `es_platform_admin()` leen. */
@@ -100,7 +103,11 @@ function componerEmpleado(fila: FilaStaff, nombres: FilaNombres | undefined): Em
     local:
       fila.location_id === null
         ? null
-        : { id: fila.location_id, nombre: nombres?.local_nombre ?? null },
+        : {
+            id: fila.location_id,
+            nombre: nombres?.local_nombre ?? null,
+            logoClave: nombres?.logo_r2_key ?? null,
+          },
   }
 }
 
@@ -135,7 +142,7 @@ export async function resolverSesion(
     }
     await fijarContexto(cliente, fila)
     const nombres = await cliente.query<FilaNombres>(
-      `select o.name as org_nombre, l.name as local_nombre
+      `select o.name as org_nombre, l.name as local_nombre, l.logo_r2_key
        from public.staff s
        left join public.orgs o on o.id = s.org_id
        left join public.locations l on l.id = s.location_id

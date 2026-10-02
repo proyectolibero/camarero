@@ -37,6 +37,11 @@ export type DatosLocal = {
   readonly currency: string
   readonly status: string
   readonly serviceMode: string
+  /** Identidad visual como DATO (ADR-0035): un modelo del catalogo y un acento opcional. */
+  readonly modelo: string
+  readonly acento: string | null
+  readonly logoClave: string | null
+  readonly portadaClave: string | null
 }
 
 export type CambiosLocal = {
@@ -44,6 +49,10 @@ export type CambiosLocal = {
   readonly timezone: string
   readonly status: string
   readonly serviceMode: string
+  readonly modelo: string
+  readonly acento: string | null
+  readonly logoClave: string | null
+  readonly portadaClave: string | null
 }
 
 export type Zona = {
@@ -168,6 +177,27 @@ export type SolicitudPendiente = {
   readonly pedidaHaceSegundos: number
   readonly restanteSegundos: number
 }
+
+/** Los dos avisos que el comensal puede mandar al personal (TASK-F1-13). */
+export type TipoDeAviso = "llamar_empleado" | "necesita_limpieza"
+
+/**
+ * Un aviso vivo de una mesa en la pantalla del personal: su tipo, la mesa y cuanto hace que
+ * se pidio. Nunca lleva datos del comensal: solo la sesion y la mesa.
+ */
+export type AvisoDeMesa = {
+  readonly id: string
+  readonly mesa: string
+  readonly tipo: TipoDeAviso
+  readonly pedidoHaceSegundos: number
+}
+
+/** Por que no se pudo atender un aviso. Cada causa tiene su mensaje en la pantalla. */
+export type MotivoDeAviso = "sin_permiso" | "no_existe" | "ya_atendido"
+
+export type ResultadoAviso =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly motivo: MotivoDeAviso }
 
 /** Una linea de una comanda tal como se ve en la pantalla de un puesto. NUNCA lleva precio. */
 export type LineaDeComanda = {
@@ -364,6 +394,8 @@ export type AlmacenPanel = {
   readonly cerrarSesion: (empleado: Empleado, mesaId: string) => Promise<Resultado>
   readonly listarCuentas: (empleado: Empleado) => Promise<readonly CuentaDeMesa[]>
   readonly cobrar: (empleado: Empleado, datos: DatosDeCobro) => Promise<ResultadoCobro>
+  readonly listarAvisos: (empleado: Empleado) => Promise<readonly AvisoDeMesa[]>
+  readonly atenderAviso: (empleado: Empleado, avisoId: string) => Promise<ResultadoAviso>
 }
 
 type FilaLocal = {
@@ -375,6 +407,10 @@ type FilaLocal = {
   readonly currency: string
   readonly status: string
   readonly service_mode: string
+  readonly modelo: string
+  readonly acento: string | null
+  readonly logo_r2_key: string | null
+  readonly cover_r2_key: string | null
 }
 
 type FilaZona = {
@@ -434,7 +470,10 @@ type FilaPlato = {
   readonly active: boolean
 }
 
-const COLUMNAS_LOCAL = "id, org_id, slug, name, timezone, currency, status, service_mode"
+const COLUMNAS_LOCAL =
+  "id, org_id, slug, name, timezone, currency, status, service_mode, " +
+  "coalesce(theme_json->>'modelo', 'sobrio') as modelo, theme_json->>'acento' as acento, " +
+  "logo_r2_key, cover_r2_key"
 
 const COLUMNAS_CATEGORIA = "id, name_i18n, sort_order, active, available, prep_station_id"
 
@@ -456,6 +495,10 @@ function aDatosLocal(fila: FilaLocal): DatosLocal {
     currency: fila.currency,
     status: fila.status,
     serviceMode: fila.service_mode,
+    modelo: fila.modelo,
+    acento: fila.acento,
+    logoClave: fila.logo_r2_key,
+    portadaClave: fila.cover_r2_key,
   }
 }
 
@@ -1783,6 +1826,56 @@ async function cobrarCuenta(cliente: Client, datos: DatosDeCobro): Promise<Resul
   }
 }
 
+// ---------------------------------------------------------------------------
+// Los avisos del comensal (TASK-F1-13)
+// ---------------------------------------------------------------------------
+
+type FilaAviso = {
+  readonly id: string
+  readonly mesa: string
+  readonly kind: string
+  readonly pedido: number
+}
+
+/**
+ * Los avisos vivos del local, de la mas reciente a la mas antigua. La RLS ya acota al alcance
+ * del empleado; aqui solo se lee. La caducidad la aplica el cron; un aviso vencido que aun no
+ * se ha marcado no se muestra, porque ya no es un servicio pendiente.
+ */
+async function listarFilaAvisos(cliente: Client): Promise<readonly AvisoDeMesa[]> {
+  const resultado = await cliente.query<FilaAviso>(
+    `select n.id, t.label as mesa, n.kind,
+            extract(epoch from (now() - n.requested_at))::int as pedido
+       from public.table_notices n
+       join public.tables t on t.id = n.table_id
+      where n.state = 'pendiente' and n.expires_at > now()
+      order by n.requested_at desc, n.id desc`,
+  )
+  return resultado.rows.map((fila) => ({
+    id: fila.id,
+    mesa: fila.mesa,
+    tipo: fila.kind === "necesita_limpieza" ? "necesita_limpieza" : "llamar_empleado",
+    pedidoHaceSegundos: fila.pedido,
+  }))
+}
+
+/** Atiende un aviso por la puerta unica de la base, que deja rastro. */ async function atenderFilaAviso(
+  cliente: Client,
+  avisoId: string,
+): Promise<ResultadoAviso> {
+  const resultado = await cliente.query<{ causa: string }>(
+    "select public.camarero_atender_aviso($1) as causa",
+    [avisoId],
+  )
+  const causa = resultado.rows[0]?.causa ?? "no_atendible"
+  if (causa === "ok") {
+    return { ok: true }
+  }
+  // La puerta no distingue si el aviso no existe, es de otro local o ya estaba atendido: en
+  // todos los casos el personal vuelve a mirar la lista. El mensaje no puede inventar la causa.
+  return { ok: false, motivo: causa === "no_atendible" ? "no_existe" : "sin_permiso" }
+}
+
 export function almacenDeBase(cadena: string): AlmacenPanel {
   return {
     leerLocal: (empleado): Promise<DatosLocal | null> =>
@@ -1800,12 +1893,29 @@ export function almacenDeBase(cadena: string): AlmacenPanel {
         if (id === null) {
           return { ok: false, motivo: "no_existe" }
         }
+        // La identidad es un dato: el modelo y el acento van a `theme_json`; sin acento, se
+        // guarda solo el modelo. La base valida el catalogo con su check, de modo que un valor
+        // inventado no entra aunque el formulario mienta.
+        const tema =
+          cambios.acento === null
+            ? JSON.stringify({ modelo: cambios.modelo })
+            : JSON.stringify({ modelo: cambios.modelo, acento: cambios.acento })
         const resultado = await cliente.query(
           `update public.locations
-           set name = $2, timezone = $3, status = $4, service_mode = $5
+           set name = $2, timezone = $3, status = $4, service_mode = $5,
+               theme_json = $6::jsonb, logo_r2_key = $7, cover_r2_key = $8
            where id = $1
            returning id`,
-          [id, cambios.nombre, cambios.timezone, cambios.status, cambios.serviceMode],
+          [
+            id,
+            cambios.nombre,
+            cambios.timezone,
+            cambios.status,
+            cambios.serviceMode,
+            tema,
+            cambios.logoClave,
+            cambios.portadaClave,
+          ],
         )
         // Cero filas no es "no existe": el local se acaba de leer y existe. Es la politica
         // `locations_update` la que ha impedido el cambio.
@@ -2015,6 +2125,10 @@ export function almacenDeBase(cadena: string): AlmacenPanel {
       }),
     cobrar: (empleado, datos): Promise<ResultadoCobro> =>
       enTransaccion(cadena, empleado, (cliente) => cobrarCuenta(cliente, datos)),
+    listarAvisos: (empleado): Promise<readonly AvisoDeMesa[]> =>
+      enTransaccion(cadena, empleado, (cliente) => listarFilaAvisos(cliente)),
+    atenderAviso: (empleado, avisoId): Promise<ResultadoAviso> =>
+      enTransaccion(cadena, empleado, (cliente) => atenderFilaAviso(cliente, avisoId)),
   }
 }
 
@@ -2071,6 +2185,8 @@ export function almacenNoConfigurado(): AlmacenPanel {
     cerrarSesion: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
     listarCuentas: async (): Promise<readonly CuentaDeMesa[]> => [],
     cobrar: async (): Promise<ResultadoCobro> => ({ ok: false, motivo: "no_existe" }),
+    listarAvisos: async (): Promise<readonly AvisoDeMesa[]> => [],
+    atenderAviso: async (): Promise<ResultadoAviso> => ({ ok: false, motivo: "no_existe" }),
   }
 }
 
