@@ -15,7 +15,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@types/node": "^24",
+    "@types/node": "^26",
     "@types/pg": "^8",
     "jsqr": "1.4.0",
     "pg": "^8",
