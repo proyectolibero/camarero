@@ -23,6 +23,7 @@ function carta(parciales: Partial<CartaDelComensal> = {}): CartaDelComensal {
     estado: "sin_pedir",
     restanteSegundos: 90,
     subtotalAcumuladoClp: 0,
+    cuentaPedida: false,
     categorias: [
       {
         id: "c1",

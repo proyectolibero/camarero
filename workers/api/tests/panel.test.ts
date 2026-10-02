@@ -457,6 +457,7 @@ describe("Panel: ortografía en español correcto", () => {
                   mesa: "Mesa 4",
                   pedidos: [pedidoDeEjemplo()],
                   subtotalAcumuladoClp: 17800,
+                  cuentaPedida: false,
                 }),
               }),
             }),
@@ -540,7 +541,13 @@ const MESA_DE_SALA: Mesa = {
 }
 
 function resumenDeSala() {
-  return { mesa: MESA_DE_SALA, sesionActiva: true, solicitudId: null, comandasSinServir: 1 }
+  return {
+    mesa: MESA_DE_SALA,
+    sesionActiva: true,
+    solicitudId: null,
+    comandasSinServir: 1,
+    cuentaId: null,
+  }
 }
 
 function lecturaDeCarta(): {
@@ -557,6 +564,7 @@ function lecturaDeCarta(): {
       estado: "aprobado",
       restanteSegundos: null,
       subtotalAcumuladoClp: 17800,
+      cuentaPedida: false,
       categorias: [
         {
           id: "c1",

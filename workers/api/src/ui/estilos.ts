@@ -1022,6 +1022,25 @@ p {
   color: var(--error);
 }
 
+.cuenta-pedir,
+.cuenta-pedida {
+  border: 1px solid var(--borde);
+  border-radius: 0.75rem;
+  padding: 1rem 1.1rem;
+  margin: 0 0 1.25rem;
+  background: var(--papel);
+}
+
+.cuenta-pedida {
+  background: var(--exito-fondo);
+  border-color: currentColor;
+  color: var(--exito);
+}
+
+.cuenta-pedida p:last-child {
+  margin-bottom: 0;
+}
+
 .boton-grande {
   width: 100%;
   padding: 0.9rem 1rem;

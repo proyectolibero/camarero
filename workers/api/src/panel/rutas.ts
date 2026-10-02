@@ -13,6 +13,7 @@ import { responderRedireccion, respuestaCss, respuestaHtml } from "../ui/respues
 import { manejarAdmin } from "./admin.ts"
 import { manejarCarta } from "./carta.ts"
 import { manejarCocina } from "./cocina.ts"
+import { manejarCuentas } from "./cuentas.ts"
 import type { Dependencias } from "./proveedor.ts"
 import { manejarPuestos } from "./puestos.ts"
 import { manejarSala } from "./sala.ts"
@@ -154,6 +155,11 @@ export async function manejarPanel(
   const respuestaSala = await manejarSala(peticion, entorno, ahora, dependencias)
   if (respuestaSala !== null) {
     return respuestaSala
+  }
+
+  const respuestaCuentas = await manejarCuentas(peticion, entorno, ahora, dependencias)
+  if (respuestaCuentas !== null) {
+    return respuestaCuentas
   }
 
   const respuestaCocina = await manejarCocina(peticion, entorno, ahora, dependencias)

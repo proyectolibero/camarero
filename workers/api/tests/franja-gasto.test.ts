@@ -29,6 +29,7 @@ function carta(parciales: Partial<CartaDelComensal> = {}): CartaDelComensal {
     estado: "aprobado",
     restanteSegundos: null,
     subtotalAcumuladoClp: 17800,
+    cuentaPedida: false,
     categorias: [
       {
         id: "c1",
@@ -71,6 +72,7 @@ function almacenConGasto(datos: CartaDelComensal): DependenciasParciales {
         mesa: datos.mesa,
         pedidos: [PEDIDO],
         subtotalAcumuladoClp: 17800,
+        cuentaPedida: false,
       }),
     }),
   }

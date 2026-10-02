@@ -237,7 +237,7 @@ function pintarCesta(
   const { lineas, totalClp } = resolverCesta(leerCesta(cookieCesta), preciosDeCarta(carta))
   const vista = vistaCestaComensal(carta, codigo, lineas, totalClp, {
     clave: tokenDeEnvio(),
-    puedeEnviar: carta.estado === "aprobado",
+    puedeEnviar: carta.estado === "aprobado" && !carta.cuentaPedida,
     aviso,
   })
   const respuesta = respuestaHtml(renderizar(vista), estadoHttp)
@@ -288,7 +288,9 @@ async function enviar(
   const aviso =
     resultado.tipo === "sin_aprobar"
       ? "El local todavía no ha aprobado tu mesa, así que aún no puedes enviar."
-      : "Tu cesta estaba vacía: añade algún plato antes de enviar."
+      : resultado.tipo === "cuenta_pedida"
+        ? "Ya has pedido la cuenta: no puedes añadir más platos a esta mesa."
+        : "Tu cesta estaba vacía: añade algún plato antes de enviar."
   return pintarCesta(lectura.carta, codigo, cookieCesta, aviso, lectura.sesionId, 400)
 }
 
@@ -316,6 +318,7 @@ async function mostrarPedidos(
         codigo,
         lectura.pedidos,
         lectura.subtotalAcumuladoClp,
+        lectura.cuentaPedida,
       ),
     ),
     200,
@@ -394,7 +397,35 @@ export async function manejarComensal(
     }
     return await mostrarPedidos(almacen, codigo, cookieMesa)
   }
+  if (resto[0] === "cuenta" && resto.length === 1) {
+    if (peticion.method !== "POST") {
+      return responderMetodoNoPermitido("POST")
+    }
+    return await pedirCuenta(almacen, codigo, cookieMesa)
+  }
   return responderNoEncontrado()
+}
+
+/**
+ * El comensal pide la cuenta. Es un POST (mutacion). Vuelve a la pantalla de pedidos con la
+ * confirmacion: a partir de ahi ve que la ha pedido y no puede seguir pidiendo platos.
+ */
+async function pedirCuenta(
+  almacen: AlmacenComensal,
+  codigo: string,
+  cookieMesa: string | null,
+): Promise<Response> {
+  if (!PATRON_CODIGO_MESA.test(codigo)) {
+    return pantallaDesconocida()
+  }
+  const resultado = await almacen.pedirCuenta(codigo, cookieMesa)
+  if (resultado.tipo === "codigo_desconocido") {
+    return pantallaDesconocida()
+  }
+  if (resultado.tipo === "sin_sesion") {
+    return pantallaSinSesion()
+  }
+  return responderRedireccion(`/t/${encodeURIComponent(codigo)}/pedidos?cuenta=1`)
 }
 
 async function pedirEmparejamiento(

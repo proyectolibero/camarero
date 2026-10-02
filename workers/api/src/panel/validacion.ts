@@ -26,6 +26,7 @@ export type EstadoLocal = "draft" | "active" | "paused"
 export type ModoDeServicio = "dine_in" | "delivery" | "both"
 export type TipoDeZona = "sala" | "barra" | "terraza" | "delivery"
 export type TipoDeMesa = "mesa" | "barra"
+export type FormaDePago = "tpv_cash" | "tpv_card" | "tpv_other"
 
 export const LARGO_NOMBRE_MAXIMO = 120
 export const CAPACIDAD_MINIMA = 1
@@ -38,6 +39,12 @@ const ESTADOS: readonly EstadoLocal[] = ["draft", "active", "paused"]
 const MODOS: readonly ModoDeServicio[] = ["dine_in", "delivery", "both"]
 const TIPOS_DE_ZONA: readonly TipoDeZona[] = ["sala", "barra", "terraza", "delivery"]
 const TIPOS_DE_MESA: readonly TipoDeMesa[] = ["mesa", "barra"]
+
+/** Formas de pago del `check`, y SOLO esas: nunca se inventa una etiqueta de pago. */
+const FORMAS_DE_PAGO: readonly FormaDePago[] = ["tpv_cash", "tpv_card", "tpv_other"]
+
+/** Porcentajes de propina del contrato (CONTRACT-dinero): 0, 5, 10, 15 o 20. */
+const PORCENTAJES_DE_PROPINA: readonly number[] = [0, 5, 10, 15, 20]
 
 function esUnoDe<T extends string>(permitidos: readonly T[], valor: string): valor is T {
   return (permitidos as readonly string[]).includes(valor)
@@ -86,6 +93,25 @@ export function validarTipoDeZona(valor: string): Validacion<TipoDeZona> {
 
 export function validarTipoDeMesa(valor: string): Validacion<TipoDeMesa> {
   return esUnoDe(TIPOS_DE_MESA, valor) ? valido(valor) : invalido("El tipo de mesa no es válido.")
+}
+
+/** Forma de pago con la que se registro el cobro. Es una etiqueta, sin ningun dato de pago. */
+export function validarFormaDePago(valor: string): Validacion<FormaDePago> {
+  return esUnoDe(FORMAS_DE_PAGO, valor)
+    ? valido(valor)
+    : invalido("Esa forma de pago no es válida.")
+}
+
+/** Propina: uno de los porcentajes del selector. Nunca un porcentaje inventado. */
+export function validarPropina(valor: string): Validacion<number> {
+  const limpio = valor.trim()
+  if (!/^[0-9]{1,2}$/.test(limpio)) {
+    return invalido("La propina no es válida.")
+  }
+  const numero = Number.parseInt(limpio, 10)
+  return PORCENTAJES_DE_PROPINA.includes(numero)
+    ? valido(numero)
+    : invalido("La propina tiene que ser 0, 5, 10, 15 o 20 por ciento.")
 }
 
 /** Capacidad: entero entre 1 y 99. No se acepta signo, coma ni espacio en blanco. */

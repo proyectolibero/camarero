@@ -20,8 +20,10 @@ import { ALERGENOS, type Opcion, SIN_CATEGORIA, TAGS } from "./carta-catalogo.ts
 import type {
   Categoria,
   ComandaDePuesto,
+  CuentaDeMesa,
   DatosLocal,
   EstadoDeMesa,
+  FormaDePago,
   Mesa,
   Plato,
   Puesto,
@@ -56,6 +58,7 @@ const PANTALLAS: Readonly<Record<Superficie, readonly PantallaDelCuadro[]>> = {
       titulo: "La sala: todas las mesas, sus comandas y sus estados",
       href: "/admin/sala",
     },
+    { titulo: "Las cuentas: verlas y registrar el cobro", href: "/admin/cuentas" },
     { titulo: "Solicitudes de emparejamiento", href: "/admin/parejas" },
     {
       titulo: "Puestos de preparación (parrilla, plancha, postre, barra)",
@@ -627,9 +630,14 @@ function listaDeSala(resumenes: readonly ResumenDeMesa[]): HtmlSeguro {
       resumen.comandasSinServir === 0
         ? ""
         : `${resumen.comandasSinServir} ${resumen.comandasSinServir === 1 ? "comanda sin servir" : "comandas sin servir"}`
+    const enlaceCuenta =
+      resumen.cuentaId === null
+        ? html``
+        : html`<a class="sala-cuenta" href="/admin/cuentas/${encodeURIComponent(resumen.cuentaId)}">Cuenta pedida</a>`
     return html`<li>
 <a class="mesa-enlace" href="${urlDeMesaDeSala(resumen.mesa)}">${resumen.mesa.etiqueta}</a>
 ${distintivo}
+${enlaceCuenta}
 <span class="crece"></span>
 <span class="mesa-datos">${cuenta}</span>
 ${resumen.sesionActiva && resumen.mesa.activa ? botonCerrarMesa(resumen.mesa.id) : html``}
@@ -756,6 +764,162 @@ ${lista}
 ${enlaceVolverAlPanel()}
 </main>`
   return pagina(`Mesa · ${resumen.mesa.etiqueta}`, contenido, 20)
+}
+
+// ---------------------------------------------------------------------------
+// La cuenta: pedirla (comensal), verla y cobrarla (panel)
+// ---------------------------------------------------------------------------
+
+export const ETIQUETA_FORMA_DE_PAGO: Readonly<Record<FormaDePago, string>> = {
+  tpv_cash: "Efectivo",
+  tpv_card: "Tarjeta",
+  tpv_other: "Otra forma",
+}
+
+/** Orden del selector: primero lo mas probable. Son EXACTAMENTE los del `check` del esquema. */
+const FORMAS_DE_PAGO: readonly FormaDePago[] = ["tpv_cash", "tpv_card", "tpv_other"]
+
+function etiquetaDeCuenta(cuenta: CuentaDeMesa): HtmlSeguro {
+  return cuenta.cobrada
+    ? html`<span class="insignia insignia-ok">Cobrada</span>`
+    : html`<span class="insignia insignia-aviso">Pedida</span>`
+}
+
+function cobroDeCuenta(cuenta: CuentaDeMesa): HtmlSeguro {
+  if (!cuenta.cobrada) {
+    return html``
+  }
+  const forma = cuenta.formaDePago === null ? "—" : ETIQUETA_FORMA_DE_PAGO[cuenta.formaDePago]
+  const quien = cuenta.cobradaPor ?? "un empleado"
+  const cuando =
+    cuenta.pagadaHaceSegundos === null
+      ? ""
+      : ` · hace ${etiquetaDeTiempo(cuenta.pagadaHaceSegundos)}`
+  return html`<span class="cuenta-cobro">Cobrada por ${quien} · ${forma}${cuando}</span>`
+}
+
+function filaDeCuenta(cuenta: CuentaDeMesa): HtmlSeguro {
+  return html`<li class="cuenta-linea">
+<a class="cuenta-mesa" href="/admin/cuentas/${encodeURIComponent(cuenta.id)}">${cuenta.mesa}</a>
+${etiquetaDeCuenta(cuenta)}
+<span class="crece"></span>
+<span class="cuenta-importe">${formatearPrecio(cuenta.importeClp)}</span>
+${cobroDeCuenta(cuenta)}
+</li>`
+}
+
+export function vistaCuentas(
+  empleado: Empleado,
+  cuentas: readonly CuentaDeMesa[],
+  estado: EstadoPantalla & { readonly cobrada?: boolean },
+): HtmlSeguro {
+  const exito =
+    estado.exito ?? (estado.cobrada === true ? "Cobro registrado y mesa cerrada." : undefined)
+  const pendientes = cuentas.filter((cuenta) => !cuenta.cobrada).length
+  const resumenPendientes =
+    pendientes === 0
+      ? "No queda ninguna cuenta por cobrar."
+      : pendientes === 1
+        ? "Hay 1 cuenta por cobrar."
+        : `Hay ${pendientes} cuentas por cobrar.`
+  const lista =
+    cuentas.length === 0
+      ? html`<p>No hay cuentas pedidas ahora mismo.</p>`
+      : html`<ul class="cuentas">${cuentas.map(filaDeCuenta)}</ul>`
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${avisosDeEstado({ ...estado, exito })}
+<section class="tarjeta">
+<h1>Las cuentas</h1>
+<p>Las cuentas que han pedido los comensales, con su mesa y lo que llevan consumido. Registrar el cobro cierra la mesa. <strong>El dinero no pasa por aquí:</strong> solo se anota que un empleado cobró en el TPV.</p>
+<p>${resumenPendientes}</p>
+${lista}
+</section>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina("Las cuentas", contenido)
+}
+
+function campoFormaDePago(): HtmlSeguro {
+  return html`<label class="campo"><span>Forma de pago</span>
+<select name="forma_pago">
+${FORMAS_DE_PAGO.map((forma) => html`<option value="${forma}">${ETIQUETA_FORMA_DE_PAGO[forma]}</option>`)}
+</select>
+<span class="ayuda">Solo se guarda la etiqueta: ni número de tarjeta, ni autorización, ni referencia de pago.</span></label>`
+}
+
+function campoPropina(): HtmlSeguro {
+  return html`<label class="campo"><span>Propina</span>
+<select name="propina">
+<option value="0">Sin propina (0 %)</option>
+<option value="5">5 %</option>
+<option value="10">10 %</option>
+<option value="15">15 %</option>
+<option value="20">20 %</option>
+</select>
+<span class="ayuda">Se calcula sobre el importe ya descontado, nunca sobre el subtotal.</span></label>`
+}
+
+function importesDeLaCuenta(cuenta: CuentaDeMesa): HtmlSeguro {
+  const descuento =
+    cuenta.descuentoClp > 0
+      ? html`<dt>Descuento</dt><dd>− ${formatearPrecio(cuenta.descuentoClp)}</dd>`
+      : html``
+  return html`<dl class="datos">
+<dt>Subtotal</dt><dd>${formatearPrecio(cuenta.subtotalClp)}</dd>
+${descuento}
+<dt>${cuenta.cobrada ? "Importe cobrado" : "Importe a pagar"}</dt><dd><strong>${formatearPrecio(cuenta.importeClp)}</strong></dd>
+${
+  cuenta.cobrada && cuenta.propinaClp !== null && cuenta.totalClp !== null
+    ? html`<dt>Propina</dt><dd>${formatearPrecio(cuenta.propinaClp)}</dd>
+<dt>Total con propina</dt><dd><strong>${formatearPrecio(cuenta.totalClp)}</strong></dd>`
+    : html``
+}
+</dl>`
+}
+
+export function vistaCuenta(
+  empleado: Empleado,
+  cuenta: CuentaDeMesa,
+  comandas: readonly ComandaDePuesto[],
+  puedeCobrar: boolean,
+  estado: EstadoPantalla,
+): HtmlSeguro {
+  const lista =
+    comandas.length === 0
+      ? html`<p>Esta mesa todavía no tiene comandas.</p>`
+      : html`<ul class="pedidos-cocina">${comandas.map((comanda) => comandaDeSala(comanda, cuenta.mesaId))}</ul>`
+  const accion = cuenta.cobrada
+    ? html`<p class="aviso aviso-exito" role="status">Cobro registrado: la mesa ya está cerrada.</p>`
+    : puedeCobrar
+      ? html`<form method="post" action="/admin/cuentas/${encodeURIComponent(cuenta.id)}/cobrar">
+${campoPropina()}
+${campoFormaDePago()}
+<p class="aviso aviso-aviso"><strong>El importe lo calcula el sistema</strong> a partir de lo que hay en la base; no se escribe a mano. Al registrar el cobro, la mesa se cierra.</p>
+<button class="boton" type="submit">Registrar el cobro y cerrar la mesa</button>
+</form>`
+      : html`<p>Tu rol no puede registrar cobros. Pídeselo a quien atiende la caja.</p>`
+  const contenido = html`${cabecera("admin", empleado)}
+<main class="contenedor">
+${avisosDeEstado(estado)}
+<section class="tarjeta">
+<p><a class="boton boton-secundario" href="/admin/cuentas">Volver a las cuentas</a></p>
+<h1>Cuenta de ${cuenta.mesa}</h1>
+${etiquetaDeCuenta(cuenta)}
+${cobroDeCuenta(cuenta)}
+</section>
+<section class="tarjeta">
+<h2>Lo que ha consumido</h2>
+${lista}
+</section>
+<section class="tarjeta">
+<h2>La cuenta</h2>
+${importesDeLaCuenta(cuenta)}
+${accion}
+</section>
+${enlaceVolverAlPanel()}
+</main>`
+  return pagina(`Cuenta · ${cuenta.mesa}`, contenido)
 }
 
 /** Pantalla sencilla para un aviso claro que no encaja en las tarjetas de gestion. */

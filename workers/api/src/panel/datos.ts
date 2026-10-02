@@ -9,6 +9,7 @@
  * como `Resultado`, nunca como excepcion. Un fallo inesperado (la base caida) si sube.
  */
 import {
+  calcularCuenta,
   type EstadoDeComanda,
   esEstadoDeComanda,
   esPantallaTodos,
@@ -204,7 +205,54 @@ export type ResumenDeMesa = {
   readonly sesionActiva: boolean
   readonly solicitudId: string | null
   readonly comandasSinServir: number
+  /** Cuenta viva de la mesa, para poder enlazarla desde la sala. Nula si no se ha pedido. */
+  readonly cuentaId: string | null
 }
+
+/** Formas de pago que admite el esquema (check: tpv_card, tpv_cash, tpv_other). */
+export type FormaDePago = "tpv_card" | "tpv_cash" | "tpv_other"
+
+/**
+ * Una cuenta de mesa tal como la ve el panel: su mesa, lo que se ha consumido y si ya se
+ * registro el cobro. `importeClp` es lo que paga el cliente antes de propina; se calcula con
+ * la funcion unica del dominio a partir de las comandas de la base, nunca de la pantalla.
+ */
+export type CuentaDeMesa = {
+  readonly id: string
+  readonly mesaId: string
+  readonly mesa: string
+  readonly pedidaHaceSegundos: number
+  readonly subtotalClp: number
+  readonly descuentoClp: number
+  readonly importeClp: number
+  readonly cobrada: boolean
+  readonly pagadaHaceSegundos: number | null
+  readonly cobradaPor: string | null
+  readonly formaDePago: FormaDePago | null
+  readonly propinaClp: number | null
+  readonly totalClp: number | null
+}
+
+/** Lo que el formulario del panel manda para registrar un cobro. */
+export type DatosDeCobro = {
+  readonly cuentaId: string
+  readonly formaDePago: FormaDePago
+  readonly tipPercent: number
+}
+
+/** Por que no se pudo registrar un cobro. Cada causa tiene su mensaje en la pantalla. */
+export type MotivoDeCobro = "sin_permiso" | "no_existe" | "ya_cobrada" | "sin_sesion"
+
+export type ResultadoCobro =
+  | {
+      readonly ok: true
+      readonly valor: {
+        readonly importeClp: number
+        readonly propinaClp: number
+        readonly totalClp: number
+      }
+    }
+  | { readonly ok: false; readonly motivo: MotivoDeCobro }
 
 /** Por que no se pudo cambiar el estado de una comanda. */
 export type MotivoDeCambioComanda = "sin_permiso" | "no_existe" | "transicion_invalida"
@@ -314,6 +362,8 @@ export type AlmacenPanel = {
     mesaId: string,
   ) => Promise<readonly ComandaDePuesto[]>
   readonly cerrarSesion: (empleado: Empleado, mesaId: string) => Promise<Resultado>
+  readonly listarCuentas: (empleado: Empleado) => Promise<readonly CuentaDeMesa[]>
+  readonly cobrar: (empleado: Empleado, datos: DatosDeCobro) => Promise<ResultadoCobro>
 }
 
 type FilaLocal = {
@@ -1444,6 +1494,7 @@ type FilaResumen = FilaMesa & {
   readonly sesion_activa: boolean
   readonly solicitud_id: string | null
   readonly comandas_sin_servir: number
+  readonly cuenta_id: string | null
 }
 
 /**
@@ -1470,7 +1521,16 @@ async function listarFilaSala(cliente: Client, localId: string): Promise<readonl
            join public.table_sessions s on s.id = o.session_id
           where s.table_id = t.id and s.state = 'active'
             and o.status not in ('servida', 'cerrada', 'anulada')
-       ) as comandas_sin_servir
+       ) as comandas_sin_servir,
+       (
+         select b.id
+           from public.bill_requests b
+           join public.table_sessions s on s.id = b.session_id
+          where s.table_id = t.id and s.state = 'active'
+            and b.state in ('requested', 'preparing', 'ready')
+          order by b.requested_at desc, b.id desc
+          limit 1
+       ) as cuenta_id
      from public.tables t
      left join public.zones z on z.id = t.zone_id
      where t.location_id = $1
@@ -1482,6 +1542,7 @@ async function listarFilaSala(cliente: Client, localId: string): Promise<readonl
     sesionActiva: fila.sesion_activa,
     solicitudId: fila.solicitud_id,
     comandasSinServir: fila.comandas_sin_servir,
+    cuentaId: fila.cuenta_id,
   }))
 }
 
@@ -1521,6 +1582,204 @@ async function cambiarFilaEstadoComanda(
       throw error
     }
     return { ok: false, motivo: motivo === "sin_permiso" ? "sin_permiso" : "transicion_invalida" }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// La cuenta: pedirla (comensal), verla y cobrarla (panel)
+// ---------------------------------------------------------------------------
+
+type FilaCuenta = {
+  readonly id: string
+  readonly mesa_id: string
+  readonly mesa: string
+  readonly pedida: number
+  readonly subtotal: number
+  readonly descuento: number
+  readonly checkout_id: string | null
+  readonly forma_pago: string | null
+  readonly propina: number | null
+  readonly total: number | null
+  readonly cobrada: number | null
+  readonly cobrada_por: string | null
+}
+
+function formaDePagoValida(valor: string | null): FormaDePago | null {
+  return valor === "tpv_card" || valor === "tpv_cash" || valor === "tpv_other" ? valor : null
+}
+
+/** El importe a pagar se calcula con la MISMA funcion del dominio que lo vera el comensal. */
+function aCuentaDeMesa(fila: FilaCuenta): CuentaDeMesa {
+  const calculada = calcularCuenta({ subtotalClp: fila.subtotal, descuentoClp: fila.descuento })
+  return {
+    id: fila.id,
+    mesaId: fila.mesa_id,
+    mesa: fila.mesa,
+    pedidaHaceSegundos: fila.pedida,
+    subtotalClp: fila.subtotal,
+    descuentoClp: fila.descuento,
+    importeClp: calculada.importeClp,
+    cobrada: fila.checkout_id !== null,
+    pagadaHaceSegundos: fila.cobrada,
+    cobradaPor: fila.cobrada_por,
+    formaDePago: formaDePagoValida(fila.forma_pago),
+    propinaClp: fila.propina,
+    totalClp: fila.total,
+  }
+}
+
+/**
+ * Las cuentas pedidas del local, de la mas reciente a la mas antigua. El consumo se suma de
+ * las lineas de las comandas no anuladas, EXACTAMENTE lo que el comensal ve en su franja; el
+ * importe a pagar lo cierra la funcion unica de totales. Una cuenta esta cobrada si existe un
+ * `checkouts` para ella: no se reescribe una peticion, se registra un hecho.
+ */
+async function listarFilaCuentas(cliente: Client, localId: string): Promise<CuentaDeMesa[]> {
+  const resultado = await cliente.query<FilaCuenta>(
+    `select b.id, t.id as mesa_id, t.label as mesa,
+            extract(epoch from (now() - b.requested_at))::int as pedida,
+            coalesce((
+              select sum(oi.line_total_clp)
+                from public.orders o
+                join public.order_items oi on oi.order_id = o.id
+               where o.session_id = b.session_id and o.status <> 'anulada'
+            ), 0)::int as subtotal,
+            coalesce((
+              select sum(o.discount_clp) from public.orders o
+               where o.session_id = b.session_id and o.status <> 'anulada'
+            ), 0)::int as descuento,
+            c.id as checkout_id, c.payment_method as forma_pago,
+            c.tip_clp as propina, c.total_clp as total,
+            extract(epoch from (now() - c.settled_at))::int as cobrada,
+            c.cobrada_por
+       from public.bill_requests b
+       join public.table_sessions s on s.id = b.session_id
+       join public.tables t on t.id = s.table_id
+       left join lateral (
+         select ck.id, ck.payment_method, ck.tip_clp, ck.total_clp, ck.settled_at,
+                st.display_name as cobrada_por
+           from public.checkouts ck
+           left join public.staff st on st.id = ck.settled_by_staff_id
+          where ck.bill_request_id = b.id
+          order by ck.settled_at desc, ck.id desc
+          limit 1
+       ) c on true
+      where t.location_id = $1
+      order by b.requested_at desc, b.id desc`,
+    [localId],
+  )
+  return resultado.rows.map(aCuentaDeMesa)
+}
+
+type FilaCuentaParaCobro = {
+  readonly id: string
+  readonly session_id: string
+  readonly table_id: string
+  readonly org_id: string
+}
+
+/**
+ * Registra el cobro de una cuenta en UNA transaccion: lee el consumo de la BASE, calcula el
+ * importe y la propina con la funcion del dominio, inserta el hecho en `checkouts`, deja
+ * rastro en `audit_log` y cierra la sesion con el cierre que ya existia (`TASK-F1-10`). El
+ * importe nunca procede del formulario: la pantalla solo manda la forma de pago y la propina.
+ */
+async function cobrarCuenta(cliente: Client, datos: DatosDeCobro): Promise<ResultadoCobro> {
+  const cuenta = await cliente.query<FilaCuentaParaCobro>(
+    `select b.id, b.session_id, s.table_id, s.org_id
+       from public.bill_requests b
+       join public.table_sessions s on s.id = b.session_id
+      where b.id = $1`,
+    [datos.cuentaId],
+  )
+  const fila = cuenta.rows[0]
+  if (fila === undefined) {
+    return { ok: false, motivo: "no_existe" }
+  }
+  const yaCobrada = await cliente.query(
+    "select 1 from public.checkouts where bill_request_id = $1 limit 1",
+    [fila.id],
+  )
+  if ((yaCobrada.rowCount ?? 0) > 0) {
+    return { ok: false, motivo: "ya_cobrada" }
+  }
+  const abierta = await cliente.query<{ abierta: boolean }>(
+    "select s.state not in ('closed', 'voided') as abierta from public.table_sessions s where s.id = $1",
+    [fila.session_id],
+  )
+  if (abierta.rows[0]?.abierta !== true) {
+    return { ok: false, motivo: "sin_sesion" }
+  }
+  const totales = await cliente.query<{ subtotal: number; descuento: number }>(
+    `select coalesce((
+              select sum(oi.line_total_clp)
+                from public.orders o
+                join public.order_items oi on oi.order_id = o.id
+               where o.session_id = $1 and o.status <> 'anulada'
+            ), 0)::int as subtotal,
+            coalesce((
+              select sum(o.discount_clp) from public.orders o
+               where o.session_id = $1 and o.status <> 'anulada'
+            ), 0)::int as descuento`,
+    [fila.session_id],
+  )
+  const calculada = calcularCuenta({
+    subtotalClp: totales.rows[0]?.subtotal ?? 0,
+    descuentoClp: totales.rows[0]?.descuento ?? 0,
+    tipPercent: datos.tipPercent,
+  })
+  await cliente.query("savepoint cobro")
+  try {
+    const checkout = await cliente.query<{ id: string }>(
+      `insert into public.checkouts
+         (bill_request_id, session_id, settled_by_staff_id, payment_method, total_clp, tip_clp)
+       values ($1, $2, public.staff_actual(), $3, $4, $5)
+       returning id`,
+      [fila.id, fila.session_id, datos.formaDePago, calculada.totalClp, calculada.propinaClp],
+    )
+    const checkoutId = checkout.rows[0]?.id
+    if (checkoutId === undefined) {
+      throw new Error("La inserción del cobro no devolvió fila")
+    }
+    await cliente.query(
+      `insert into public.audit_log (org_id, actor_staff_id, action, entity, entity_id, after_json)
+       values ($1, public.staff_actual(), 'checkout.registered', 'checkout', $2, $3::jsonb)`,
+      [
+        fila.org_id,
+        checkoutId,
+        JSON.stringify({
+          session_id: fila.session_id,
+          payment_method: datos.formaDePago,
+          importe_clp: calculada.importeClp,
+          tip_clp: calculada.propinaClp,
+          total_clp: calculada.totalClp,
+        }),
+      ],
+    )
+    const cierre = await cliente.query<{ causa: string }>(
+      "select public.camarero_cerrar_sesion($1) as causa",
+      [fila.table_id],
+    )
+    if (cierre.rows[0]?.causa !== "ok") {
+      await cliente.query("rollback to savepoint cobro")
+      return { ok: false, motivo: "ya_cobrada" }
+    }
+    await cliente.query("release savepoint cobro")
+    return {
+      ok: true,
+      valor: {
+        importeClp: calculada.importeClp,
+        propinaClp: calculada.propinaClp,
+        totalClp: calculada.totalClp,
+      },
+    }
+  } catch (error) {
+    await cliente.query("rollback to savepoint cobro")
+    const motivo = motivoDeErrorDeEscritura(error)
+    if (motivo === "sin_permiso") {
+      return { ok: false, motivo: "sin_permiso" }
+    }
+    throw error
   }
 }
 
@@ -1749,6 +2008,13 @@ export function almacenDeBase(cadena: string): AlmacenPanel {
         }
         throw new Error(`Causa de cierre desconocida: ${causa}`)
       }),
+    listarCuentas: (empleado): Promise<readonly CuentaDeMesa[]> =>
+      enTransaccion(cadena, empleado, async (cliente) => {
+        const id = await resolverLocalId(cliente, empleado)
+        return id === null ? [] : await listarFilaCuentas(cliente, id)
+      }),
+    cobrar: (empleado, datos): Promise<ResultadoCobro> =>
+      enTransaccion(cadena, empleado, (cliente) => cobrarCuenta(cliente, datos)),
   }
 }
 
@@ -1803,6 +2069,8 @@ export function almacenNoConfigurado(): AlmacenPanel {
     listarSala: async (): Promise<readonly ResumenDeMesa[]> => [],
     listarComandasDeMesa: async (): Promise<readonly ComandaDePuesto[]> => [],
     cerrarSesion: async (): Promise<Resultado> => ({ ok: false, motivo: "no_existe" }),
+    listarCuentas: async (): Promise<readonly CuentaDeMesa[]> => [],
+    cobrar: async (): Promise<ResultadoCobro> => ({ ok: false, motivo: "no_existe" }),
   }
 }
 

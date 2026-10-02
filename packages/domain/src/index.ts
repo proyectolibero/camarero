@@ -1,4 +1,13 @@
 export {
+  type CuentaCalculada,
+  calcularCuenta,
+  type DatosDeCuenta,
+  descuentoPorcentual,
+  esPorcentajeDePropinaValido,
+  PORCENTAJES_DE_PROPINA,
+  type PorcentajeDePropina,
+} from "./cuenta.ts"
+export {
   type LineaConTotal,
   type LineaDeImporte,
   subtotalDeLineas,

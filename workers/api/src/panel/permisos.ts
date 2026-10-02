@@ -47,3 +47,12 @@ export function puedeOperarCocina(empleado: Empleado): boolean {
     "no_pin",
   ].includes(empleado.rol)
 }
+
+/**
+ * Registrar el cobro de una cuenta. Replica la cerradura de la base: `checkouts_insert` admite
+ * a la plataforma, al dueno de la organizacion (`en_mi_org`) y a los roles que la base llama
+ * `es_cobrador` (encargado y garzon). Cocina y tablet compartida NO cobran: no tocan dinero.
+ */
+export function puedeRegistrarCobro(empleado: Empleado): boolean {
+  return ["platform_admin", "org_owner", "location_manager", "server"].includes(empleado.rol)
+}

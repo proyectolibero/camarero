@@ -63,7 +63,7 @@ function resumenDe(
   solicitudId: string | null,
   comandasSinServir: number,
 ): ResumenDeMesa {
-  return { mesa: unaMesa, sesionActiva, solicitudId, comandasSinServir }
+  return { mesa: unaMesa, sesionActiva, solicitudId, comandasSinServir, cuentaId: null }
 }
 
 /** Un local con las cuatro mesas en los cuatro estados posibles, en dos zonas. */

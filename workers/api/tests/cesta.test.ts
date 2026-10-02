@@ -28,6 +28,7 @@ function carta(parciales: Partial<CartaDelComensal> = {}): CartaDelComensal {
     estado: "aprobado",
     restanteSegundos: null,
     subtotalAcumuladoClp: 0,
+    cuentaPedida: false,
     categorias: [
       {
         id: "c1",
@@ -219,6 +220,7 @@ function almacenConEnvios(): {
       mesa: "Mesa 4",
       pedidos: PEDIDOS,
       subtotalAcumuladoClp: 17800,
+      cuentaPedida: false,
     }),
     enviar: async (_codigo, _sesion, clave, lineas) => {
       if (lineas.length === 0) {
@@ -319,6 +321,7 @@ describe("Cesta: el estado de los pedidos", () => {
             mesa: "Mesa 4",
             pedidos: PEDIDOS,
             subtotalAcumuladoClp: 17800,
+            cuentaPedida: false,
           }),
         }),
       },
@@ -357,6 +360,7 @@ describe("Cesta: el estado de los pedidos", () => {
             mesa: "Mesa 4",
             pedidos: [deBarra],
             subtotalAcumuladoClp: 4000,
+            cuentaPedida: false,
           }),
         }),
       },
@@ -413,6 +417,7 @@ async function pantallaDePedidos(pedidos: readonly PedidoDelComensal[]): Promise
           mesa: "Mesa 4",
           pedidos,
           subtotalAcumuladoClp: subtotalDePedidos(pedidos),
+          cuentaPedida: false,
         }),
       }),
     },

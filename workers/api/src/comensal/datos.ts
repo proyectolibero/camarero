@@ -43,6 +43,8 @@ export type CartaDelComensal = {
    * gasto (D-056) lo muestre en la carta y en la cesta, no solo en la pantalla de pedidos.
    */
   readonly subtotalAcumuladoClp: number
+  /** Ya ha pedido la cuenta: se le dice y deja de poder pedir platos. */
+  readonly cuentaPedida: boolean
   readonly categorias: readonly CategoriaDeCarta[]
 }
 
@@ -62,6 +64,14 @@ export type ResultadoEnvio =
   | { readonly tipo: "sin_sesion" }
   | { readonly tipo: "sin_aprobar" }
   | { readonly tipo: "cesta_vacia" }
+  | { readonly tipo: "cuenta_pedida" }
+
+/** Resultado de pedir la cuenta. Cada causa se distingue para poder decir que paso. */
+export type ResultadoCuenta =
+  | { readonly tipo: "ok" }
+  | { readonly tipo: "codigo_desconocido" }
+  | { readonly tipo: "sin_sesion" }
+  | { readonly tipo: "sin_aprobar" }
 
 /** Una linea tal como la ve el comensal en el estado de sus pedidos. */
 export type LineaDelPedido = {
@@ -88,6 +98,8 @@ export type LecturaPedidos =
       readonly pedidos: readonly PedidoDelComensal[]
       /** Suma de las comandas NO anuladas: lo que el comensal lleva pedido en la mesa. */
       readonly subtotalAcumuladoClp: number
+      /** Ya ha pedido la cuenta: se le dice y deja de poder pedir platos. */
+      readonly cuentaPedida: boolean
     }
   | { readonly tipo: "codigo_desconocido" }
   | { readonly tipo: "sin_sesion" }
@@ -103,6 +115,7 @@ export type AlmacenComensal = {
     lineas: readonly LineaDeEnvio[],
   ) => Promise<ResultadoEnvio>
   readonly pedidos: (codigo: string, sesionId: string | null) => Promise<LecturaPedidos>
+  readonly pedirCuenta: (codigo: string, sesionId: string | null) => Promise<ResultadoCuenta>
 }
 
 type FilaMesa = {
@@ -203,6 +216,21 @@ async function tocarActividad(cliente: Client, sesionId: string): Promise<void> 
   await cliente.query("update public.table_sessions set last_activity_at = now() where id = $1", [
     sesionId,
   ])
+}
+
+/**
+ * Verdadero si la sesion tiene una cuenta viva (pedida y no terminada). Mientras la tenga, el
+ * comensal no puede pedir platos: la barrera de la BASE (`puede_crear_orden`) usa esta misma
+ * condicion, de modo que forzar el POST tampoco sirve.
+ */
+async function hayCuentaViva(cliente: Client, sesionId: string): Promise<boolean> {
+  const resultado = await cliente.query(
+    `select 1 from public.bill_requests
+      where session_id = $1 and state in ('requested', 'preparing', 'ready')
+      limit 1`,
+    [sesionId],
+  )
+  return (resultado.rowCount ?? 0) > 0
 }
 
 /**
@@ -418,6 +446,7 @@ async function cargarCarta(
     estado,
     restanteSegundos: restante,
     subtotalAcumuladoClp: subtotalDePedidos(pedidos),
+    cuentaPedida: await hayCuentaViva(cliente, sesion.id),
     categorias: agrupar(categorias.rows, platos.rows),
   }
 }
@@ -737,6 +766,9 @@ async function enviarComanda(
     if (datos.sesion.state !== "active") {
       return { tipo: "sin_aprobar" } as const
     }
+    if (await hayCuentaViva(cliente, datos.sesion.id)) {
+      return { tipo: "cuenta_pedida" } as const
+    }
     try {
       let primero: string | null = null
       for (const grupo of grupos) {
@@ -838,6 +870,7 @@ async function leerPedidos(
       pedidos,
       // Lo que el comensal lleva pedido: la suma de las comandas vivas, sin las anuladas.
       subtotalAcumuladoClp: subtotalDePedidos(pedidos),
+      cuentaPedida: await hayCuentaViva(cliente, datos.sesion.id),
     }
   })
   if ("fallo" in envuelto) {
@@ -851,7 +884,39 @@ async function leerPedidos(
     mesa: envuelto.valor.mesa,
     pedidos: envuelto.valor.pedidos,
     subtotalAcumuladoClp: envuelto.valor.subtotalAcumuladoClp,
+    cuentaPedida: envuelto.valor.cuentaPedida,
   }
+}
+
+/**
+ * El comensal pide la cuenta. Se registra una sola peticion viva por sesion: volver a pedirla
+ * no crea otra ni falla, simplemente confirma que ya esta pedida. Pedirla cierra la via de
+ * pedir platos (la barrera esta en la base, no en el boton).
+ */
+async function pedirLaCuenta(
+  cadena: string,
+  codigo: string,
+  sesionId: string | null,
+): Promise<ResultadoCuenta> {
+  const envuelto = await comoComensal(cadena, codigo, sesionId, async (cliente, datos) => {
+    if (datos.sesion.state !== "active") {
+      return { tipo: "sin_aprobar" } as const
+    }
+    if (!(await hayCuentaViva(cliente, datos.sesion.id))) {
+      await cliente.query(
+        `insert into public.bill_requests (session_id, split_mode, state)
+         values ($1, 'none', 'requested')`,
+        [datos.sesion.id],
+      )
+    }
+    return { tipo: "ok" } as const
+  })
+  if ("fallo" in envuelto) {
+    return envuelto.fallo === "codigo_desconocido"
+      ? { tipo: "codigo_desconocido" }
+      : { tipo: "sin_sesion" }
+  }
+  return envuelto.valor
 }
 
 export function almacenComensalDeBase(cadena: string): AlmacenComensal {
@@ -861,6 +926,7 @@ export function almacenComensalDeBase(cadena: string): AlmacenComensal {
     enviar: (codigo, sesionId, clave, lineas) =>
       enviarComanda(cadena, codigo, sesionId, clave, lineas),
     pedidos: (codigo, sesionId) => leerPedidos(cadena, codigo, sesionId),
+    pedirCuenta: (codigo, sesionId) => pedirLaCuenta(cadena, codigo, sesionId),
   }
 }
 
@@ -872,6 +938,7 @@ export function almacenComensalNoConfigurado(): AlmacenComensal {
     pedir: desconocido,
     enviar: async () => ({ tipo: "codigo_desconocido" }),
     pedidos: async () => ({ tipo: "codigo_desconocido" }),
+    pedirCuenta: async () => ({ tipo: "codigo_desconocido" }),
   }
 }
 

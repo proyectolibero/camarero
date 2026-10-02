@@ -29,6 +29,7 @@ import { generarCodigoMesa } from "../src/panel/codigo-mesa.ts"
 import type {
   Categoria,
   ComandaDePuesto,
+  CuentaDeMesa,
   Mesa,
   Plato,
   Puesto,
@@ -40,6 +41,8 @@ import {
   vistaCarta,
   vistaCategoria,
   vistaCocina,
+  vistaCuenta,
+  vistaCuentas,
   vistaDetalleMesa,
   vistaEntrada,
   vistaMesas,
@@ -456,6 +459,7 @@ const CARTA_COMENSAL: CartaDelComensal = {
   estado: "aprobado",
   restanteSegundos: null,
   subtotalAcumuladoClp: 17800,
+  cuentaPedida: false,
   categorias: [
     {
       id: "c1",
@@ -739,15 +743,16 @@ function resumenDeSala(
   sesionActiva: boolean,
   solicitudId: string | null,
   comandasSinServir: number,
+  cuentaId: string | null = null,
 ): ResumenDeMesa {
-  return { mesa: mesaDeSala(id), sesionActiva, solicitudId, comandasSinServir }
+  return { mesa: mesaDeSala(id), sesionActiva, solicitudId, comandasSinServir, cuentaId }
 }
 
 // Los cuatro estados, repartidos por las tres zonas, para que se vean a la vez.
 const RESUMENES_SALA: readonly ResumenDeMesa[] = [
   resumenDeSala("s1", false, "pr-s1", 0), // esperando aprobacion
   resumenDeSala("s2", true, null, 2), // con comandas pendientes
-  resumenDeSala("s3", true, null, 0), // todo servido
+  resumenDeSala("s3", true, null, 0, "cuenta-1"), // todo servido, con la cuenta pedida
   resumenDeSala("s4", false, null, 0), // libre
   resumenDeSala("s5", false, null, 0), // libre
   resumenDeSala("b1", true, null, 1), // con comandas pendientes
@@ -791,6 +796,63 @@ escribir(
     renderizar(
       vistaDetalleMesa(DUENO, resumenDeSala("s2", true, null, 2), COMANDAS_DE_LA_MESA, {}),
     ),
+  ),
+)
+
+// ---------------------------------------------------------------------------
+// La cuenta: el comensal la pide, el local la ve y la cobra (TASK-F3-01, LL-020)
+// ---------------------------------------------------------------------------
+
+// La carta con la cuenta YA pedida: el aviso, sin boton de añadir y sin poder enviar.
+escribir(
+  "comensal-cuenta.html",
+  conFotosRelativas(
+    conHojaDeEstilosRelativa(
+      renderizar(vistaCartaComensal({ ...CARTA_COMENSAL, cuentaPedida: true }, "ABCDEFGH")),
+    ),
+  ),
+)
+
+const CUENTA_PEDIDA: CuentaDeMesa = {
+  id: "cuenta-1",
+  mesaId: "s2",
+  mesa: "Sala 2",
+  pedidaHaceSegundos: 45,
+  subtotalClp: 29600,
+  descuentoClp: 0,
+  importeClp: 29600,
+  cobrada: false,
+  pagadaHaceSegundos: null,
+  cobradaPor: null,
+  formaDePago: null,
+  propinaClp: null,
+  totalClp: null,
+}
+
+const CUENTA_COBRADA: CuentaDeMesa = {
+  id: "cuenta-2",
+  mesaId: "b3",
+  mesa: "Barra 3",
+  pedidaHaceSegundos: 600,
+  subtotalClp: 11800,
+  descuentoClp: 0,
+  importeClp: 11800,
+  cobrada: true,
+  pagadaHaceSegundos: 120,
+  cobradaPor: "Dueña de ejemplo",
+  formaDePago: "tpv_cash",
+  propinaClp: 1180,
+  totalClp: 12980,
+}
+
+escribir(
+  "cuentas.html",
+  conHojaDeEstilosRelativa(renderizar(vistaCuentas(DUENO, [CUENTA_PEDIDA, CUENTA_COBRADA], {}))),
+)
+escribir(
+  "cuenta.html",
+  conHojaDeEstilosRelativa(
+    renderizar(vistaCuenta(DUENO, CUENTA_PEDIDA, COMANDAS_DE_LA_MESA, true, {})),
   ),
 )
 

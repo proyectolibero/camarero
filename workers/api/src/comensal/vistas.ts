@@ -145,6 +145,25 @@ ${quedan}
 </div>`
 }
 
+/**
+ * Pedir la cuenta: un POST y una sola vez. Cuando ya esta pedida se dice con claridad y no se
+ * ofrece el boton. La barra de verdad esta en la base (no se puede insertar una comanda con
+ * una cuenta viva), pero la pantalla no debe mentir ofreciendo lo que la base rechazara.
+ */
+function bloqueCuenta(codigo: string, cuentaPedida: boolean): HtmlSeguro {
+  if (cuentaPedida) {
+    return html`<div class="cuenta-pedida" role="status">
+<p><strong>Has pedido la cuenta.</strong> El local la está preparando. Ya no se pueden añadir más platos a esta mesa.</p>
+</div>`
+  }
+  return html`<div class="cuenta-pedir">
+<p>¿Habéis terminado? Pídele la cuenta al local desde aquí.</p>
+<form method="post" action="/t/${codigo}/cuenta">
+<button class="boton boton-grande" type="submit">Pedir la cuenta</button>
+</form>
+</div>`
+}
+
 /** Añadir a la cesta es un POST sin JavaScript: cada plato lleva su boton y su accion. */
 function botonAgregar(plato: PlatoDeCarta, codigo: string): HtmlSeguro {
   return html`<form class="comensal-agregar" method="post" action="/t/${codigo}/cesta">
@@ -154,7 +173,7 @@ function botonAgregar(plato: PlatoDeCarta, codigo: string): HtmlSeguro {
 </form>`
 }
 
-function fichaDePlato(plato: PlatoDeCarta, codigo: string): HtmlSeguro {
+function fichaDePlato(plato: PlatoDeCarta, codigo: string, puedeAnadir: boolean): HtmlSeguro {
   const foto =
     plato.fotoClave === null
       ? html``
@@ -170,14 +189,18 @@ ${foto}
 ${descripcion}
 <span class="comensal-plato-precio">${precio(plato.precioClp)}</span>
 </span>
-${botonAgregar(plato, codigo)}
+${puedeAnadir ? botonAgregar(plato, codigo) : html``}
 </li>`
 }
 
-function seccionDeCategoria(categoria: CategoriaDeCarta, codigo: string): HtmlSeguro {
+function seccionDeCategoria(
+  categoria: CategoriaDeCarta,
+  codigo: string,
+  puedeAnadir: boolean,
+): HtmlSeguro {
   return html`<section class="comensal-categoria">
 <h2>${categoria.nombre}</h2>
-<ul class="comensal-platos">${categoria.platos.map((plato) => fichaDePlato(plato, codigo))}</ul>
+<ul class="comensal-platos">${categoria.platos.map((plato) => fichaDePlato(plato, codigo, puedeAnadir))}</ul>
 </section>`
 }
 
@@ -198,10 +221,11 @@ export function vistaCartaComensal(
 <main class="contenedor">
 <h1 class="comensal-mesa">${carta.mesa}</h1>
 ${bloqueEmparejamiento(carta, codigo)}
+${carta.estado === "aprobado" ? bloqueCuenta(codigo, carta.cuentaPedida) : html``}
 ${resumenCesta}
 <h2 class="comensal-carta-titulo">Carta</h2>
 ${cartaVacia}
-${carta.categorias.map((categoria) => seccionDeCategoria(categoria, codigo))}
+${carta.categorias.map((categoria) => seccionDeCategoria(categoria, codigo, !carta.cuentaPedida))}
 </main>`
   return paginaComensal(
     carta.mesa,
@@ -300,7 +324,11 @@ ${opciones.aviso === undefined ? html`` : html`<p class="aviso aviso-aviso" role
 <input type="hidden" name="clave" value="${opciones.clave}">
 <button class="boton boton-grande" type="submit">Enviar la comanda</button>
 </form>`
-    : html`<div class="cesta-bloqueo">
+    : carta.cuentaPedida
+      ? html`<div class="cesta-bloqueo">
+<p><strong>Has pedido la cuenta.</strong> No puedes enviar más platos a esta mesa.</p>
+</div>`
+      : html`<div class="cesta-bloqueo">
 <p>Para enviar, el local tiene que aprobar tu mesa. Pídeselo desde aquí:</p>
 ${bloqueEmparejamiento(carta, codigo)}
 </div>`
@@ -310,7 +338,7 @@ ${bloqueEmparejamiento(carta, codigo)}
 ${opciones.aviso === undefined ? html`` : html`<p class="aviso aviso-aviso" role="alert">${opciones.aviso}</p>`}
 <ul class="cesta-lista">${lineas.map((linea) => filaDeCesta(linea, codigo))}</ul>
 <p class="cesta-total"><span>Total</span> <strong>${precio(totalClp)}</strong></p>
-${avisoAntesDeEnviar()}
+${opciones.puedeEnviar ? avisoAntesDeEnviar() : html``}
 ${enviar}
 <p><a class="boton boton-secundario" href="/t/${codigo}">Seguir pidiendo</a></p>
 </main>`
@@ -365,6 +393,7 @@ export function vistaPedidosComensal(
   codigo: string,
   pedidos: readonly PedidoDelComensal[],
   subtotalAcumuladoClp: number,
+  cuentaPedida = false,
 ): HtmlSeguro {
   const hayEnMarcha = pedidos.some(enMarcha)
   // Lo que aun no ha llegado, con la MISMA funcion de totales del dominio que el resto.
@@ -387,6 +416,7 @@ export function vistaPedidosComensal(
   }</p>
 ${avisoHermanas}
 ${lista}
+${bloqueCuenta(codigo, cuentaPedida)}
 <p><a class="boton boton-secundario" href="/t/${codigo}">Volver a la carta</a></p>
 </main>`
   return paginaComensal("Tus pedidos", contenido, hayEnMarcha ? REFRESCO_PEDIDOS_EN_MARCHA : null)
