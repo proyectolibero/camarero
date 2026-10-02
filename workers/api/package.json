@@ -19,7 +19,7 @@
     "@types/pg": "^8",
     "jsqr": "1.4.0",
     "pg": "^8",
-    "typescript": "^5",
+    "typescript": "^7",
     "vitest": "^5",
     "wrangler": "^4.142.0"
   },
