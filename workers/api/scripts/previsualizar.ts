@@ -453,8 +453,9 @@ escribir(
 const CARTA_COMENSAL: CartaDelComensal = {
   local: "Barra Uno",
   mesa: "Mesa 4",
-  estado: "sin_pedir",
-  restanteSegundos: 600,
+  estado: "aprobado",
+  restanteSegundos: null,
+  subtotalAcumuladoClp: 17800,
   categorias: [
     {
       id: "c1",
@@ -501,10 +502,30 @@ const CARTA_COMENSAL: CartaDelComensal = {
   ],
 }
 
+// La carta con la mesa ya aprobada y gasto encima: la franja enseña el gasto y el desglose.
 escribir(
   "comensal.html",
   conFotosRelativas(
     conHojaDeEstilosRelativa(renderizar(vistaCartaComensal(CARTA_COMENSAL, "ABCDEFGH"))),
+  ),
+)
+// La misma carta antes de emparejarse: la franja esta, pero dice que aun no hay nada pedido.
+escribir(
+  "comensal-sin-pedir.html",
+  conFotosRelativas(
+    conHojaDeEstilosRelativa(
+      renderizar(
+        vistaCartaComensal(
+          {
+            ...CARTA_COMENSAL,
+            estado: "sin_pedir",
+            restanteSegundos: 600,
+            subtotalAcumuladoClp: 0,
+          },
+          "ABCDEFGH",
+        ),
+      ),
+    ),
   ),
 )
 escribir(
@@ -572,13 +593,10 @@ escribir(
   "cesta.html",
   conHojaDeEstilosRelativa(
     renderizar(
-      vistaCestaComensal(
-        { ...CARTA_COMENSAL, estado: "aprobado" },
-        "ABCDEFGH",
-        LINEAS_CESTA,
-        TOTAL_CESTA,
-        { clave: "clave-de-ejemplo", puedeEnviar: true },
-      ),
+      vistaCestaComensal(CARTA_COMENSAL, "ABCDEFGH", LINEAS_CESTA, TOTAL_CESTA, {
+        clave: "clave-de-ejemplo",
+        puedeEnviar: true,
+      }),
     ),
   ),
 )

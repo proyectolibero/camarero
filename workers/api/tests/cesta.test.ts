@@ -27,6 +27,7 @@ function carta(parciales: Partial<CartaDelComensal> = {}): CartaDelComensal {
     mesa: "Mesa 4",
     estado: "aprobado",
     restanteSegundos: null,
+    subtotalAcumuladoClp: 0,
     categorias: [
       {
         id: "c1",

@@ -921,12 +921,21 @@ p {
    grande, y un boton claro para pedir el emparejamiento.
    --------------------------------------------------------------------------- */
 
+/*
+ * La cabecera del comensal se queda pegada arriba (D-056): el gasto y el camino a su desglose
+ * siguen a la vista aunque se baje por la carta, que es donde mas tiempo pasa y donde decide
+ * si pide mas. Es sticky y no fija con posicionamiento: ocupa su franja en el flujo y empuja
+ * el contenido, no lo tapa. La franja va en su propia linea, debajo de la marca y el local.
+ */
 .comensal-cabecera {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.75rem;
-  padding: 0.85rem 1.25rem;
+  gap: 0.35rem 0.75rem;
+  padding: 0.6rem 1.25rem 0.5rem;
   background: var(--papel);
   border-bottom: 1px solid var(--borde);
 }
@@ -938,6 +947,41 @@ p {
 
 .comensal-local {
   color: var(--tinta-suave);
+}
+
+/* La franja del gasto: gasto, enlace al desglose (o de vuelta) y nada mas, para leerse de un
+   vistazo con el movil en la mano. Ocupa toda la linea dentro de la cabecera. */
+.comensal-gasto {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.6rem;
+  margin: 0;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--borde);
+}
+
+.comensal-gasto-etiqueta {
+  color: var(--tinta-suave);
+  font-size: 0.9rem;
+}
+
+.comensal-gasto strong {
+  font-size: 1.15rem;
+  color: var(--acento);
+}
+
+/* Sin nada pedido no hay importe que enseñar: se dice, no se pinta un cero sin explicacion. */
+.comensal-gasto-vacio {
+  color: var(--tinta-suave);
+  font-size: 0.9rem;
+}
+
+/* Es el camino que mas se toca con el movil en la mano: un objetivo mas comodo que el mini. */
+.comensal-gasto .boton-mini {
+  padding: 0.5rem 0.85rem;
+  font-size: 0.9rem;
 }
 
 .comensal-mesa {

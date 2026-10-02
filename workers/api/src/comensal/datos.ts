@@ -38,6 +38,11 @@ export type CartaDelComensal = {
   readonly mesa: string
   readonly estado: EstadoEmparejamiento
   readonly restanteSegundos: number | null
+  /**
+   * Lo que el comensal lleva pedido en la mesa. Viaja con la carta para que la franja del
+   * gasto (D-056) lo muestre en la carta y en la cesta, no solo en la pantalla de pedidos.
+   */
+  readonly subtotalAcumuladoClp: number
   readonly categorias: readonly CategoriaDeCarta[]
 }
 
@@ -404,11 +409,15 @@ async function cargarCarta(
     [mesa.location_id],
   )
   const { estado, restante } = calcularEstado(sesion, ultima.rows[0]?.state ?? null)
+  // El gasto acumulado sale de las MISMAS comandas y con la MISMA funcion de totales que la
+  // pantalla de pedidos (D-056): no hay un segundo calculo que pueda separarse del primero.
+  const pedidos = await cargarPedidos(cliente, sesion.id)
   return {
     local: local.rows[0]?.name ?? "Tu local",
     mesa: mesa.label,
     estado,
     restanteSegundos: restante,
+    subtotalAcumuladoClp: subtotalDePedidos(pedidos),
     categorias: agrupar(categorias.rows, platos.rows),
   }
 }
@@ -768,6 +777,50 @@ type FilaPedidoItem = {
 }
 
 /** Las comandas de la sesion, con sus lineas y el total real de la carta. */
+async function cargarPedidos(
+  cliente: Client,
+  sesionId: string,
+): Promise<readonly PedidoDelComensal[]> {
+  const ordenes = await cliente.query<FilaPedido>(
+    `select o.id, o.status,
+            extract(epoch from (now() - o.created_at))::int as creada,
+            coalesce(ks.name, o.prep_station) as puesto_nombre
+       from public.orders o
+       left join public.kitchen_stations ks on ks.id = o.prep_station_id
+      where o.session_id = $1
+      order by o.created_at desc, o.id desc`,
+    [sesionId],
+  )
+  if (ordenes.rows.length === 0) {
+    return []
+  }
+  const items = await cliente.query<FilaPedidoItem>(
+    `select order_id, name_snapshot, qty, line_total_clp
+       from public.order_items
+      where order_id = any($1::uuid[])
+      order by created_at, id`,
+    [ordenes.rows.map((fila) => fila.id)],
+  )
+  const porOrden = new Map<string, LineaDelPedido[]>()
+  for (const item of items.rows) {
+    const lista = porOrden.get(item.order_id) ?? []
+    lista.push({ nombre: item.name_snapshot, cantidad: item.qty, totalClp: item.line_total_clp })
+    porOrden.set(item.order_id, lista)
+  }
+  return ordenes.rows.map((fila): PedidoDelComensal => {
+    const lineas = porOrden.get(fila.id) ?? []
+    return {
+      id: fila.id,
+      destino: fila.puesto_nombre ?? "Sin puesto",
+      estado: fila.status,
+      creadoHaceSegundos: fila.creada,
+      lineas,
+      totalClp: totalDeLineas(lineas),
+    }
+  })
+}
+
+/** La pantalla de pedidos: el local, la mesa, las comandas y el acumulado vivo. */
 async function leerPedidos(
   cadena: string,
   codigo: string,
@@ -778,54 +831,14 @@ async function leerPedidos(
       "select name from public.locations where id = $1",
       [datos.mesa.location_id],
     )
-    const ordenes = await cliente.query<FilaPedido>(
-      `select o.id, o.status,
-              extract(epoch from (now() - o.created_at))::int as creada,
-              coalesce(ks.name, o.prep_station) as puesto_nombre
-         from public.orders o
-         left join public.kitchen_stations ks on ks.id = o.prep_station_id
-        where o.session_id = $1
-        order by o.created_at desc, o.id desc`,
-      [datos.sesion.id],
-    )
-    const cabecera = {
+    const pedidos = await cargarPedidos(cliente, datos.sesion.id)
+    return {
       local: local.rows[0]?.name ?? "Tu local",
       mesa: datos.mesa.label,
+      pedidos,
+      // Lo que el comensal lleva pedido: la suma de las comandas vivas, sin las anuladas.
+      subtotalAcumuladoClp: subtotalDePedidos(pedidos),
     }
-    if (ordenes.rows.length === 0) {
-      return {
-        ...cabecera,
-        pedidos: [] as readonly PedidoDelComensal[],
-        subtotalAcumuladoClp: 0,
-      }
-    }
-    const items = await cliente.query<FilaPedidoItem>(
-      `select order_id, name_snapshot, qty, line_total_clp
-         from public.order_items
-        where order_id = any($1::uuid[])
-        order by created_at, id`,
-      [ordenes.rows.map((fila) => fila.id)],
-    )
-    const porOrden = new Map<string, LineaDelPedido[]>()
-    for (const item of items.rows) {
-      const lista = porOrden.get(item.order_id) ?? []
-      lista.push({ nombre: item.name_snapshot, cantidad: item.qty, totalClp: item.line_total_clp })
-      porOrden.set(item.order_id, lista)
-    }
-    const pedidos = ordenes.rows.map((fila): PedidoDelComensal => {
-      const lineas = porOrden.get(fila.id) ?? []
-      return {
-        id: fila.id,
-        destino: fila.puesto_nombre ?? "Sin puesto",
-        estado: fila.status,
-        creadoHaceSegundos: fila.creada,
-        lineas,
-        totalClp: totalDeLineas(lineas),
-      }
-    })
-    // Lo que el comensal lleva pedido: la suma de las comandas vivas, sin las anuladas.
-    const subtotalAcumuladoClp = subtotalDePedidos(pedidos)
-    return { ...cabecera, pedidos, subtotalAcumuladoClp }
   })
   if ("fallo" in envuelto) {
     return envuelto.fallo === "codigo_desconocido"

@@ -39,6 +39,40 @@ function precio(clp: number): string {
   return `$ ${FORMATO_CLP.format(clp)}`
 }
 
+/**
+ * La cabecera del comensal con la franja del gasto (D-056).
+ *
+ * Va en todas las pantallas donde ya hay mesa —la carta, la cesta, los pedidos y el estado del
+ * emparejamiento— y NO en las que dicen que no hay mesa. Cuando no se ha pedido nada no se
+ * escribe «$ 0», que parece una franja rota: se dice que aún no hay nada pedido.
+ */
+function cabeceraComensal(
+  local: string,
+  codigo: string,
+  subtotalAcumuladoClp: number,
+  enElDesglose: boolean,
+): HtmlSeguro {
+  const marca = html`<span class="marca">Camarero</span>
+<span class="comensal-local">${local}</span>`
+  if (subtotalAcumuladoClp === 0) {
+    return html`<header class="comensal-cabecera">
+${marca}
+<p class="comensal-gasto comensal-gasto-vacio">Todavía no has pedido nada en esta mesa.</p>
+</header>`
+  }
+  const enlace = enElDesglose
+    ? html`<a class="boton-mini" href="/t/${codigo}">Volver a la carta</a>`
+    : html`<a class="boton-mini" href="/t/${codigo}/pedidos">Ver el desglose</a>`
+  return html`<header class="comensal-cabecera">
+${marca}
+<p class="comensal-gasto">
+<span class="comensal-gasto-etiqueta">Llevas gastado</span>
+<strong>${precio(subtotalAcumuladoClp)}</strong>
+${enlace}
+</p>
+</header>`
+}
+
 function paginaComensal(
   titulo: string,
   contenido: HtmlSeguro,
@@ -160,10 +194,7 @@ export function vistaCartaComensal(
     cantidadCesta > 0
       ? html`<p class="comensal-cesta-aviso"><a class="boton" href="/t/${codigo}/cesta">Ver mi cesta (${cantidadCesta} ${cantidadCesta === 1 ? "plato" : "platos"})</a></p>`
       : html``
-  const contenido = html`<header class="comensal-cabecera">
-<span class="marca">Camarero</span>
-<span class="comensal-local">${carta.local}</span>
-</header>
+  const contenido = html`${cabeceraComensal(carta.local, codigo, carta.subtotalAcumuladoClp, false)}
 <main class="contenedor">
 <h1 class="comensal-mesa">${carta.mesa}</h1>
 ${bloqueEmparejamiento(carta, codigo)}
@@ -251,10 +282,7 @@ export function vistaCestaComensal(
   totalClp: number,
   opciones: OpcionesDeCesta,
 ): HtmlSeguro {
-  const cabecera = html`<header class="comensal-cabecera">
-<span class="marca">Camarero</span>
-<span class="comensal-local">${carta.local}</span>
-</header>`
+  const cabecera = cabeceraComensal(carta.local, codigo, carta.subtotalAcumuladoClp, false)
   if (lineas.length === 0) {
     const contenido = html`${cabecera}
 <main class="contenedor">
@@ -349,10 +377,7 @@ export function vistaPedidosComensal(
     pedidos.length === 0
       ? html`<section class="tarjeta"><p>Todavía no has enviado ninguna comanda.</p></section>`
       : html`${resumenDeCuenta(subtotalAcumuladoClp, pendienteDeLlegarClp)}${pedidos.map(pedidoComensal)}`
-  const contenido = html`<header class="comensal-cabecera">
-<span class="marca">Camarero</span>
-<span class="comensal-local">${local}</span>
-</header>
+  const contenido = html`${cabeceraComensal(local, codigo, subtotalAcumuladoClp, true)}
 <main class="contenedor">
 <h1 class="comensal-mesa">Tus pedidos · ${mesa}</h1>
 <p class="ayuda">${

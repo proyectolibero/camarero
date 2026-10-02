@@ -556,6 +556,7 @@ function lecturaDeCarta(): {
       mesa: "Mesa 4",
       estado: "aprobado",
       restanteSegundos: null,
+      subtotalAcumuladoClp: 17800,
       categorias: [
         {
           id: "c1",
