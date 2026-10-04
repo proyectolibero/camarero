@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@camarero/api": "workspace:*",
-    "@types/node": "^24",
+    "@types/node": "^26",
     "@types/pg": "^8",
     "pg": "^8",
     "typescript": "^5",
