@@ -23,7 +23,7 @@
     "@types/node": "^24",
     "@types/pg": "^8",
     "pg": "^8",
-    "typescript": "^5",
+    "typescript": "^7",
     "vitest": "^5"
   }
 }
