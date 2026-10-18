@@ -32,7 +32,7 @@ jobs:
       - name: Ejecutar el analisis
         # v2.4.4 en lugar de v2.4.0: la imagen de las versiones antiguas se servia desde
         # gcr.io, que ahora exige facturacion; desde v2.4.1 vive en ghcr.io.
-        uses: ossf/scorecard-action@v2.4.4
+        uses: ossf/scorecard-action@v2.5.0
         with:
           results_file: results.sarif
           results_format: sarif
